@@ -7,7 +7,7 @@ on:
             - main
 env:
     AZURE_WEBAPP_NAME: HydroPilot
-    AZURE_WEBAPP_PACKAGE_PATH: "./HydroPilot/publish"
+    AZURE_WEBAPP_PACKAGE_PATH: "./HydroPilotWeb/publish"
     DOTNET_VERSION: "10.x"
     SOLUTION_PATH: "HydroPilot.slnx"
     PROJECT_PATH: "HydroPilotWeb"
