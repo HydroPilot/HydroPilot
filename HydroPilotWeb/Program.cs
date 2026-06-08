@@ -1,4 +1,4 @@
-using HydroPilot.Components;
+using HydroPilotWeb.Components;
 
 var builder = WebApplication.CreateBuilder(args);
 
