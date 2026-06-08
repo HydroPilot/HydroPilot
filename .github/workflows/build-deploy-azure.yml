@@ -33,7 +33,7 @@ jobs:
               run: dotnet build ${{ env.SOLUTION_PATH }} --configuration Release --no-restore
     
             - name: Publish
-              run: dotnet publish ${{ env.PROJECT_PATH }} --configuration Release --no-restore --nobuild --property:PublishDir=${{ env.PUBLISH_DIR }}
+              run: dotnet publish ${{ env.PROJECT_PATH }} --configuration Release --no-restore --no-build --property:PublishDir=${{ env.PUBLISH_DIR }}
 
             - name: Publish Artifact
               uses: actions/upload-artifact@v4
