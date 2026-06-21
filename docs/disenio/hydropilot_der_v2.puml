@@ -1,0 +1,466 @@
+@startuml HydroPilot_DER_v2
+!theme plain
+skinparam linetype ortho
+skinparam roundcorner 5
+skinparam shadowing false
+skinparam class {
+    BackgroundColor White
+    BorderColor #555555
+    HeaderBackgroundColor #4A90D9
+    HeaderFontColor White
+    FontSize 11
+}
+
+' ============================================================
+' CATÁLOGOS / LOOKUPS
+' ============================================================
+
+entity "rol" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+    descripcion : TEXT
+}
+
+entity "estado_lote" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(50)
+}
+
+entity "tipo_alerta" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+    descripcion : TEXT
+}
+
+entity "tipo_cultivo" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+    gdd_objetivo : NUMERIC(8,2)
+    ph_optimo_min : NUMERIC(4,2)
+    ph_optimo_max : NUMERIC(4,2)
+    ec_optima_min : NUMERIC(6,2)
+    ec_optima_max : NUMERIC(6,2)
+    dias_estimados_cosecha : INTEGER
+    descripcion : TEXT
+}
+
+entity "etapa_fenologica" {
+    * id : SERIAL <<PK>>
+    --
+    * tipo_cultivo_id : INTEGER <<FK>>
+    * nombre : VARCHAR(100)
+    * orden : INTEGER
+    descripcion : TEXT
+}
+
+entity "tipo_insumo" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+}
+
+entity "insumo" {
+    * id : SERIAL <<PK>>
+    --
+    tipo_insumo_id : INTEGER <<FK>>
+    * nombre : VARCHAR(150)
+    unidad : VARCHAR(30)
+    costo_unitario : NUMERIC(10,2)
+    proveedor : VARCHAR(150)
+}
+
+entity "tipo_anomalia" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+    descripcion : TEXT
+}
+
+entity "severidad" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(50)
+}
+
+entity "tipo_sensor" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+}
+
+entity "tipo_actuador" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+}
+
+entity "unidad_medida" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(50)
+    simbolo : VARCHAR(10)
+}
+
+' ============================================================
+' USUARIOS Y SEGURIDAD
+' ============================================================
+
+entity "usuario" {
+    * id : SERIAL <<PK>>
+    --
+    * nombre : VARCHAR(100)
+    * apellido : VARCHAR(100)
+    * email : VARCHAR(255)
+    sso_proveedor : VARCHAR(50)
+    * doble_factor_habilitado : BOOLEAN
+    * fecha_alta : TIMESTAMP
+    ultimo_acceso : TIMESTAMP
+}
+
+entity "usuario_rol" {
+    * usuario_id : INTEGER <<PK, FK>>
+    * rol_id : INTEGER <<PK, FK>>
+}
+
+entity "log_auditoria" {
+    * id : SERIAL <<PK>>
+    --
+    * usuario_id : INTEGER <<FK>>
+    * accion : VARCHAR(100)
+    entidad_afectada : VARCHAR(100)
+    * fecha_hora : TIMESTAMP
+    detalle : TEXT
+}
+
+' ============================================================
+' INFRAESTRUCTURA FÍSICA
+' ============================================================
+
+entity "invernadero" {
+    * id : SERIAL <<PK>>
+    --
+    * usuario_id : INTEGER <<FK>>
+    * nombre : VARCHAR(150)
+    ubicacion : VARCHAR(255)
+    latitud : NUMERIC(9,6)
+    longitud : NUMERIC(9,6)
+    * fecha_alta : TIMESTAMP
+}
+
+entity "nodo_iot" {
+    * id : SERIAL <<PK>>
+    --
+    * invernadero_id : INTEGER <<FK>>
+    * identificador : VARCHAR(100)
+    version_firmware : VARCHAR(50)
+    * estado : VARCHAR(30)
+    ultima_conexion : TIMESTAMP
+    * fecha_alta : TIMESTAMP
+}
+
+entity "sensor" {
+    * id : SERIAL <<PK>>
+    --
+    * nodo_id : INTEGER <<FK>>
+    * tipo_id : INTEGER <<FK>>
+    unidad_medida_id : INTEGER <<FK>>
+    modelo : VARCHAR(100)
+    fecha_ultima_calibracion : TIMESTAMP
+}
+
+entity "actuador" {
+    * id : SERIAL <<PK>>
+    --
+    * nodo_id : INTEGER <<FK>>
+    * tipo_id : INTEGER <<FK>>
+    modelo : VARCHAR(100)
+}
+
+entity "calibracion_sensor" {
+    * id : SERIAL <<PK>>
+    --
+    * sensor_id : INTEGER <<FK>>
+    * usuario_id : INTEGER <<FK>>
+    * fecha : TIMESTAMP
+    valor_referencia : NUMERIC(10,4)
+    observaciones : TEXT
+}
+
+entity "dato_meteorologico" {
+    * id : SERIAL <<PK>>
+    --
+    * invernadero_id : INTEGER <<FK>>
+    * fecha_hora : TIMESTAMP
+    temperatura_externa : NUMERIC(5,2)
+    humedad_externa : NUMERIC(5,2)
+    * fecha_hora_audit : TIMESTAMP
+}
+
+' ============================================================
+' CULTIVO
+' ============================================================
+
+entity "lote" {
+    * id : SERIAL <<PK>>
+    --
+    * invernadero_id : INTEGER <<FK>>
+    * nodo_id : INTEGER <<FK>>
+    * usuario_id : INTEGER <<FK>>
+    * tipo_cultivo_id : INTEGER <<FK>>
+    etapa_fenologica_id : INTEGER <<FK>>
+    * fecha_siembra : DATE
+    * estado_id : INTEGER <<FK>>
+}
+
+entity "planta" {
+    * id : SERIAL <<PK>>
+    --
+    * lote_id : INTEGER <<FK>>
+    * fila : INTEGER
+    * numero : INTEGER
+    * baby_leaf : BOOLEAN
+    fecha_cosecha_estimada : DATE
+    fecha_cosecha_real : DATE
+}
+
+' ============================================================
+' IoT - LECTURAS Y ACCIONES
+' ============================================================
+
+entity "lectura_sensor" {
+    * id : SERIAL <<PK>>
+    --
+    * sensor_id : INTEGER <<FK>>
+    * lote_id : INTEGER <<FK>>
+    * valor : NUMERIC(12,4)
+    unidad_medida_id : INTEGER <<FK>>
+    * fecha_hora : TIMESTAMP
+}
+
+entity "accion_control" {
+    * id : SERIAL <<PK>>
+    --
+    * actuador_id : INTEGER <<FK>>
+    * lote_id : INTEGER <<FK>>
+    lectura_disparo_id : INTEGER <<FK>>
+    * tipo_accion_id : INTEGER <<FK>>
+    valor_aplicado : NUMERIC(10,4)
+    * fecha_hora : TIMESTAMP
+}
+
+' ============================================================
+' IMÁGENES Y VISIÓN ARTIFICIAL
+' ============================================================
+
+entity "imagen" {
+    * id : SERIAL <<PK>>
+    --
+    * nodo_id : INTEGER <<FK>>
+    * planta_id : INTEGER <<FK>>
+    * fecha_captura : TIMESTAMP
+    * ruta_archivo : TEXT
+    tamano_bytes : INTEGER
+    ancho : INTEGER
+    alto : INTEGER
+}
+
+entity "analisis_imagen" {
+    * id : SERIAL <<PK>>
+    --
+    * imagen_id : INTEGER <<FK>>
+    etapa_fenologica_id : INTEGER <<FK>>
+    * fecha_analisis : TIMESTAMP
+}
+
+entity "deteccion_anomalia" {
+    * id : SERIAL <<PK>>
+    --
+    * imagen_id : INTEGER <<FK>>
+    * tipo_anomalia_id : INTEGER <<FK>>
+    * lote_id : INTEGER <<FK>>
+    confianza : NUMERIC(5,4)
+    severidad_id : INTEGER <<FK>>
+    * fecha_deteccion : TIMESTAMP
+}
+
+' ============================================================
+' ALERTAS Y NOTIFICACIONES
+' ============================================================
+
+entity "alerta" {
+    * id : SERIAL <<PK>>
+    --
+    * tipo_alerta_id : INTEGER <<FK>>
+    lote_id : INTEGER <<FK>>
+    nodo_id : INTEGER <<FK>>
+    severidad_id : INTEGER <<FK>>
+    mensaje : TEXT
+    * fecha_generacion : TIMESTAMP
+    * estado : VARCHAR(30)
+}
+
+entity "notificacion" {
+    * id : SERIAL <<PK>>
+    --
+    * alerta_id : INTEGER <<FK>>
+    * usuario_id : INTEGER <<FK>>
+    canal : VARCHAR(50)
+    fecha_envio : TIMESTAMP
+    * estado_envio : VARCHAR(30)
+}
+
+entity "configuracion_notificacion" {
+    * id : SERIAL <<PK>>
+    --
+    * usuario_id : INTEGER <<FK>>
+    * tipo_alerta_id : INTEGER <<FK>>
+    * habilitada : BOOLEAN
+}
+
+' ============================================================
+' NUTRIENTES E INSUMOS
+' ============================================================
+
+entity "receta_nutriente" {
+    * id : SERIAL <<PK>>
+    --
+    * lote_id : INTEGER <<FK>>
+    etapa_fenologica_id : INTEGER <<FK>>
+    * fecha_generacion : TIMESTAMP
+    descripcion : TEXT
+    * estado : VARCHAR(30)
+}
+
+entity "receta_detalle" {
+    * id : SERIAL <<PK>>
+    --
+    * receta_id : INTEGER <<FK>>
+    * insumo_id : INTEGER <<FK>>
+    * cantidad : NUMERIC(10,4)
+    unidad : VARCHAR(30)
+}
+
+entity "consumo_insumo" {
+    * id : SERIAL <<PK>>
+    --
+    * lote_id : INTEGER <<FK>>
+    * insumo_id : INTEGER <<FK>>
+    * cantidad : NUMERIC(10,4)
+    costo : NUMERIC(10,2)
+    * fecha : TIMESTAMP
+}
+
+' ============================================================
+' PREDICCIONES Y SIMULACIONES
+' ============================================================
+
+entity "prediccion" {
+    * id : SERIAL <<PK>>
+    --
+    * planta_id : INTEGER <<FK>>
+    * fecha_generacion : TIMESTAMP
+    fecha_estimada_cosecha : DATE
+    gdd_acumulado : NUMERIC(8,2)
+    rendimiento_estimado : NUMERIC(8,2)
+    version_modelo : VARCHAR(50)
+    parametros_entrada : JSONB
+}
+
+entity "simulacion" {
+    * id : SERIAL <<PK>>
+    --
+    lote_id : INTEGER <<FK>>
+    tipo_cultivo_id : INTEGER <<FK>>
+    * usuario_id : INTEGER <<FK>>
+    tipo : VARCHAR(50)
+    * fecha : TIMESTAMP
+    parametros_entrada : JSONB
+    resultado : JSONB
+    costo_total_estimado : NUMERIC(12,2)
+    fecha_estimada_resultado : DATE
+}
+
+' ============================================================
+' RELACIONES
+' ============================================================
+
+' Usuarios y seguridad
+usuario                 ||--o{ usuario_rol                : "tiene"
+rol                     ||--o{ usuario_rol                : "asignado a"
+usuario                 ||--o{ invernadero                : "posee"
+usuario                 ||--o{ lote                       : "crea"
+usuario                 ||--o{ simulacion                 : "ejecuta"
+usuario                 ||--o{ notificacion               : "recibe"
+usuario                 ||--o{ configuracion_notificacion : "configura"
+usuario                 ||--o{ calibracion_sensor         : "realiza"
+usuario                 ||--o{ log_auditoria              : "genera"
+
+' Infraestructura
+invernadero             ||--o{ nodo_iot                   : "contiene"
+invernadero             ||--o{ lote                       : "aloja"
+invernadero             ||--o{ dato_meteorologico         : "registra"
+nodo_iot                ||--||  lote                      : "asignado a"
+nodo_iot                ||--o{ sensor                    : "integra"
+nodo_iot                ||--o{ actuador                  : "integra"
+nodo_iot                |o--o{ alerta                    : "origina"
+
+' Lookups infraestructura
+tipo_sensor             ||--o{ sensor                    : "tipifica"
+tipo_actuador           ||--o{ actuador                  : "tipifica"
+unidad_medida           |o--o{ sensor                    : "usa"
+unidad_medida           |o--o{ lectura_sensor            : "usa"
+
+' Calibración
+sensor                  ||--o{ calibracion_sensor        : "tiene"
+
+' Cultivo
+tipo_cultivo            ||--o{ lote                      : "define"
+tipo_cultivo            ||--o{ etapa_fenologica          : "tiene"
+tipo_cultivo            |o--o{ simulacion                : "usa"
+etapa_fenologica        |o--o{ lote                      : "clasifica"
+etapa_fenologica        |o--o{ analisis_imagen           : "detecta"
+etapa_fenologica        |o--o{ receta_nutriente          : "corresponde"
+estado_lote             ||--o{ lote                      : "estado"
+lote                    ||--o{ planta                    : "tiene"
+
+' IoT
+sensor                  ||--o{ lectura_sensor            : "genera"
+lote                    ||--o{ lectura_sensor            : "recibe"
+lectura_sensor          |o--o{ accion_control            : "dispara"
+actuador                ||--o{ accion_control            : "ejecuta"
+lote                    ||--o{ accion_control            : "afecta"
+tipo_actuador           ||--o{ accion_control            : "tipifica"
+
+' Imágenes — siempre a nivel planta
+planta                  ||--o{ imagen                    : "tiene"
+nodo_iot                ||--o{ imagen                    : "captura"
+imagen                  ||--o{ analisis_imagen           : "tiene"
+imagen                  ||--o{ deteccion_anomalia        : "revela"
+lote                    ||--o{ deteccion_anomalia        : "presenta"
+tipo_anomalia           ||--o{ deteccion_anomalia        : "tipifica"
+severidad               |o--o{ deteccion_anomalia        : "califica"
+
+' Alertas
+tipo_alerta             ||--o{ alerta                    : "tipifica"
+tipo_alerta             ||--o{ configuracion_notificacion : "refiere"
+lote                    |o--o{ alerta                    : "origina"
+alerta                  ||--o{ notificacion              : "genera"
+severidad               |o--o{ alerta                    : "califica"
+
+' Insumos
+tipo_insumo             |o--o{ insumo                    : "clasifica"
+insumo                  ||--o{ receta_detalle            : "integra"
+insumo                  ||--o{ consumo_insumo            : "registrado en"
+receta_nutriente        ||--o{ receta_detalle            : "compone"
+lote                    ||--o{ receta_nutriente          : "tiene"
+lote                    ||--o{ consumo_insumo            : "registra"
+
+' Predicciones — a nivel planta
+planta                  ||--o{ prediccion                : "tiene"
+lote                    |o--o{ simulacion                : "asocia"
+
+@enduml
