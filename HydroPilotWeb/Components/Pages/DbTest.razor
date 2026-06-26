@@ -1,0 +1,174 @@
+@page "/db-test"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<HydroPilotDbContext> DbFactory
+@implements IDisposable
+
+<PageTitle>DB Test</PageTitle>
+
+<h3>Prueba de conexión Azure SQL</h3>
+
+@if (error is not null)
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+@if (sensors is null)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Verificando conexión...</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert alert-success">
+        <strong>Conectado a Azure SQL.</strong> Se encontraron @sensors.Count sensores en la base de datos.
+    </div>
+
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Nombre</th>
+                <th>Tipo</th>
+                <th>Activo</th>
+                <th>Fecha de creación</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var s in sensors)
+            {
+                <tr>
+                    <td>@s.Id</td>
+                    <td>@s.Name</td>
+                    <td>@s.Type</td>
+                    <td>
+                        @if (s.IsActive)
+                        {
+                            <span class="badge bg-success">Sí</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary">No</span>
+                        }
+                    </td>
+                    <td>@s.CreatedAt.ToLocalTime()</td>
+                    <td>
+                        <button class="btn btn-danger btn-sm" @onclick="() => DeleteSensor(s.Id)" disabled="@loading">
+                            Eliminar
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <div class="card">
+        <div class="card-header">Agregar nuevo sensor</div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">Nombre</label>
+                <input @bind="newName" class="form-control" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Tipo</label>
+                <input @bind="newType" class="form-control" />
+            </div>
+            <button class="btn btn-primary" @onclick="AddSensor" disabled="@loading">
+                @(loading ? "Guardando..." : "Guardar")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Sensor>? sensors;
+    private string? error;
+    private string newName = "";
+    private string newType = "";
+    private bool loading;
+    private CancellationTokenSource _cts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSensors();
+    }
+
+    private async Task LoadSensors()
+    {
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
+            sensors = await context.Sensors.OrderBy(s => s.Id).ToListAsync(_cts.Token);
+            error = null;
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al conectar: {ex.Message}";
+            sensors = [];
+        }
+    }
+
+    private async Task AddSensor()
+    {
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        loading = true;
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
+            context.Sensors.Add(new Sensor
+            {
+                Name = newName,
+                Type = newType,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync(_cts.Token);
+            newName = "";
+            newType = "";
+            await LoadSensors();
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al guardar: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task DeleteSensor(int id)
+    {
+        loading = true;
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
+            var sensor = await context.Sensors.FindAsync([id], _cts.Token);
+            if (sensor is not null)
+            {
+                context.Sensors.Remove(sensor);
+                await context.SaveChangesAsync(_cts.Token);
+            }
+            await LoadSensors();
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al eliminar: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}
