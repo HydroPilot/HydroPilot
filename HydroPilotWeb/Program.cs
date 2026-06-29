@@ -8,6 +8,18 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+Console.WriteLine("==== CONFIG ====");
+
+foreach (var kv in builder.Configuration.AsEnumerable())
+{
+    if (kv.Key.Contains("Connection"))
+        Console.WriteLine($"{kv.Key} = {kv.Value}");
+}
+
+Console.WriteLine("================");
+
+Console.WriteLine(builder.Configuration.GetConnectionString("AzureSql") ?? "NULL");
+
 builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("AzureSql")));
 
