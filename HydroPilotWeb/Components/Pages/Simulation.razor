@@ -1,0 +1,70 @@
+@page "/simulation"
+
+@using System.Globalization
+
+<PageTitle>Simulación</PageTitle>
+
+<section class="simulation-grid">
+    <article class="panel">
+        <h3>Parámetros</h3>
+        <div class="slider-list">
+            <div class="slider-item">
+                <div class="slider-item__head"><span>Temperatura ambiente</span><strong>@temp.ToString("0.0") °C</strong></div>
+                <input type="range" min="15" max="32" step="0.1" value="@temp" @oninput="OnTempInput" />
+            </div>
+            <div class="slider-item">
+                <div class="slider-item__head"><span>Radiación PAR</span><strong>@par.ToString("0") μmol</strong></div>
+                <input type="range" min="300" max="1400" step="10" value="@par" @oninput="OnParInput" />
+            </div>
+            <div class="slider-item">
+                <div class="slider-item__head"><span>Conductividad (EC)</span><strong>@ec.ToString("0.0") mS/cm</strong></div>
+                <input type="range" min="0.5" max="3.5" step="0.1" value="@ec" @oninput="OnEcInput" />
+            </div>
+            <div class="slider-item">
+                <div class="slider-item__head"><span>pH del agua</span><strong>@ph.ToString("0.0") pH</strong></div>
+                <input type="range" min="4.5" max="8" step="0.1" value="@ph" @oninput="OnPhInput" />
+            </div>
+        </div>
+    </article>
+
+    <article class="panel panel--simulation">
+        <div class="panel__header">
+            <div>
+                <h3>Proyección simulada</h3>
+                <p>Resultado estimado con los parámetros actuales</p>
+            </div>
+            <div class="impact-chip @ImpactClass">Impacto: @ImpactText%</div>
+        </div>
+
+        <SimpleLineChart Data="SimulationSeries" Height="300" />
+
+        <div class="mini-grid">
+            <div class="mini-card"><span>Cosecha estimada</span><strong>@EstimatedHarvest kg</strong></div>
+            <div class="mini-card"><span>Días al óptimo</span><strong>@OptimalDays d</strong></div>
+            <div class="mini-card"><span>Costo proyectado</span><strong>$ @ProjectedCost / kg</strong></div>
+        </div>
+    </article>
+</section>
+
+@code {
+    private double temp = 22.5;
+    private double par = 850;
+    private double ec = 1.8;
+    private double ph = 6.4;
+
+    private double factor => (temp / 22.5) * (par / 850) * (1 + (ec - 1.8) * 0.1) * (1 - Math.Abs(ph - 6) * 0.05);
+    private IReadOnlyList<double> SimulationSeries => new[] { 60d, 62d, 65d, 68d, 72d, 76d, 80d, 84d, 89d, 94d, 100d, 106d }.Select(v => Math.Round(v * factor, 1)).ToArray();
+    private string ImpactText => ((factor - 1) * 100).ToString("0.0", CultureInfo.InvariantCulture);
+    private string ImpactClass => factor >= 1 ? "impact-chip--positive" : "impact-chip--negative";
+    private string EstimatedHarvest => Math.Round(218 * factor).ToString(CultureInfo.InvariantCulture);
+    private string OptimalDays => Math.Max(1, Math.Round(14 / factor)).ToString(CultureInfo.InvariantCulture);
+    private string ProjectedCost => Math.Round(412 / factor).ToString(CultureInfo.InvariantCulture);
+
+    private void OnTempInput(ChangeEventArgs args) => temp = Parse(args, temp);
+    private void OnParInput(ChangeEventArgs args) => par = Parse(args, par);
+    private void OnEcInput(ChangeEventArgs args) => ec = Parse(args, ec);
+    private void OnPhInput(ChangeEventArgs args) => ph = Parse(args, ph);
+
+    private static double Parse(ChangeEventArgs args, double current)
+        => double.TryParse(args.Value?.ToString(), out var parsed) ? parsed : current;
+}

@@ -8,20 +8,25 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-Console.WriteLine("==== CONFIG ====");
-
-foreach (var kv in builder.Configuration.AsEnumerable())
-{
-    if (kv.Key.Contains("Connection"))
-        Console.WriteLine($"{kv.Key} = {kv.Value}");
-}
-
-Console.WriteLine("================");
-
-Console.WriteLine(builder.Configuration.GetConnectionString("AzureSql") ?? "NULL");
+var useLocalDatabase = builder.Configuration.GetValue("HydroPilot:UseLocalDb", false);
+var azureSqlConnectionString = builder.Configuration.GetConnectionString("AzureSql");
 
 builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("AzureSql")));
+{
+    if (useLocalDatabase)
+    {
+        var sqlitePath = Path.Combine(builder.Environment.ContentRootPath, "hydropilot.db");
+        options.UseSqlite($"Data Source={sqlitePath}");
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(azureSqlConnectionString))
+    {
+        throw new InvalidOperationException("Falta la cadena de conexión AzureSql o activa HydroPilot:UseLocalDb=true para desarrollo local.");
+    }
+
+    options.UseSqlServer(azureSqlConnectionString);
+});
 
 var app = builder.Build();
 
@@ -39,7 +44,6 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
 
 app.UseAntiforgery();
 

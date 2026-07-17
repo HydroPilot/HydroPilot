@@ -1,0 +1,59 @@
+@page "/anomalies"
+
+<PageTitle>Anomalías</PageTitle>
+
+<section class="metric-row metric-row--four">
+    <article class="metric-card"><p>Eventos abiertos</p><strong>2</strong><span class="danger">Críticas</span></article>
+    <article class="metric-card"><p>En revisión</p><strong>1</strong><span>Seguimiento activo</span></article>
+    <article class="metric-card"><p>Resueltos (7d)</p><strong>14</strong><span>Buen MTTR</span></article>
+    <article class="metric-card"><p>MTTR promedio</p><strong>42 min</strong><span>Tiempo de respuesta</span></article>
+</section>
+
+<section class="panel panel-table">
+    <div class="panel__header panel__header--compact panel__header--stacked">
+        <h3>Timeline de eventos</h3>
+        <div class="chip-row">
+            <span class="tag tag--solid">Todos</span>
+            <span class="tag">Críticos</span>
+            <span class="tag">Sensores</span>
+            <span class="tag">Actuadores</span>
+        </div>
+    </div>
+
+    <div class="timeline">
+        @foreach (var e in Events)
+        {
+            <article class="timeline-row">
+                <div class="timeline-row__time">
+                    <strong>@e.Time</strong>
+                    <span>@e.Date</span>
+                </div>
+                <div class="timeline-row__dot"></div>
+                <div class="timeline-row__body">
+                    <div class="timeline-row__title">
+                        <h4>@e.Title</h4>
+                        <span class="mono">@e.Sensor</span>
+                    </div>
+                    <p>@e.Description</p>
+                </div>
+                <div class="timeline-row__state">
+                    <span class="sev @e.SeverityClass">@e.Severity</span>
+                    <small>@e.Status</small>
+                </div>
+            </article>
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly IReadOnlyList<EventItem> Events =
+    [
+        new("10:24", "Hoy", "Caída de presión Bomba B2", "PUMP_B02", "Reducción del 18% en presión sostenida durante 4 minutos.", "Crítica", "Abierta", "severity--high"),
+        new("08:12", "Hoy", "Drift de calibración pH-01", "PH_01", "Desviación creciente de 0.2 pH respecto al sensor redundante.", "Media", "En revisión", "severity--medium"),
+        new("22:45", "Ayer", "Pico térmico LED zona 4", "LED_Z04", "Disipador alcanzó 42°C, ventilación incrementada automáticamente.", "Media", "Resuelta", "severity--medium"),
+        new("15:01", "Ayer", "Conductividad fuera de rango", "EC_03", "EC superó 2.4 mS/cm durante 2 minutos. Auto-dilución aplicada.", "Baja", "Resuelta", "severity--low"),
+        new("06:30", "27 may", "Sensor humedad sin lectura", "HUM_02", "Lectura nula 3 ciclos consecutivos. Reinicio remoto exitoso.", "Baja", "Resuelta", "severity--low"),
+    ];
+
+    private sealed record EventItem(string Time, string Date, string Title, string Sensor, string Description, string Severity, string Status, string SeverityClass);
+}
