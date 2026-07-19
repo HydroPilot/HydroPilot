@@ -88,6 +88,7 @@ app.MapGet("/login-google", async (HttpContext context) =>
         IsPersistent = true,
         ExpiresUtc = DateTimeOffset.UtcNow.AddDays(7)
     });
+        return Results.Redirect("/login?error=Contraseña invalida.");
 });
 
 app.MapGet("/logout", async (HttpContext context) =>
