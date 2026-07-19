@@ -1,0 +1,83 @@
+@page "/settings/profile"
+@attribute [Authorize]
+@using System.Security.Claims
+
+<PageTitle>Configuración de usuario</PageTitle>
+
+<section class="settings-layout">
+    <nav class="settings-nav">
+        <a class="settings-nav__item settings-nav__item--active" href="/settings/profile">Perfil</a>
+        <a class="settings-nav__item" href="/settings/notifications">Notificaciones</a>
+    </nav>
+
+    <div class="settings-stack">
+        <AuthorizeView>
+            <Authorized>
+                <article class="panel">
+                    <h3>Perfil</h3>
+                    <form class="settings-form">
+                        <label class="field-block"><span>Nombre</span><input value="@GetClaim(context.User, ClaimTypes.GivenName)" readonly /></label>
+                        <label class="field-block"><span>Apellido</span><input value="@GetClaim(context.User, ClaimTypes.Surname)" readonly /></label>
+                        <label class="field-block"><span>Correo electrónico</span><input type="email" value="@GetClaim(context.User, ClaimTypes.Email)" readonly /></label>
+                        <label class="field-block"><span>Proveedor de identidad</span><input value="Google" readonly /></label>
+                        <div class="settings-form__footer">
+                            <p>Rol: <strong>@GetRole(context.User)</strong></p>
+                            <p class="settings-form__note">Tus datos provienen de tu cuenta de Google.</p>
+                        </div>
+                    </form>
+                </article>
+            </Authorized>
+        </AuthorizeView>
+
+        <article class="panel">
+            <h3>Seguridad</h3>
+            <div class="settings-list">
+                <div class="settings-list__row">
+                    <div>
+                        <strong>Autenticación</strong>
+                        <p>Inicio de sesión gestionado por Google (OAuth 2.0)</p>
+                    </div>
+                </div>
+                <div class="settings-list__row">
+                    <div>
+                        <strong>Verificación en dos pasos</strong>
+                        <p>Gestionada desde tu cuenta de Google</p>
+                    </div>
+                </div>
+            </div>
+        </article>
+
+        <article class="panel">
+            <h3>Preferencias</h3>
+            <div class="preferences-grid">
+                <label class="field-block"><span>Idioma</span><select><option>Español</option><option>English</option><option>Português</option></select></label>
+                <label class="field-block"><span>Zona horaria</span><select><option>GMT-3 Buenos Aires</option><option>GMT-5 Bogotá</option><option>GMT+1 Madrid</option></select></label>
+                <label class="field-block"><span>Unidad de temperatura</span><select><option>Celsius</option><option>Fahrenheit</option></select></label>
+                <label class="field-block"><span>Formato de fecha</span><select><option>DD/MM/AAAA</option><option>MM/DD/AAAA</option></select></label>
+            </div>
+        </article>
+    </div>
+</section>
+
+<style>
+    .settings-form__note {
+        font-size: 12px;
+        color: #70869a;
+        margin-top: 8px;
+    }
+</style>
+
+@code {
+    private static string GetClaim(ClaimsPrincipal user, string claimType)
+    {
+        var googlePrefix = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/";
+        var value = user.FindFirst($"{googlePrefix}{claimType.ToLowerInvariant()}")?.Value
+                    ?? user.FindFirst(claimType)?.Value;
+        return value ?? "";
+    }
+
+    private static string GetRole(ClaimsPrincipal user)
+    {
+        return user.FindFirst(ClaimTypes.Role)?.Value ?? "Operador";
+    }
+}

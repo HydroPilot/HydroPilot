@@ -1,0 +1,20 @@
+@using System.Globalization
+
+<div class="simple-bar-chart" style="height:@HeightPx">
+    @foreach (var bar in Bars)
+    {
+        <div class="simple-bar-chart__item">
+            <div class="simple-bar-chart__bar-track">
+                <div class="simple-bar-chart__bar" style="height:@($"{bar.Value}%")"></div>
+            </div>
+            <span class="simple-bar-chart__label">@bar.Label</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<(string Label, int Value)> Bars { get; set; } = [];
+    [Parameter] public int Height { get; set; } = 220;
+
+    private string HeightPx => $"{Height}px";
+}

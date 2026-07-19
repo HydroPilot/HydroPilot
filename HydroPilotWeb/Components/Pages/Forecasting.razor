@@ -1,0 +1,56 @@
+@page "/forecasting"
+@attribute [Authorize]
+
+<PageTitle>Forecasting</PageTitle>
+
+<section class="metric-row metric-row--three">
+    <article class="metric-card"><p>Rendimiento estimado</p><strong>218 kg</strong><span>+12.4%</span></article>
+    <article class="metric-card"><p>Fecha óptima de cosecha</p><strong>14 jun</strong><span>adelantada 2d</span></article>
+    <article class="metric-card"><p>Confianza del modelo</p><strong>92 %</strong><span>MAPE 4.1%</span></article>
+</section>
+
+<section class="panel">
+    <div class="panel__header">
+        <div>
+            <h3>Biomasa proyectada</h3>
+            <p>Histórico (sólido) vs predicción LSTM (punteado)</p>
+        </div>
+        <div class="chip-row">
+            <span class="tag tag--soft">LSTM</span>
+            <span class="tag tag--soft">Horizonte 14d</span>
+        </div>
+    </div>
+
+    <div class="chart-stack">
+        <SimpleLineChart Data="Historical" Height="300" AccentClass="emerald" />
+        <div class="chart-stack__overlay">
+            <SimpleLineChart Data="Predicted" Height="300" AccentClass="green" Dashed="true" Fill="false" />
+        </div>
+    </div>
+</section>
+
+<section class="split-grid split-grid--two">
+    <article class="panel">
+        <h3>Variables del modelo</h3>
+        <ul class="key-list">
+            <li><span>Temperatura ambiente</span><strong>22.5°C</strong></li>
+            <li><span>Radiación PAR</span><strong>812 μmol</strong></li>
+            <li><span>EC promedio</span><strong>1.8 mS/cm</strong></li>
+            <li><span>pH promedio</span><strong>6.4</strong></li>
+        </ul>
+    </article>
+
+    <article class="panel">
+        <h3>Escenarios alternativos</h3>
+        <div class="scenario-list">
+            <div class="scenario-card"><strong>Conservador</strong><span>198 kg</span><small>35%</small></div>
+            <div class="scenario-card scenario-card--active"><strong>Base</strong><span>218 kg</span><small>50%</small></div>
+            <div class="scenario-card"><strong>Optimista</strong><span>241 kg</span><small>15%</small></div>
+        </div>
+    </article>
+</section>
+
+@code {
+    private static readonly IReadOnlyList<double> Historical = [40, 42, 45, 47, 50, 52, 55, 58, 60, 63, 66, 70];
+    private static readonly IReadOnlyList<double> Predicted = [70, 73, 76, 80, 84, 88, 93, 98, 104, 110, 116, 123];
+}

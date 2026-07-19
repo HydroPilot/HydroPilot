@@ -1,7 +1,158 @@
 ﻿@page "/"
+@attribute [Authorize]
 
 <PageTitle>Home</PageTitle>
 
-<h1>Hydropilot!</h1>
+<div class="dashboard-grid">
+	<section class="dashboard-kpis">
+		@foreach (var item in Kpis)
+		{
+			<article class="kpi-card">
+				<div class="kpi-card__header">
+					<div>
+						<p>@item.Label</p>
+						<h2>@item.Value <span>@item.Unit</span></h2>
+					</div>
+					<div class="kpi-card__icon">@item.Icon</div>
+				</div>
+				<div class="kpi-card__delta">@item.Delta</div>
+			</article>
+		}
+	</section>
 
-Una plataforma integral para el monitoreo y control automatizado de cultivos hidropónicos.
+	<section class="dashboard-main">
+		<article class="panel panel--chart">
+			<div class="panel__header">
+				<div>
+					<h3>Rendimiento proyectado</h3>
+					<p>Biomasa estimada vs objetivo de cosecha</p>
+				</div>
+
+				<div class="panel__toggles">
+					<button class="toggle toggle--muted" type="button">Semana</button>
+					<button class="toggle toggle--active" type="button">Mes</button>
+				</div>
+			</div>
+
+			<div class="chart-box">
+				<div class="chart-line"></div>
+				<div class="chart-fill"></div>
+				<div class="chart-points">
+					<span style="--x: 8%; --y: 84%"></span>
+					<span style="--x: 18%; --y: 80%"></span>
+					<span style="--x: 28%; --y: 82%"></span>
+					<span style="--x: 39%; --y: 73%"></span>
+					<span style="--x: 50%; --y: 64%"></span>
+					<span style="--x: 61%; --y: 55%"></span>
+					<span style="--x: 72%; --y: 48%"></span>
+					<span style="--x: 83%; --y: 36%"></span>
+					<span style="--x: 92%; --y: 26%"></span>
+				</div>
+			</div>
+		</article>
+
+		<aside class="panel panel--resources">
+			<h3>Optimización de recursos</h3>
+
+			<div class="resource-list">
+				@foreach (var resource in Resources)
+				{
+					<div class="resource-row">
+						<div class="resource-row__meta">
+							<span>@resource.Label</span>
+							<strong>@resource.Value%</strong>
+						</div>
+						<div class="resource-row__bar">
+							<span style="width: @($"{resource.Value}%")" class="@resource.Tone"></span>
+						</div>
+					</div>
+				}
+			</div>
+
+			<div class="panel__callout">
+				<h4>Recomendación</h4>
+				<p>El módulo de simulación sugiere aumentar el flujo de agua un 5% durante las horas pico de luz.</p>
+				<a href="/optimization">Aplicar cambio</a>
+			</div>
+		</aside>
+	</section>
+
+	<section class="dashboard-secondary">
+		<article class="panel">
+			<div class="panel__header panel__header--compact">
+				<h3>Anomalías recientes</h3>
+				<a href="/anomalies">Ver todas →</a>
+			</div>
+
+			<div class="anomaly-list">
+				@foreach (var anomaly in Anomalies)
+				{
+					<div class="anomaly-row @anomaly.State">
+						<span class="anomaly-row__dot"></span>
+						<div>
+							<strong>@anomaly.Title</strong>
+							<p>@anomaly.Detail</p>
+						</div>
+						@if (!anomaly.Resolved)
+						{
+							<a href="/anomalies">Revisar</a>
+						}
+					</div>
+				}
+			</div>
+		</article>
+
+		<article class="panel">
+			<div class="panel__header panel__header--compact">
+				<h3>Accesos rápidos</h3>
+			</div>
+
+			<div class="quick-grid">
+				@foreach (var shortcut in Shortcuts)
+				{
+					<a href="@shortcut.Href" class="quick-card">
+						<strong>@shortcut.Title</strong>
+						<span>@shortcut.Description</span>
+					</a>
+				}
+			</div>
+		</article>
+	</section>
+</div>
+
+@code {
+	private static readonly DashboardKpi[] Kpis =
+	[
+		new("pH del agua", "6.42", "pH", "+0.12", "💧"),
+		new("Conductividad (EC)", "1.8", "mS/cm", "estable", "◌"),
+		new("Temp. nutrientes", "22.5", "°C", "+0.4°", "🌡"),
+		new("Humedad", "68", "%", "-2%", "🍃"),
+	];
+
+	private static readonly ResourceMetric[] Resources =
+	[
+		new("Eficiencia energética", 92, "tone-green"),
+		new("Uso de nutrientes", 74, "tone-amber"),
+		new("Consumo de agua", 56, "tone-green"),
+	];
+
+	private static readonly AnomalyItem[] Anomalies =
+	[
+		new("Caída de presión Bomba B2", "hace 12 min", false, "high"),
+		new("Pico térmico sensor 04", "hace 4 h", true, "med"),
+		new("Drift de calibración pH", "hace 1 d", true, "low"),
+	];
+
+	private static readonly ShortcutItem[] Shortcuts =
+	[
+		new("Forecasting", "Predicción de rendimiento", "/forecasting"),
+		new("Simulación", "Escenarios what-if", "/simulation"),
+		new("Optimización", "Recomendaciones IA", "/optimization"),
+		new("Anomalías", "Timeline de eventos", "/anomalies"),
+	];
+
+	private sealed record DashboardKpi(string Label, string Value, string Unit, string Delta, string Icon);
+	private sealed record ResourceMetric(string Label, int Value, string Tone);
+	private sealed record AnomalyItem(string Title, string Detail, bool Resolved, string State);
+	private sealed record ShortcutItem(string Title, string Description, string Href);
+}

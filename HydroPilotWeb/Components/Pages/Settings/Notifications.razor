@@ -1,0 +1,80 @@
+@page "/settings/notifications"
+@attribute [Authorize]
+
+<PageTitle>Configuración de notificaciones</PageTitle>
+
+<section class="settings-layout">
+    <nav class="settings-nav">
+        <a class="settings-nav__item" href="/settings/profile">Perfil</a>
+        <a class="settings-nav__item settings-nav__item--active" href="/settings/notifications">Notificaciones</a>
+    </nav>
+
+    <div class="settings-stack">
+        <article class="panel">
+            <h3>Canales</h3>
+            <p class="panel__subtitle">Activá los medios por los que querés recibir alertas.</p>
+            <div class="settings-list">
+                @foreach (var channel in Channels)
+                {
+                    <div class="settings-list__row">
+                        <div>
+                            <strong>@channel.Label</strong>
+                            <p>@channel.Description</p>
+                        </div>
+                        <button class="switch @(channel.Enabled ? "switch--on" : string.Empty)" type="button" aria-pressed="@channel.Enabled"><span></span></button>
+                    </div>
+                }
+            </div>
+        </article>
+
+        <article class="panel">
+            <h3>Eventos</h3>
+            <p class="panel__subtitle">Configurá los disparadores y la severidad mínima para cada uno.</p>
+            <div class="settings-list">
+                @foreach (var trigger in Triggers)
+                {
+                    <div class="settings-list__row">
+                        <div>
+                            <strong>@trigger.Label</strong>
+                            <p>Severidad mínima: <strong>@trigger.Severity</strong></p>
+                        </div>
+                        <button class="switch switch--on" type="button" aria-pressed="true"><span></span></button>
+                    </div>
+                }
+            </div>
+        </article>
+
+        <article class="panel">
+            <h3>Modo no molestar</h3>
+            <p class="panel__subtitle">No recibirás avisos no críticos durante el horario configurado.</p>
+            <div class="quiet-hours">
+                <label class="field-block field-block--time"><span>Desde</span><input type="time" value="22:00" /></label>
+                <label class="field-block field-block--time"><span>Hasta</span><input type="time" value="07:00" /></label>
+                <button class="switch switch--on" type="button" aria-pressed="true"><span></span></button>
+            </div>
+        </article>
+    </div>
+</section>
+
+@code {
+    private static readonly ChannelItem[] Channels =
+    [
+        new("Correo electrónico", "Resúmenes y alertas en tu inbox.", true),
+        new("Notificaciones push", "Avisos en tiempo real en el navegador.", true),
+        new("SMS", "Sólo para eventos críticos.", false),
+        new("WhatsApp", "Mensajería rápida vía bot oficial.", true),
+    ];
+
+    private static readonly TriggerItem[] Triggers =
+    [
+        new("Anomalías detectadas", "Crítica"),
+        new("pH fuera de rango (5.5 – 7.0)", "Alta"),
+        new("Conductividad fuera de rango (1.0 – 2.4 mS/cm)", "Alta"),
+        new("Temperatura > 28°C ó < 18°C", "Media"),
+        new("Cambio significativo en forecasting", "Media"),
+        new("Reporte semanal disponible", "Info"),
+    ];
+
+    private sealed record ChannelItem(string Label, string Description, bool Enabled);
+    private sealed record TriggerItem(string Label, string Severity);
+}

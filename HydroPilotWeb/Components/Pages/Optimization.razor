@@ -1,0 +1,46 @@
+@page "/optimization"
+@attribute [Authorize]
+
+<PageTitle>Optimización</PageTitle>
+
+<section class="metric-row metric-row--three">
+    <article class="metric-card"><p>Ganancia potencial</p><strong>+8.4%</strong><span>Aplicando todas las recomendaciones</span></article>
+    <article class="metric-card"><p>Ahorro estimado</p><strong>$ 36.200</strong><span>Mensual</span></article>
+    <article class="metric-card"><p>Recomendaciones activas</p><strong>3</strong><span>2 nuevas hoy</span></article>
+</section>
+
+<section class="recommendations">
+    @foreach (var item in Recommendations)
+    {
+        <article class="recommendation-card">
+            <div class="recommendation-card__icon">✧</div>
+            <div class="recommendation-card__body">
+                <div class="recommendation-card__meta">
+                    <span class="mono">@item.Id</span>
+                    <span class="prio @item.PriorityClass">@item.Priority</span>
+                </div>
+                <h3>@item.Title</h3>
+                <p>@item.Description</p>
+                <div class="recommendation-card__stats">
+                    <div><small>Impacto</small><strong>@item.Gain</strong></div>
+                    <div><small>Confianza</small><strong>@item.Confidence%</strong></div>
+                </div>
+            </div>
+            <div class="recommendation-card__actions">
+                <button class="btn-pill btn-pill--solid" type="button">Aplicar</button>
+                <button class="btn-pill btn-pill--ghost" type="button">Descartar</button>
+            </div>
+        </article>
+    }
+</section>
+
+@code {
+    private static readonly IReadOnlyList<RecommendationItem> Recommendations =
+    [
+        new("OPT-204", "Aumentar flujo de agua un 5%", "Durante 4 a 8 hs de luz pico, para compensar evapotranspiración elevada en Sector A-12.", "+3.2% rendimiento", 88, "Alta", "prio--high"),
+        new("OPT-203", "Reducir aporte de nitrógeno un 8%", "Niveles de nitratos por encima del óptimo detectados en reservorio principal.", "-12% costo nutrientes", 76, "Media", "prio--medium"),
+        new("OPT-202", "Adelantar fotoperíodo 30 min", "Modelo sugiere mayor acumulación de biomasa con encendido a las 05:30.", "+1.4% biomasa", 64, "Baja", "prio--low"),
+    ];
+
+    private sealed record RecommendationItem(string Id, string Title, string Description, string Gain, int Confidence, string Priority, string PriorityClass);
+}

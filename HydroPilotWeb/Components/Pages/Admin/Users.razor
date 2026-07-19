@@ -1,0 +1,238 @@
+@page "/admin/users"
+@attribute [Authorize(Policy = "RequireAdministrador")]
+@using HydroPilotWeb.Models
+@using HydroPilotWeb.Services
+@using System.Security.Claims
+@inject UserService UserService
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Gestión de usuarios - HydroPilot</PageTitle>
+
+<div class="page-header">
+    <h2>Gestión de usuarios</h2>
+    <p>Administración de roles y permisos</p>
+</div>
+
+<div class="panel">
+    <table class="users-table">
+        <thead>
+            <tr>
+                <th>Usuario</th>
+                <th>Email</th>
+                <th>Proveedor</th>
+                <th>Rol</th>
+                <th>Último acceso</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var user in _users)
+            {
+                var isSelf = user.Id == _currentUserId;
+                <tr>
+                    <td>
+                        <div class="user-cell">
+                            <span class="user-cell__avatar">@GetInitials(user)</span>
+                            <span>@GetDisplayName(user)</span>
+                        </div>
+                    </td>
+                    <td>@user.Email</td>
+                    <td>@(user.PasswordHash != null ? "Local" : "Google")</td>
+                    <td>
+                        @if (isSelf)
+                        {
+                            <span class="role-text">Administrador</span>
+                        }
+                        else
+                        {
+                            <select class="role-select" value="@user.Role"
+                                    @onchange="e => OnRoleChanged(user.Id, e.Value?.ToString() ?? user.Role)">
+                                <option value="Operador">Operador</option>
+                                <option value="Productor">Productor</option>
+                                <option value="Soporte Técnico">Soporte Técnico</option>
+                            </select>
+                        }
+                    </td>
+                    <td>@user.LastLoginAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (_roleChanges.Count > 0)
+    {
+        <div class="save-bar">
+            <span class="save-bar__hint">@_roleChanges.Count cambio(s) sin guardar</span>
+            <button class="btn-pill btn-pill--solid" @onclick="SaveChanges">Guardar cambios</button>
+        </div>
+    }
+</div>
+
+<style>
+    .page-header {
+        margin-bottom: 24px;
+    }
+
+    .page-header h2 {
+        font-size: 22px;
+        font-weight: 700;
+        color: #e4ecf6;
+        margin: 0 0 4px;
+    }
+
+    .page-header p {
+        color: #70869a;
+        font-size: 14px;
+        margin: 0;
+    }
+
+    .panel {
+        background: #162231;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 14px;
+        padding: 22px;
+    }
+
+    .users-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .users-table th {
+        text-align: left;
+        font-size: 12px;
+        font-weight: 600;
+        color: #70869a;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 12px 16px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .users-table td {
+        padding: 12px 16px;
+        border-bottom: 1px solid rgba(255,255,255,0.04);
+        font-size: 14px;
+        color: #e4ecf6;
+    }
+
+    .users-table tr:hover td {
+        background: rgba(255,255,255,0.02);
+    }
+
+    .user-cell {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .user-cell__avatar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        background: rgba(0,212,170,0.15);
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #00d4aa;
+        flex-shrink: 0;
+    }
+
+    .role-text {
+        font-size: 14px;
+        color: #70869a;
+        font-style: italic;
+    }
+
+    .role-select {
+        background: #0f1923;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 6px;
+        padding: 6px 10px;
+        color: #e4ecf6;
+        font-size: 13px;
+        outline: none;
+        cursor: pointer;
+    }
+
+    .role-select option {
+        background: #162231;
+        color: #e4ecf6;
+    }
+
+    .role-select:focus {
+        border-color: #00d4aa;
+    }
+
+    .save-bar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 16px;
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .save-bar__hint {
+        font-size: 13px;
+        color: #70869a;
+    }
+</style>
+
+@code {
+    private List<User> _users = new();
+    private Dictionary<int, string> _roleChanges = new();
+    private int _currentUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _users = await UserService.GetAllUsersAsync();
+
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        var userIdClaim = authState.User.FindFirst("user_id")?.Value;
+        _currentUserId = userIdClaim != null ? int.Parse(userIdClaim) : -1;
+    }
+
+    private void OnRoleChanged(int userId, string newRole)
+    {
+        var user = _users.First(u => u.Id == userId);
+        if (newRole == user.Role)
+        {
+            _roleChanges.Remove(userId);
+        }
+        else
+        {
+            _roleChanges[userId] = newRole;
+        }
+    }
+
+    private async Task SaveChanges()
+    {
+        foreach (var (userId, newRole) in _roleChanges)
+        {
+            await UserService.UpdateRoleAsync(userId, newRole);
+            var user = _users.First(u => u.Id == userId);
+            user.Role = newRole;
+        }
+
+        _roleChanges.Clear();
+    }
+
+    private static string GetInitials(User user)
+    {
+        if (!string.IsNullOrWhiteSpace(user.GivenName) || !string.IsNullOrWhiteSpace(user.Surname))
+            return $"{(string.IsNullOrWhiteSpace(user.GivenName) ? "" : user.GivenName[0].ToString())}{(string.IsNullOrWhiteSpace(user.Surname) ? "" : user.Surname[0].ToString())}".ToUpperInvariant();
+
+        return user.Email.Length >= 2 ? user.Email[..2].ToUpperInvariant() : "??";
+    }
+
+    private static string GetDisplayName(User user)
+    {
+        if (!string.IsNullOrWhiteSpace(user.GivenName) || !string.IsNullOrWhiteSpace(user.Surname))
+            return $"{user.GivenName} {user.Surname}".Trim();
+
+        return user.Email;
+    }
+}
