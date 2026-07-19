@@ -1,7 +1,5 @@
 @page "/login"
 @layout Layout.LoginLayout
-@using System.Web
-
 @inject NavigationManager Navigation
 
 <PageTitle>Iniciar sesión - HydroPilot</PageTitle>
@@ -192,8 +190,10 @@
     [SupplyParameterFromQuery]
     private string? Error { get; set; }
 
-    private string ErrorUi => Error is not null ? 
-        (Error == "password_required")? "Contraseña requerida." :
-           (Error == "invalid_password") ? "Contraseña incorrecta." : ""    
-        : "";
+    private string ErrorUi => Error switch
+    {
+        "password_required" => "Contraseña requerida.",
+        "invalid_password" => "Contraseña incorrecta.",
+        _ => ""
+    };
 }
