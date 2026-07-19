@@ -1,4 +1,6 @@
-﻿<div class="brand-block">
+﻿@using System.Security.Claims
+
+<div class="brand-block">
     <a class="brand" href="/">
         <span class="brand__mark">H</span>
         <span class="brand__text">
@@ -60,16 +62,88 @@
             <span>◈</span>
             <span>DB Test</span>
         </NavLink>
+
+        <AuthorizeView>
+            <Authorized>
+                @if (context.User.IsInRole("Administrador"))
+                {
+                    <NavLink class="sidebar-nav__item" href="admin/users">
+                        <span>▣</span>
+                        <span>Usuarios</span>
+                    </NavLink>
+                }
+            </Authorized>
+        </AuthorizeView>
     </div>
 </nav>
 
 <div class="sidebar-footer">
-    <div class="user-chip">
-        <span class="user-chip__avatar">JD</span>
-        <div>
-            <strong>Julián Domínguez</strong>
-            <small>Operador G5301</small>
-        </div>
-    </div>
+    <AuthorizeView>
+        <Authorized>
+            <div class="user-chip">
+                <span class="user-chip__avatar">@GetInitials(context.User)</span>
+                <div>
+                    <strong>@GetDisplayName(context.User)</strong>
+                    <small>@GetRole(context.User)</small>
+                </div>
+            </div>
+            <div class="logout-wrap">
+                <a class="logout-btn" href="/logout">Cerrar sesión</a>
+            </div>
+        </Authorized>
+    </AuthorizeView>
 </div>
+
+<style>
+    .logout-wrap {
+        margin-top: 10px;
+        text-align: center;
+    }
+    .logout-btn {
+        font-size: 12px;
+        color: #70869a;
+        text-decoration: none;
+        transition: color 0.15s;
+    }
+    .logout-btn:hover {
+        color: #e05252;
+    }
+</style>
+
+@code {
+    private static string GetInitials(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var given = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname")?.Value
+                    ?? user.FindFirst(ClaimTypes.GivenName)?.Value;
+        var surname = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname")?.Value
+                      ?? user.FindFirst(ClaimTypes.Surname)?.Value;
+        var name = user.Identity?.Name;
+
+        if (!string.IsNullOrWhiteSpace(given) && !string.IsNullOrWhiteSpace(surname))
+            return $"{given[0]}{surname[0]}".ToUpperInvariant();
+
+        if (!string.IsNullOrWhiteSpace(name) && name.Length >= 2)
+            return $"{name[0]}{name[1]}".ToUpperInvariant();
+
+        return "??";
+    }
+
+    private static string GetDisplayName(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var given = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname")?.Value
+                    ?? user.FindFirst(ClaimTypes.GivenName)?.Value ?? "";
+        var surname = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname")?.Value
+                      ?? user.FindFirst(ClaimTypes.Surname)?.Value ?? "";
+
+        if (!string.IsNullOrWhiteSpace(given) || !string.IsNullOrWhiteSpace(surname))
+            return $"{given} {surname}".Trim();
+
+        return user.Identity?.Name ?? "Usuario";
+    }
+
+    private static string GetRole(System.Security.Claims.ClaimsPrincipal user)
+    {
+        return user.FindFirst(ClaimTypes.Role)?.Value ?? "Operador";
+    }
+}
 
