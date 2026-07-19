@@ -1,0 +1,56 @@
+@page "/settings/profile"
+
+<PageTitle>Configuración de usuario</PageTitle>
+
+<section class="settings-layout">
+    <nav class="settings-nav">
+        <a class="settings-nav__item settings-nav__item--active" href="/settings/profile">Perfil</a>
+        <a class="settings-nav__item" href="/settings/notifications">Notificaciones</a>
+    </nav>
+
+    <div class="settings-stack">
+        <article class="panel">
+            <h3>Perfil</h3>
+            <form class="settings-form">
+                <label class="field-block"><span>Nombre</span><input value="Julián" /></label>
+                <label class="field-block"><span>Apellido</span><input value="Domínguez" /></label>
+                <label class="field-block"><span>Correo electrónico</span><input type="email" value="julian@hydropilot.io" /></label>
+                <label class="field-block"><span>Teléfono</span><input value="+54 11 5555 1234" /></label>
+                <div class="settings-form__footer">
+                    <p>Rol: <strong>Operador técnico</strong></p>
+                    <button class="btn-pill btn-pill--solid" type="button">Guardar cambios</button>
+                </div>
+            </form>
+        </article>
+
+        <article class="panel">
+            <h3>Seguridad</h3>
+            <div class="settings-list">
+                <div class="settings-list__row">
+                    <div>
+                        <strong>Contraseña</strong>
+                        <p>Última actualización: hace 3 meses</p>
+                    </div>
+                    <a href="/reset-password">Cambiar contraseña</a>
+                </div>
+                <div class="settings-list__row">
+                    <div>
+                        <strong>Autenticación de dos factores</strong>
+                        <p>Añade una capa extra de seguridad.</p>
+                    </div>
+                    <button class="switch" type="button" aria-pressed="false"><span></span></button>
+                </div>
+            </div>
+        </article>
+
+        <article class="panel">
+            <h3>Preferencias</h3>
+            <div class="preferences-grid">
+                <label class="field-block"><span>Idioma</span><select><option>Español</option><option>English</option><option>Português</option></select></label>
+                <label class="field-block"><span>Zona horaria</span><select><option>GMT-3 Buenos Aires</option><option>GMT-5 Bogotá</option><option>GMT+1 Madrid</option></select></label>
+                <label class="field-block"><span>Unidad de temperatura</span><select><option>Celsius</option><option>Fahrenheit</option></select></label>
+                <label class="field-block"><span>Formato de fecha</span><select><option>DD/MM/AAAA</option><option>MM/DD/AAAA</option></select></label>
+            </div>
+        </article>
+    </div>
+</section>

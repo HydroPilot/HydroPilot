@@ -1,36 +1,75 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">HydroPilot</a>
-    </div>
+﻿<div class="brand-block">
+    <a class="brand" href="/">
+        <span class="brand__mark">H</span>
+        <span class="brand__text">
+            <strong>HydroPilot</strong>
+            <small>Vista operativa</small>
+        </span>
+    </a>
 </div>
 
-<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+<nav class="sidebar-nav" aria-label="Navegación principal">
+    <div class="sidebar-nav__section">
+        <span class="sidebar-nav__label">Monitoreo</span>
 
-<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
+        <NavLink class="sidebar-nav__item" href="" Match="NavLinkMatch.All">
+            <span>⌂</span>
+            <span>Dashboard</span>
+        </NavLink>
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
+        <NavLink class="sidebar-nav__item" href="reports">
+            <span>▦</span>
+            <span>Informes</span>
+        </NavLink>
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
+        <NavLink class="sidebar-nav__item" href="forecasting">
+            <span>↗</span>
+            <span>Forecasting</span>
+        </NavLink>
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="db-test">
-                <span class="bi bi-database-fill-nav-menu" aria-hidden="true"></span> DB Test
-            </NavLink>
+        <NavLink class="sidebar-nav__item" href="simulation">
+            <span>⚗</span>
+            <span>Simulación</span>
+        </NavLink>
+
+        <NavLink class="sidebar-nav__item" href="optimization">
+            <span>✧</span>
+            <span>Optimización</span>
+        </NavLink>
+
+        <NavLink class="sidebar-nav__item" href="anomalies">
+            <span>⚠</span>
+            <span>Anomalías</span>
+        </NavLink>
+    </div>
+
+    <div class="sidebar-nav__section">
+        <span class="sidebar-nav__label">Ajustes</span>
+
+        <NavLink class="sidebar-nav__item" href="settings/profile">
+            <span>◉</span>
+            <span>Perfil</span>
+        </NavLink>
+
+        <NavLink class="sidebar-nav__item" href="settings/notifications">
+            <span>◍</span>
+            <span>Notificaciones</span>
+        </NavLink>
+
+        <NavLink class="sidebar-nav__item" href="db-test">
+            <span>◈</span>
+            <span>DB Test</span>
+        </NavLink>
+    </div>
+</nav>
+
+<div class="sidebar-footer">
+    <div class="user-chip">
+        <span class="user-chip__avatar">JD</span>
+        <div>
+            <strong>Julián Domínguez</strong>
+            <small>Operador G5301</small>
         </div>
-    </nav>
+    </div>
 </div>
 

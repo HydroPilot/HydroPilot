@@ -1,0 +1,68 @@
+@using System.Globalization
+
+<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="simple-line-chart simple-line-chart--@AccentClass" style="height:@HeightPx">
+    @if (Fill)
+    {
+        <path d="@FillPath" class="simple-line-chart__fill simple-line-chart__fill--@AccentClass"></path>
+    }
+    <path d="@LinePath" class="simple-line-chart__line simple-line-chart__line--@AccentClass" stroke-dasharray="@(Dashed ? "4 3" : null)"></path>
+</svg>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<double> Data { get; set; } = [];
+    [Parameter] public int Height { get; set; } = 280;
+    [Parameter] public bool Fill { get; set; } = true;
+    [Parameter] public bool Dashed { get; set; }
+    [Parameter] public string AccentClass { get; set; } = "hydro";
+
+    private string HeightPx => $"{Height}px";
+    private IReadOnlyList<(double X, double Y)> Points => BuildPoints();
+    private string LinePath => BuildPath(closeToBase: false);
+    private string FillPath => BuildPath(closeToBase: true);
+
+    private IReadOnlyList<(double X, double Y)> BuildPoints()
+    {
+        if (Data.Count == 0)
+        {
+            return [];
+        }
+
+        var min = Data.Min();
+        var max = Data.Max();
+        var range = Math.Max(max - min, 1);
+        var step = Data.Count == 1 ? 0 : 100d / (Data.Count - 1);
+
+        return Data
+            .Select((value, index) =>
+            {
+                var x = index * step;
+                var normalized = (value - min) / range;
+                var y = 92 - normalized * 72;
+                return (x, y);
+            })
+            .ToArray();
+    }
+
+    private string BuildPath(bool closeToBase)
+    {
+        if (Data.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var points = Points;
+        var path = $"M {points[0].X.ToString(CultureInfo.InvariantCulture)} {points[0].Y.ToString(CultureInfo.InvariantCulture)}";
+
+        for (var i = 1; i < points.Count; i++)
+        {
+            path += $" L {points[i].X.ToString(CultureInfo.InvariantCulture)} {points[i].Y.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        if (closeToBase)
+        {
+            path += " L 100 100 L 0 100 Z";
+        }
+
+        return path;
+    }
+}

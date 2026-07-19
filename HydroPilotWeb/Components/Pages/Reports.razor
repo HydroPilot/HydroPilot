@@ -1,0 +1,90 @@
+@page "/reports"
+
+<PageTitle>Informes</PageTitle>
+
+<section class="metric-row">
+    <article class="metric-card">
+        <p>Producción acumulada</p>
+        <strong>2.41 t</strong>
+        <span>+18% vs trimestre anterior</span>
+    </article>
+    <article class="metric-card">
+        <p>Costo por kg</p>
+        <strong>$ 412</strong>
+        <span>-6% vs trimestre anterior</span>
+    </article>
+    <article class="metric-card">
+        <p>Tasa de pérdida</p>
+        <strong>3.2 %</strong>
+        <span>Dentro del objetivo</span>
+    </article>
+</section>
+
+<section class="split-grid">
+    <article class="panel">
+        <div class="panel__header panel__header--compact">
+            <div>
+                <h3>Rendimiento mensual (kg)</h3>
+                <p>Últimos 12 meses</p>
+            </div>
+        </div>
+        <SimpleLineChart Data="YieldSeries" Height="240" />
+    </article>
+
+    <article class="panel">
+        <div class="panel__header panel__header--compact">
+            <div>
+                <h3>Consumo de agua (L)</h3>
+                <p>Esta semana</p>
+            </div>
+        </div>
+        <SimpleBarChart Bars="WaterBars" Height="240" />
+    </article>
+</section>
+
+<section class="panel panel-table">
+    <div class="panel__header panel__header--compact">
+        <h3>Informes recientes</h3>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Reporte</th>
+                <th>Fecha</th>
+                <th>Tipo</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var report in RecentReports)
+            {
+                <tr>
+                    <td class="mono">@report.Id</td>
+                    <td>@report.Title</td>
+                    <td class="muted">@report.Date</td>
+                    <td><span class="tag">@report.Type</span></td>
+                    <td class="align-right"><a href="#">Descargar</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+@code {
+    private static readonly IReadOnlyList<double> YieldSeries = [120, 132, 128, 145, 155, 162, 170, 168, 175, 188, 196, 210];
+    private static readonly IReadOnlyList<(string Label, int Value)> WaterBars =
+    [
+        ("Lun", 42), ("Mar", 51), ("Mié", 38), ("Jue", 55), ("Vie", 62), ("Sáb", 48), ("Dom", 33)
+    ];
+    private static readonly IReadOnlyList<ReportItem> RecentReports =
+    [
+        new("R-2026-014", "Reporte semanal de producción", "26 may · 09:14", "PDF"),
+        new("R-2026-013", "Análisis de consumo de nutrientes", "19 may · 18:02", "PDF"),
+        new("R-2026-012", "Auditoría de sensores Q2", "12 may · 11:45", "CSV"),
+        new("R-2026-011", "Cosecha lote A-12", "05 may · 07:30", "PDF"),
+    ];
+
+    private sealed record ReportItem(string Id, string Title, string Date, string Type);
+}
