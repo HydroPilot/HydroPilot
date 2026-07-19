@@ -1,4 +1,6 @@
 @page "/settings/profile"
+@attribute [Authorize]
+@using System.Security.Claims
 
 <PageTitle>Configuración de usuario</PageTitle>
 
@@ -9,36 +11,38 @@
     </nav>
 
     <div class="settings-stack">
-        <article class="panel">
-            <h3>Perfil</h3>
-            <form class="settings-form">
-                <label class="field-block"><span>Nombre</span><input value="Julián" /></label>
-                <label class="field-block"><span>Apellido</span><input value="Domínguez" /></label>
-                <label class="field-block"><span>Correo electrónico</span><input type="email" value="julian@hydropilot.io" /></label>
-                <label class="field-block"><span>Teléfono</span><input value="+54 11 5555 1234" /></label>
-                <div class="settings-form__footer">
-                    <p>Rol: <strong>Operador técnico</strong></p>
-                    <button class="btn-pill btn-pill--solid" type="button">Guardar cambios</button>
-                </div>
-            </form>
-        </article>
+        <AuthorizeView>
+            <Authorized>
+                <article class="panel">
+                    <h3>Perfil</h3>
+                    <form class="settings-form">
+                        <label class="field-block"><span>Nombre</span><input value="@GetClaim(context.User, ClaimTypes.GivenName)" readonly /></label>
+                        <label class="field-block"><span>Apellido</span><input value="@GetClaim(context.User, ClaimTypes.Surname)" readonly /></label>
+                        <label class="field-block"><span>Correo electrónico</span><input type="email" value="@GetClaim(context.User, ClaimTypes.Email)" readonly /></label>
+                        <label class="field-block"><span>Proveedor de identidad</span><input value="Google" readonly /></label>
+                        <div class="settings-form__footer">
+                            <p>Rol: <strong>Operador técnico</strong></p>
+                            <p class="settings-form__note">Tus datos provienen de tu cuenta de Google.</p>
+                        </div>
+                    </form>
+                </article>
+            </Authorized>
+        </AuthorizeView>
 
         <article class="panel">
             <h3>Seguridad</h3>
             <div class="settings-list">
                 <div class="settings-list__row">
                     <div>
-                        <strong>Contraseña</strong>
-                        <p>Última actualización: hace 3 meses</p>
+                        <strong>Autenticación</strong>
+                        <p>Inicio de sesión gestionado por Google (OAuth 2.0)</p>
                     </div>
-                    <a href="/reset-password">Cambiar contraseña</a>
                 </div>
                 <div class="settings-list__row">
                     <div>
-                        <strong>Autenticación de dos factores</strong>
-                        <p>Añade una capa extra de seguridad.</p>
+                        <strong>Verificación en dos pasos</strong>
+                        <p>Gestionada desde tu cuenta de Google</p>
                     </div>
-                    <button class="switch" type="button" aria-pressed="false"><span></span></button>
                 </div>
             </div>
         </article>
@@ -54,3 +58,21 @@
         </article>
     </div>
 </section>
+
+<style>
+    .settings-form__note {
+        font-size: 12px;
+        color: #70869a;
+        margin-top: 8px;
+    }
+</style>
+
+@code {
+    private static string GetClaim(ClaimsPrincipal user, string claimType)
+    {
+        var googlePrefix = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/";
+        var value = user.FindFirst($"{googlePrefix}{claimType.ToLowerInvariant()}")?.Value
+                    ?? user.FindFirst(claimType)?.Value;
+        return value ?? "";
+    }
+}
