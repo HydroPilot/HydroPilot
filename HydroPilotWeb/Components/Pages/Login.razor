@@ -23,84 +23,177 @@
             </svg>
             Iniciar sesión con Google
         </a>
+        
+        <div class="login-card__divider"></div>
 
-        <p class="login-card__hint">Usá tu cuenta de Google para acceder</p>
+        <form method="post" action="/login-admin" class="admin-form">
+            <label class="field-block"><span>Admin</span><input type="password" name="password" placeholder="••••••••" /></label>
+            <p class="admin-form__error">@ErrorUi</p>
+            <button type="submit" class="btn-admin">Acceso admin</button>
+        </form>
+
+
     </div>
 </div>
 
 <style>
     .login-page {
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #0f1923 0%, #1a2f3a 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #0f1923 0%, #1a2f3a 100%);
     }
 
     .login-card {
-        background: #162231;
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 16px;
-        padding: 48px 40px;
-        width: 100%;
-        max-width: 400px;
-        text-align: center;
+    background: #162231;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 48px 40px;
+    width: 100%;
+    max-width: 400px;
+    text-align: center;
     }
 
     .login-card__brand {
-        margin-bottom: 32px;
+    margin-bottom: 32px;
     }
 
     .login-card__mark {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 56px;
-        height: 56px;
-        background: linear-gradient(135deg, #00d4aa, #0088cc);
-        border-radius: 14px;
-        font-size: 28px;
-        font-weight: 700;
-        color: #fff;
-        margin-bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, #00d4aa, #0088cc);
+    border-radius: 14px;
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 16px;
     }
 
     .login-card h1 {
-        font-size: 24px;
-        font-weight: 700;
-        color: #e4ecf6;
-        margin: 0 0 8px;
+    font-size: 24px;
+    font-weight: 700;
+    color: #e4ecf6;
+    margin: 0 0 8px;
     }
 
     .login-card p {
-        color: #70869a;
-        font-size: 14px;
-        margin: 0;
+    color: #70869a;
+    font-size: 14px;
+    margin: 0;
     }
 
     .btn-google {
-        display: inline-flex;
-        align-items: center;
-        gap: 12px;
-        background: #ffffff;
-        color: #1f1f1f;
-        font-weight: 600;
-        font-size: 15px;
-        padding: 12px 28px;
-        border-radius: 8px;
-        text-decoration: none;
-        transition: background 0.15s, box-shadow 0.15s;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    background: #ffffff;
+    color: #1f1f1f;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 12px 28px;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: background 0.15s, box-shadow 0.15s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
 
     .btn-google:hover {
-        background: #f2f2f2;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    background: #f2f2f2;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    }
+
+    .login-card__divider {
+    margin: 24px 0 20px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    text-align: center;
+    position: relative;
+    }
+
+    .login-card__divider span {
+    position: relative;
+    top: -10px;
+    background: #162231;
+    padding: 0 12px;
+    font-size: 11px;
+    color: #475d70;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    }
+
+    .admin-form {
+    text-align: left;
+    }
+
+    .admin-form .field-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+    }
+
+    .admin-form .field-block span {
+    font-size: 13px;
+    color: #70869a;
+    font-weight: 500;
+    }
+
+    .admin-form .field-block input {
+    background: #0f1923;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: #e4ecf6;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+    }
+
+    .admin-form .field-block input:focus {
+    border-color: #00d4aa;
+    }
+
+    .admin-form__error {
+    color: #e05252;
+    font-size: 12px;
+    margin: 0 0 8px;
+    }
+
+    .btn-admin {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 10px 20px;
+    color: #70869a;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .btn-admin:hover {
+    background: rgba(255,255,255,0.05);
+    color: #e4ecf6;
+    border-color: rgba(255,255,255,0.2);
     }
 
     .login-card__hint {
-        margin-top: 20px;
-        font-size: 12px;
-        color: #475d70;
+    margin-top: 20px;
+    font-size: 12px;
+    color: #475d70;
     }
 </style>
+
+@code {
+    [SupplyParameterFromQuery]
+    private string? Error { get; set; }
+
+    private string ErrorUi => Error is not null ? 
+        (Error == "password_required")? "Contraseña requerida." :
+           (Error == "invalid_password") ? "Contraseña incorrecta." : ""    
+        : "";
+}

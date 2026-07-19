@@ -21,7 +21,7 @@
                         <label class="field-block"><span>Correo electrónico</span><input type="email" value="@GetClaim(context.User, ClaimTypes.Email)" readonly /></label>
                         <label class="field-block"><span>Proveedor de identidad</span><input value="Google" readonly /></label>
                         <div class="settings-form__footer">
-                            <p>Rol: <strong>Operador técnico</strong></p>
+                            <p>Rol: <strong>@GetRole(context.User)</strong></p>
                             <p class="settings-form__note">Tus datos provienen de tu cuenta de Google.</p>
                         </div>
                     </form>
@@ -74,5 +74,10 @@
         var value = user.FindFirst($"{googlePrefix}{claimType.ToLowerInvariant()}")?.Value
                     ?? user.FindFirst(claimType)?.Value;
         return value ?? "";
+    }
+
+    private static string GetRole(ClaimsPrincipal user)
+    {
+        return user.FindFirst(ClaimTypes.Role)?.Value ?? "Operador";
     }
 }
