@@ -21,7 +21,7 @@ public class User
     public string Surname { get; set; } = string.Empty;
 
     [MaxLength(64)]
-    public string Role { get; set; } = "Operador";
+    public string Role { get; set; } = "no-asignado";
 
     [MaxLength(256)]
     public string? PasswordHash { get; set; }

@@ -1,5 +1,5 @@
 @page "/reports"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 
 <PageTitle>Informes</PageTitle>
 

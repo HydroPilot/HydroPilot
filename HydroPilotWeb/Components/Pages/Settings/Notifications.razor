@@ -1,5 +1,5 @@
 @page "/settings/notifications"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 
 <PageTitle>Configuración de notificaciones</PageTitle>
 

@@ -38,7 +38,7 @@ public class UserService
             return existingUser;
         }
 
-        var role = await context.Users.AnyAsync() ? "Operador" : "Administrador";
+        var role = "no-asignado";
 
         var newUser = new User
         {
@@ -84,5 +84,17 @@ public class UserService
             user.Role = role;
             await context.SaveChangesAsync();
         }
+    }
+
+    public async Task<bool> DeleteUserAsync(int userId)
+    {
+        await using var context = _dbFactory.CreateDbContext();
+        var user = await context.Users.FindAsync(userId);
+        if (user == null || user.PasswordHash != null)
+            return false;
+
+        context.Users.Remove(user);
+        await context.SaveChangesAsync();
+        return true;
     }
 }

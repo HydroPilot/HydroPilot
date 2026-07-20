@@ -1,0 +1,67 @@
+@page "/no-asignado"
+@layout Layout.LoginLayout
+@attribute [Authorize]
+
+<PageTitle>Sin rol asignado - HydroPilot</PageTitle>
+
+<div class="no-rol-page">
+    <div class="no-rol-card">
+        <div class="no-rol-card__icon">🚫</div>
+        <h2>No tenés un rol asignado</h2>
+        <p>Tu cuenta fue creada pero todavia no tiene permisos para acceder al sistema.</p>
+        <p>Contactate con el administrador para que te asigne un rol.</p>
+        <a href="/logout" class="no-rol-card__logout">Cerrar sesion</a>
+    </div>
+</div>
+
+<style>
+    .no-rol-page {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #0f1923 0%, #1a2f3a 100%);
+        padding: 40px 20px;
+    }
+
+    .no-rol-card {
+        text-align: center;
+        max-width: 460px;
+        padding: 40px 32px;
+        background: #162231;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px;
+    }
+
+    .no-rol-card__icon {
+        font-size: 48px;
+        margin-bottom: 20px;
+    }
+
+    .no-rol-card h2 {
+        color: #e4ecf6;
+        font-size: 20px;
+        font-weight: 700;
+        margin: 0 0 12px;
+    }
+
+    .no-rol-card p {
+        color: #70869a;
+        font-size: 14px;
+        line-height: 1.6;
+        margin: 0 0 8px;
+    }
+
+    .no-rol-card__logout {
+        display: inline-block;
+        margin-top: 24px;
+        color: #475d70;
+        font-size: 13px;
+        text-decoration: none;
+        transition: color 0.15s;
+    }
+
+    .no-rol-card__logout:hover {
+        color: #e05252;
+    }
+</style>
