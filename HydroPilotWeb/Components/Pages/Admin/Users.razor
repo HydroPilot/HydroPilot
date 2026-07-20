@@ -6,6 +6,7 @@
 @inject UserService UserService
 @inject AuthenticationStateProvider AuthState
 
+<div class="users-page">
 <PageTitle>Gestión de usuarios - HydroPilot</PageTitle>
 
 <div class="page-header">
@@ -21,7 +22,8 @@
                 <th>Email</th>
                 <th>Proveedor</th>
                 <th>Rol</th>
-                <th>Último acceso</th>
+                <th>Ultimo acceso</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -46,6 +48,7 @@
                         {
                             <select class="role-select" value="@user.Role"
                                     @onchange="e => OnRoleChanged(user.Id, e.Value?.ToString() ?? user.Role)">
+                                <option value="no-asignado">Sin rol (no-asignado)</option>
                                 <option value="Operador">Operador</option>
                                 <option value="Productor">Productor</option>
                                 <option value="Soporte Técnico">Soporte Técnico</option>
@@ -53,6 +56,28 @@
                         }
                     </td>
                     <td>@user.LastLoginAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                    <td>
+                        @if (!isSelf && user.PasswordHash == null)
+                        {
+                            @if (_deletingUserId == user.Id)
+                            {
+                                <span class="inline-delete">
+                                    <span class="inline-delete__label">Eliminar?</span>
+                                    <button type="button" class="inline-delete__btn inline-delete__btn--no"
+                                            @onclick="() => _deletingUserId = null">✕</button>
+                                    <button type="button" class="inline-delete__btn inline-delete__btn--yes"
+                                            @onclick="() => ConfirmDelete(user.Id)">✓</button>
+                                </span>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn-delete" @onclick="() => _deletingUserId = user.Id"
+                                        title="Eliminar usuario">
+                                    🗑
+                                </button>
+                            }
+                        }
+                    </td>
                 </tr>
             }
         </tbody>
@@ -66,6 +91,7 @@
         </div>
     }
 </div>
+</div>
 
 <style>
     .page-header {
@@ -75,19 +101,19 @@
     .page-header h2 {
         font-size: 22px;
         font-weight: 700;
-        color: #e4ecf6;
+        color: var(--text-primary);
         margin: 0 0 4px;
     }
 
     .page-header p {
-        color: #70869a;
+        color: var(--text-muted);
         font-size: 14px;
         margin: 0;
     }
 
     .panel {
-        background: #162231;
-        border: 1px solid rgba(255,255,255,0.06);
+        background: var(--bg-panel);
+        border: 1px solid var(--border-panel);
         border-radius: 14px;
         padding: 22px;
     }
@@ -101,22 +127,22 @@
         text-align: left;
         font-size: 12px;
         font-weight: 600;
-        color: #70869a;
+        color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         padding: 12px 16px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
+        border-bottom: 1px solid var(--border-panel);
     }
 
     .users-table td {
         padding: 12px 16px;
-        border-bottom: 1px solid rgba(255,255,255,0.04);
+        border-bottom: 1px solid var(--border-row);
         font-size: 14px;
-        color: #e4ecf6;
+        color: var(--text-primary);
     }
 
     .users-table tr:hover td {
-        background: rgba(255,255,255,0.02);
+        background: var(--row-hover);
     }
 
     .user-cell {
@@ -131,38 +157,38 @@
         justify-content: center;
         width: 32px;
         height: 32px;
-        background: rgba(0,212,170,0.15);
+        background: var(--accent-glow);
         border-radius: 8px;
         font-size: 12px;
         font-weight: 600;
-        color: #00d4aa;
+        color: var(--accent);
         flex-shrink: 0;
     }
 
     .role-text {
         font-size: 14px;
-        color: #70869a;
+        color: var(--text-muted);
         font-style: italic;
     }
 
     .role-select {
-        background: #0f1923;
-        border: 1px solid rgba(255,255,255,0.12);
+        background: var(--bg-input);
+        border: 1px solid var(--border-input);
         border-radius: 6px;
         padding: 6px 10px;
-        color: #e4ecf6;
+        color: var(--text-primary);
         font-size: 13px;
         outline: none;
         cursor: pointer;
     }
 
     .role-select option {
-        background: #162231;
-        color: #e4ecf6;
+        background: var(--bg-panel);
+        color: var(--text-primary);
     }
 
     .role-select:focus {
-        border-color: #00d4aa;
+        border-color: var(--accent);
     }
 
     .save-bar {
@@ -172,12 +198,75 @@
         gap: 16px;
         margin-top: 16px;
         padding: 14px 16px;
-        border-top: 1px solid rgba(255,255,255,0.06);
+        border-top: 1px solid var(--border-panel);
     }
 
     .save-bar__hint {
         font-size: 13px;
-        color: #70869a;
+        color: var(--text-muted);
+    }
+
+    .btn-delete {
+        background: transparent;
+        border: 1px solid var(--border-input);
+        border-radius: 6px;
+        padding: 6px 10px;
+        cursor: pointer;
+        opacity: 0.4;
+        transition: opacity 0.15s, background 0.15s;
+        font-size: 14px;
+    }
+
+    .btn-delete:hover {
+        opacity: 1;
+        background: rgba(239,68,68,0.12);
+        border-color: rgba(239,68,68,0.4);
+    }
+
+    .inline-delete {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+    }
+
+    .inline-delete__label {
+        font-size: 13px;
+        color: var(--text-muted);
+    }
+
+    .inline-delete__btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        font-size: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.15s;
+        padding: 0;
+    }
+
+    .inline-delete__btn--no {
+        background: var(--chip-bg);
+        color: var(--text-muted);
+        border-color: var(--border-panel);
+    }
+
+    .inline-delete__btn--no:hover {
+        background: var(--accent-glow);
+        color: var(--text-secondary);
+    }
+
+    .inline-delete__btn--yes {
+        background: rgba(239,68,68,0.15);
+        color: #f87171;
+    }
+
+    .inline-delete__btn--yes:hover {
+        background: rgba(239,68,68,0.25);
     }
 </style>
 
@@ -185,6 +274,7 @@
     private List<User> _users = new();
     private Dictionary<int, string> _roleChanges = new();
     private int _currentUserId;
+    private int? _deletingUserId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -218,6 +308,18 @@
         }
 
         _roleChanges.Clear();
+    }
+
+    private async Task ConfirmDelete(int userId)
+    {
+        var success = await UserService.DeleteUserAsync(userId);
+        if (success)
+        {
+            var user = _users.First(u => u.Id == userId);
+            _users.Remove(user);
+            _roleChanges.Remove(userId);
+        }
+        _deletingUserId = null;
     }
 
     private static string GetInitials(User user)

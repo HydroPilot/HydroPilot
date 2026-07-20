@@ -40,6 +40,11 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             var identity = (ClaimsIdentity)ctx.Principal!.Identity!;
             identity.AddClaim(new Claim(ClaimTypes.Role, user.Role));
             identity.AddClaim(new Claim("user_id", user.Id.ToString()));
+
+            if (user.Role == "no-asignado")
+            {
+                ctx.Properties.RedirectUri = "/no-asignado";
+            }
         };
     });
 
@@ -47,6 +52,13 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("RequireAdministrador", policy =>
         policy.RequireClaim(ClaimTypes.Role, "Administrador"));
+
+    options.AddPolicy("RequireAssigned", policy =>
+        policy.RequireAssertion(ctx =>
+            ctx.User.HasClaim(ClaimTypes.Role, "Administrador") ||
+            ctx.User.HasClaim(ClaimTypes.Role, "Operador") ||
+            ctx.User.HasClaim(ClaimTypes.Role, "Productor") ||
+            ctx.User.HasClaim(ClaimTypes.Role, "Soporte Técnico")));
 });
 builder.Services.AddCascadingAuthenticationState();
 

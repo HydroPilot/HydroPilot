@@ -1,5 +1,5 @@
 @page "/settings/profile"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 @using System.Security.Claims
 
 <PageTitle>Configuración de usuario</PageTitle>

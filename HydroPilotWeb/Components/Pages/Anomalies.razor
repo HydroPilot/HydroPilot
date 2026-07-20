@@ -1,5 +1,5 @@
 @page "/anomalies"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 
 <PageTitle>Anomalías</PageTitle>
 

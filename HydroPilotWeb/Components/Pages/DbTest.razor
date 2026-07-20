@@ -1,5 +1,5 @@
 @page "/db-test"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
 @using Microsoft.EntityFrameworkCore
 @inject IDbContextFactory<HydroPilotDbContext> DbFactory

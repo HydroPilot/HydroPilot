@@ -1,5 +1,5 @@
 @page "/forecasting"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 
 <PageTitle>Forecasting</PageTitle>
 

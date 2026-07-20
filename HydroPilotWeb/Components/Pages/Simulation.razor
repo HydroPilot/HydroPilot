@@ -1,5 +1,5 @@
 @page "/simulation"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 
 @using System.Globalization
 

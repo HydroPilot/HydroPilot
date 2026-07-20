@@ -1,5 +1,5 @@
 ﻿@page "/"
-@attribute [Authorize]
+@attribute [Authorize(Policy = "RequireAssigned")]
 
 <PageTitle>Home</PageTitle>
 
@@ -117,7 +117,7 @@
 				}
 			</div>
 		</article>
-	</section>
+    </section>
 </div>
 
 @code {
