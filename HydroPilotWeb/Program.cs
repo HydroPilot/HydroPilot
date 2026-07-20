@@ -25,7 +25,10 @@ builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
         throw new InvalidOperationException("Falta la cadena de conexión AzureSql o activa HydroPilot:UseLocalDb=true para desarrollo local.");
     }
 
-    options.UseSqlServer(azureSqlConnectionString);
+    options.UseSqlServer(azureSqlConnectionString, sqlOptions =>
+    {
+        sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null);
+    });
 });
 
 builder.Services.AddScoped<UserService>();

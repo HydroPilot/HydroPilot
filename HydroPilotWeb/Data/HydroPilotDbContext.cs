@@ -26,15 +26,6 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Type).HasMaxLength(50);
-
-            if (Database.IsSqlServer())
-            {
-                entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
-            }
-            else if (Database.IsSqlite())
-            {
-                entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            }
         });
 
         modelBuilder.Entity<User>(entity =>
