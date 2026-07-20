@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using HydroPilotWeb.Models;
 
 namespace HydroPilotWeb.Data;
@@ -9,6 +10,12 @@ public class HydroPilotDbContext : DbContext
 
     public DbSet<Sensor> Sensors => Set<Sensor>();
     public DbSet<User> Users => Set<User>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.ConfigureWarnings(w =>
+            w.Ignore(RelationalEventId.PendingModelChangesWarning));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
