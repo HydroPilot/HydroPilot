@@ -8,28 +8,14 @@ using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var useLocalDb = builder.Configuration.GetValue("HydroPilot:UseLocalDb", false);
+var connectionStringName = useLocalDb ? "LocalSqlServer" : "AzureSql";
+var connectionString = builder.Configuration.GetConnectionString(connectionStringName)
+    ?? throw new InvalidOperationException($"Falta la cadena de conexión '{connectionStringName}'.");
+
 builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
-{
-    var useLocalDatabase = builder.Configuration.GetValue("HydroPilot:UseLocalDb", false);
-    var azureSqlConnectionString = builder.Configuration.GetConnectionString("AzureSql");
-
-    if (useLocalDatabase)
-    {
-        var sqlitePath = Path.Combine(builder.Environment.ContentRootPath, "hydropilot.db");
-        options.UseSqlite($"Data Source={sqlitePath}");
-        return;
-    }
-
-    if (string.IsNullOrWhiteSpace(azureSqlConnectionString))
-    {
-        throw new InvalidOperationException("Falta la cadena de conexión AzureSql o activa HydroPilot:UseLocalDb=true para desarrollo local.");
-    }
-
-    options.UseSqlServer(azureSqlConnectionString, sqlOptions =>
-    {
-        sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null);
-    });
-});
+    options.UseSqlServer(connectionString, sqlOptions =>
+        sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
 
 builder.Services.AddScoped<UserService>();
 
@@ -76,17 +62,9 @@ using (var scope = app.Services.CreateScope())
     DbInitializer.Initialize(context, builder.Configuration);
 }
 
-var useLocalDatabase = builder.Configuration.GetValue("HydroPilot:UseLocalDb", false);
-
-// Configure the HTTP request pipeline.
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    app.UseHsts();
-}
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 
-if(!useLocalDatabase)
+if(!useLocalDb)
 {
     app.UseHttpsRedirection();
 }
