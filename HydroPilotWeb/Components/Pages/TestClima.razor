@@ -172,8 +172,7 @@
 
     private static DateTime ToLocalTime(DateTime utc)
     {
-        var tz = TimeZoneInfo.FindSystemTimeZoneById("Argentina Standard Time");
-        return TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
+        return utc.AddHours(-3);
     }
 
     protected override async Task OnInitializedAsync()
