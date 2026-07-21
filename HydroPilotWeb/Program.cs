@@ -18,6 +18,8 @@ builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
         sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
 
 builder.Services.AddScoped<UserService>();
+builder.Services.AddHttpClient<WeatherService>();
+// builder.Services.AddHostedService<WeatherFetcherHostedService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

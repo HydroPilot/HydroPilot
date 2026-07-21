@@ -1,0 +1,224 @@
+@page "/test-clima"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@rendermode InteractiveServer
+@inject WeatherService WeatherService
+@inject IDbContextFactory<HydroPilotDbContext> DbFactory
+@using Microsoft.EntityFrameworkCore
+@implements IDisposable
+
+<PageTitle>Test Clima - HydroPilot</PageTitle>
+
+<div class="page-header">
+    <h2>Test Clima</h2>
+    <p>OpenWeather One Call 4.0</p>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<div class="panel">
+    <div class="panel__topbar">
+        <span class="panel__count">@_records.Count registro(s)</span>
+        <button type="button" class="btn-pill btn-pill--solid" @onclick="FetchWeather" disabled="@_loading">
+            @(_loading ? "Cargando..." : "Fetch Current Weather")
+        </button>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="spinner-wrap">
+            <div class="spinner"></div>
+        </div>
+    }
+
+    @if (_records.Count == 0 && !_loading)
+    {
+        <div class="empty-state">Sin registros. Hacé clic en "Fetch Current Weather".</div>
+    }
+    else
+    {
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Timestamp (UTC)</th>
+                    <th>Temp</th>
+                    <th>Sensacion</th>
+                    <th>Humedad</th>
+                    <th>Presion</th>
+                    <th>Viento</th>
+                    <th>Nubes</th>
+                    <th>Visibilidad</th>
+                    <th>Clima</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _records)
+                {
+                    <tr>
+                        <td>@ToLocalTime(r.Timestamp).ToString("dd/MM/yyyy HH:mm")</td>
+                        <td>@r.Temp.ToString("F1")°C</td>
+                        <td>@r.FeelsLike.ToString("F1")°C</td>
+                        <td>@r.Humidity.ToString("F0")%</td>
+                        <td>@r.Pressure.ToString("F0") hPa</td>
+                        <td>@r.WindSpeed.ToString("F1") m/s</td>
+                        <td>@r.Clouds%</td>
+                        <td>@(r.Visibility / 1000) km</td>
+                        <td>@r.Description</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+<style>
+    .page-header {
+        margin-bottom: 24px;
+    }
+
+    .page-header h2 {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 0 0 4px;
+    }
+
+    .page-header p {
+        color: var(--text-muted);
+        font-size: 14px;
+        margin: 0;
+    }
+
+    .panel {
+        background: var(--bg-panel);
+        border: 1px solid var(--border-panel);
+        border-radius: 14px;
+        padding: 22px;
+    }
+
+    .panel__topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+    }
+
+    .panel__count {
+        font-size: 14px;
+        color: var(--text-muted);
+    }
+
+    .spinner-wrap {
+        display: flex;
+        justify-content: center;
+        padding: 32px;
+    }
+
+    .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--border-panel);
+        border-top: 3px solid var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-muted);
+        font-size: 14px;
+    }
+
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .data-table th {
+        text-align: left;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-panel);
+    }
+
+    .data-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-row);
+        font-size: 14px;
+        color: var(--text-primary);
+    }
+
+    .data-table tr:hover td {
+        background: var(--row-hover);
+    }
+</style>
+
+@code {
+    private List<WeatherRecord> _records = [];
+    private bool _loading;
+    private string? _error;
+    private CancellationTokenSource _cts = new();
+
+    private static DateTime ToLocalTime(DateTime utc)
+    {
+        var tz = TimeZoneInfo.FindSystemTimeZoneById("Argentina Standard Time");
+        return TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRecords();
+    }
+
+    private async Task LoadRecords()
+    {
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
+            _records = await context.WeatherRecords
+                .OrderByDescending(w => w.Timestamp)
+                .ToListAsync(_cts.Token);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Error al cargar registros: {ex.Message}";
+        }
+    }
+
+    private async Task FetchWeather()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            await WeatherService.FetchAndStoreAsync();
+            await LoadRecords();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Error al obtener datos del clima: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}
