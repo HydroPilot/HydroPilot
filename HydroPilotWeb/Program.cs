@@ -64,6 +64,8 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddCascadingAuthenticationState();
 
+builder.Services.AddControllers();
+
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
@@ -86,6 +88,8 @@ if(!useLocalDb)
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+
+app.MapControllers();
 
 app.UseAuthentication();
 app.UseAuthorization();
