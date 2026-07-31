@@ -7,8 +7,6 @@
 
 <PageTitle>DB Test</PageTitle>
 
-<h3>Prueba de conexión Azure SQL</h3>
-
 @if (error is not null)
 {
     <div class="alert alert-danger">@error</div>
@@ -18,24 +16,22 @@
 {
     <div class="d-flex justify-content-center">
         <div class="spinner-border" role="status">
-            <span class="visually-hidden">Verificando conexión...</span>
+            <span class="visually-hidden">Cargando...</span>
         </div>
     </div>
 }
 else
 {
-    <div class="alert alert-success">
-        <strong>Conectado a Azure SQL.</strong> Se encontraron @sensors.Count sensores en la base de datos.
-    </div>
-
+    <h3>Sensores</h3>
     <table class="table table-striped">
         <thead>
             <tr>
                 <th>Id</th>
                 <th>Nombre</th>
                 <th>Tipo</th>
+                <th>Nodo</th>
                 <th>Activo</th>
-                <th>Fecha de creación</th>
+                <th>Alta</th>
                 <th>Acciones</th>
             </tr>
         </thead>
@@ -45,7 +41,8 @@ else
                 <tr>
                     <td>@s.Id</td>
                     <td>@s.Name</td>
-                    <td>@s.Type</td>
+                    <td>@(s.SensorType?.Name ?? "-")</td>
+                    <td>@(s.Node?.Identifier ?? "-")</td>
                     <td>
                         @if (s.IsActive)
                         {
@@ -67,35 +64,83 @@ else
         </tbody>
     </table>
 
-    <div class="card">
-        <div class="card-header">Agregar nuevo sensor</div>
-        <div class="card-body">
-            <div class="mb-3">
-                <label class="form-label">Nombre</label>
-                <input @bind="newName" class="form-control" />
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Tipo</label>
-                <input @bind="newType" class="form-control" />
-            </div>
-            <button class="btn btn-primary" @onclick="AddSensor" disabled="@loading">
-                @(loading ? "Guardando..." : "Guardar")
+    <div class="d-flex justify-content-between align-items-center mt-4">
+        <h4>Lecturas</h4>
+        <div class="d-flex gap-2">
+            <select class="form-select form-select-sm" style="width: auto;" @bind="selectedGreenhouseId" @bind:after="LoadReadings">
+                <option value="">Todos los invernaderos</option>
+                @foreach (var g in greenhouses)
+                {
+                    <option value="@g.Id">@g.Name</option>
+                }
+            </select>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="selectedTimeRange" @bind:after="LoadReadings">
+                <option value="1m">Último minuto</option>
+                <option value="1h">Última hora</option>
+                <option value="24h" selected>Últimas 24 horas</option>
+                <option value="7d">Última semana</option>
+                <option value="30d">Último mes</option>
+                <option value="all">Todo</option>
+            </select>
+            <button class="btn btn-outline-danger btn-sm" @onclick="DeleteAllReadings" disabled="@loading">
+                @(loading ? "Eliminando..." : "Eliminar todas las lecturas")
             </button>
         </div>
     </div>
+
+    @if (recentReadings is not null && recentReadings.Count > 0)
+    {
+        <table class="table table-sm table-striped mt-2">
+            <thead>
+                <tr>
+                    <th>Sensor</th>
+                    <th>Tipo</th>
+                    <th>Valor</th>
+                    <th>Unidad</th>
+                    <th>Fecha</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in recentReadings)
+                {
+                    <tr>
+                        <td>@r.Sensor?.Name</td>
+                        <td>@(r.Sensor?.SensorType?.Name ?? "-")</td>
+                        <td>@r.Value</td>
+                        <td>@(r.Sensor?.MeasurementUnit?.Symbol ?? "-")</td>
+                        <td>@r.Timestamp.ToLocalTime()</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p class="text-muted">No hay lecturas registradas en este período.</p>
+    }
 }
 
 @code {
     private List<Sensor>? sensors;
+    private List<SensorReading>? recentReadings;
+    private List<Greenhouse> greenhouses = [];
     private string? error;
-    private string newName = "";
-    private string newType = "";
     private bool loading;
+    private string selectedGreenhouseId = "";
+    private string selectedTimeRange = "24h";
     private CancellationTokenSource _cts = new();
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadGreenhouses();
         await LoadSensors();
+        await LoadReadings();
+    }
+
+    private async Task LoadGreenhouses()
+    {
+        await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
+        greenhouses = await context.Greenhouses.OrderBy(g => g.Name).ToListAsync(_cts.Token);
     }
 
     private async Task LoadSensors()
@@ -103,7 +148,13 @@ else
         try
         {
             await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
-            sensors = await context.Sensors.OrderBy(s => s.Id).ToListAsync(_cts.Token);
+
+            sensors = await context.Sensors
+                .Include(s => s.SensorType)
+                .Include(s => s.Node)
+                .OrderBy(s => s.Id)
+                .ToListAsync(_cts.Token);
+
             error = null;
         }
         catch (Exception ex)
@@ -113,34 +164,48 @@ else
         }
     }
 
-    private async Task AddSensor()
+    private async Task LoadReadings()
     {
-        if (string.IsNullOrWhiteSpace(newName)) return;
-
-        loading = true;
         try
         {
             await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
-            context.Sensors.Add(new Sensor
-            {
-                Name = newName,
-                Type = newType,
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow
-            });
-            await context.SaveChangesAsync(_cts.Token);
-            newName = "";
-            newType = "";
-            await LoadSensors();
+
+            var query = context.SensorReadings
+                .Include(r => r.Sensor!).ThenInclude(s => s.SensorType)
+                .Include(r => r.Sensor!).ThenInclude(s => s.MeasurementUnit)
+                .Include(r => r.Sensor!).ThenInclude(s => s.Node)
+                .AsQueryable();
+
+            var since = GetTimeRangeCutoff();
+            if (since.HasValue)
+                query = query.Where(r => r.Timestamp >= since.Value);
+
+            if (!string.IsNullOrEmpty(selectedGreenhouseId) && int.TryParse(selectedGreenhouseId, out var ghId))
+                query = query.Where(r => r.Sensor!.Node!.GreenhouseId == ghId);
+
+            recentReadings = await query
+                .OrderByDescending(r => r.Timestamp)
+                .Take(200)
+                .ToListAsync(_cts.Token);
         }
         catch (Exception ex)
         {
-            error = $"Error al guardar: {ex.Message}";
+            error = $"Error al cargar lecturas: {ex.Message}";
         }
-        finally
+    }
+
+    private DateTime? GetTimeRangeCutoff()
+    {
+        var now = DateTime.UtcNow;
+        return selectedTimeRange switch
         {
-            loading = false;
-        }
+            "1m" => now.AddMinutes(-1),
+            "1h" => now.AddHours(-1),
+            "24h" => now.AddHours(-24),
+            "7d" => now.AddDays(-7),
+            "30d" => now.AddDays(-30),
+            _ => null // "all"
+        };
     }
 
     private async Task DeleteSensor(int id)
@@ -160,6 +225,26 @@ else
         catch (Exception ex)
         {
             error = $"Error al eliminar: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task DeleteAllReadings()
+    {
+        loading = true;
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync(_cts.Token);
+            var deleted = await context.SensorReadings.ExecuteDeleteAsync(_cts.Token);
+            error = $"Se eliminaron {deleted} lecturas.";
+            await LoadReadings();
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al eliminar lecturas: {ex.Message}";
         }
         finally
         {
