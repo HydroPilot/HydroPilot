@@ -488,35 +488,39 @@ else
 
         var closed = await context.Lots
             .Where(l => l.ActualYieldKg.HasValue)
-            .Select(l => new
-            {
-                l.ActualYieldKg,
-                l.ActualHarvestDate,
-                LatestPrediction = l.Predictions
-                    .OrderByDescending(p => p.GeneratedAt)
-                    .FirstOrDefault()
-            })
+            .Select(l => new { l.Id, l.ActualYieldKg, l.ActualHarvestDate })
             .ToListAsync();
 
-        var withPred = closed.Where(c => c.LatestPrediction is not null).ToList();
-        if (withPred.Count == 0) return (null, null, 0);
+        var closedIds = closed.Select(c => c.Id).ToList();
+        var predictions = await context.Predictions
+            .Where(p => closedIds.Contains(p.LotId))
+            .OrderByDescending(p => p.GeneratedAt)
+            .ToListAsync();
+
+        if (predictions.Count == 0) return (null, null, 0);
 
         var mape = new List<decimal>();
         var days = new List<decimal>();
+        var cycles = 0;
 
-        foreach (var c in withPred)
+        foreach (var c in closed)
         {
-            var p = c.LatestPrediction!;
-            if (p.EstimatedYield.HasValue && p.EstimatedYield > 0)
-                mape.Add(Math.Abs(p.EstimatedYield.Value - c.ActualYieldKg!.Value) / c.ActualYieldKg.Value * 100m);
-            if (p.EstimatedHarvestDate.HasValue && c.ActualHarvestDate.HasValue)
-                days.Add(Math.Abs((p.EstimatedHarvestDate.Value.ToDateTime(TimeOnly.MinValue) - c.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue)).Days));
+            var pred = predictions.FirstOrDefault(p => p.LotId == c.Id);
+            if (pred is null) continue;
+            cycles++;
+
+            if (pred.EstimatedYield.HasValue && pred.EstimatedYield > 0)
+                mape.Add(Math.Abs(pred.EstimatedYield.Value - c.ActualYieldKg!.Value) / c.ActualYieldKg.Value * 100m);
+
+            if (pred.EstimatedHarvestDate.HasValue && c.ActualHarvestDate.HasValue
+                && pred.GeneratedAt.Date <= c.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
+                days.Add(Math.Abs((pred.EstimatedHarvestDate.Value.ToDateTime(TimeOnly.MinValue) - c.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue)).Days));
         }
 
         return (
             mape.Count > 0 ? Math.Round(mape.Average(), 1) : null,
             days.Count > 0 ? Math.Round(days.Average(), 1) : null,
-            withPred.Count);
+            cycles);
     }
 
     private sealed record ForecastView(

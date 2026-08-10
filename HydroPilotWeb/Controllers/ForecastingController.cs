@@ -31,8 +31,8 @@ public class ForecastingController : ControllerBase
     /// Devuelve el forecast de un lote: GDD acumulado, fecha de cosecha estimada y rendimiento.
     /// </summary>
     [HttpGet]
-    [Authorize]
-    [TypeFilter(typeof(ApiKeyOrAuthorizeFilter))]
+    [AllowAnonymous]
+    [TypeFilter(typeof(ApiKeyOrSessionFilter))]
     public async Task<ActionResult<ForecastingResponse>> GetForecast(
         [FromQuery] int lotId,
         CancellationToken ct = default)
@@ -118,38 +118,38 @@ public class ForecastingController : ControllerBase
 
         var closedLots = await context.Lots
             .Where(l => l.ActualYieldKg.HasValue)
-            .Select(l => new
-            {
-                l.Id,
-                l.ActualYieldKg,
-                l.ActualHarvestDate,
-                LatestPrediction = l.Predictions
-                    .OrderByDescending(p => p.GeneratedAt)
-                    .FirstOrDefault()
-            })
+            .Select(l => new { l.Id, l.ActualYieldKg, l.ActualHarvestDate })
             .ToListAsync(ct);
 
-        var withPrediction = closedLots
-            .Where(l => l.LatestPrediction is not null)
-            .ToList();
+        var closedIds = closedLots.Select(c => c.Id).ToList();
+        var predictions = await context.Predictions
+            .Where(p => closedIds.Contains(p.LotId))
+            .OrderByDescending(p => p.GeneratedAt)
+            .ToListAsync(ct);
 
-        if (withPrediction.Count == 0)
+        if (predictions.Count == 0)
             return (null, null, 0);
 
         var mapeValues = new List<decimal>();
         var dayErrors = new List<decimal>();
+        var cycles = 0;
 
-        foreach (var lot in withPrediction)
+        foreach (var lot in closedLots)
         {
-            var pred = lot.LatestPrediction!;
+            var pred = predictions.FirstOrDefault(p => p.LotId == lot.Id);
+            if (pred is null) continue;
+            cycles++;
 
+            // MAPE del rendimiento: usa la predicción más reciente (independiente del momento)
             if (pred.EstimatedYield.HasValue && pred.EstimatedYield > 0)
             {
                 mapeValues.Add(Math.Abs(pred.EstimatedYield.Value - lot.ActualYieldKg!.Value)
                                / lot.ActualYieldKg.Value * 100m);
             }
 
-            if (pred.EstimatedHarvestDate.HasValue && lot.ActualHarvestDate.HasValue)
+            // Error de días: solo predicciones generadas antes de la cosecha real
+            if (pred.EstimatedHarvestDate.HasValue && lot.ActualHarvestDate.HasValue
+                && pred.GeneratedAt.Date <= lot.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
             {
                 dayErrors.Add(Math.Abs(
                     (pred.EstimatedHarvestDate.Value.ToDateTime(TimeOnly.MinValue)
@@ -160,7 +160,7 @@ public class ForecastingController : ControllerBase
         var mape = mapeValues.Count > 0 ? Math.Round(mapeValues.Average(), 1) : (decimal?)null;
         var days = dayErrors.Count > 0 ? Math.Round(dayErrors.Average(), 1) : (decimal?)null;
 
-        return (mape, days, withPrediction.Count);
+        return (mape, days, cycles);
     }
 
     /// <summary>
