@@ -4,6 +4,7 @@ using HydroPilotWeb.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace HydroPilotWeb.Migrations
 {
     [DbContext(typeof(HydroPilotDbContext))]
-    partial class HydroPilotDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260803201849_AddForecasting")]
+    partial class AddForecasting
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,22 +24,6 @@ namespace HydroPilotWeb.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("HydroPilotWeb.Models.AppSetting", b =>
-                {
-                    b.Property<string>("Key")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.HasKey("Key");
-
-                    b.ToTable("AppSettings", (string)null);
-                });
 
             modelBuilder.Entity("HydroPilotWeb.Models.CropType", b =>
                 {
@@ -81,34 +68,6 @@ namespace HydroPilotWeb.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("CropTypes", (string)null);
-                });
-
-            modelBuilder.Entity("HydroPilotWeb.Models.DailyWeatherForecast", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateOnly>("Date")
-                        .HasColumnType("date");
-
-                    b.Property<DateTime>("FetchedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<decimal>("TempMax")
-                        .HasColumnType("decimal(5,2)");
-
-                    b.Property<decimal>("TempMin")
-                        .HasColumnType("decimal(5,2)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Date")
-                        .IsUnique();
-
-                    b.ToTable("DailyWeatherForecasts", (string)null);
                 });
 
             modelBuilder.Entity("HydroPilotWeb.Models.Greenhouse", b =>

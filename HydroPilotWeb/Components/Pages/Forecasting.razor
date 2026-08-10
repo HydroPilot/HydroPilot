@@ -1,56 +1,310 @@
 @page "/forecasting"
 @attribute [Authorize(Policy = "RequireAssigned")]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<HydroPilotDbContext> DbFactory
+@inject GddService GddService
+@inject YieldService YieldService
+@inject SettingsService SettingsService
 
 <PageTitle>Forecasting</PageTitle>
 
-<section class="metric-row metric-row--three">
-    <article class="metric-card"><p>Rendimiento estimado</p><strong>218 kg</strong><span>+12.4%</span></article>
-    <article class="metric-card"><p>Fecha óptima de cosecha</p><strong>14 jun</strong><span>adelantada 2d</span></article>
-    <article class="metric-card"><p>Confianza del modelo</p><strong>92 %</strong><span>MAPE 4.1%</span></article>
-</section>
+@if (error is not null)
+{
+    <div class="alert alert-danger">@error</div>
+}
 
-<section class="panel">
-    <div class="panel__header">
-        <div>
-            <h3>Biomasa proyectada</h3>
-            <p>Histórico (sólido) vs predicción LSTM (punteado)</p>
+@if (lots is null)
+{
+    <div class="d-flex justify-content-center my-5">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Cargando...</span>
         </div>
-        <div class="chip-row">
-            <span class="tag tag--soft">LSTM</span>
-            <span class="tag tag--soft">Horizonte 14d</span>
+    </div>
+}
+else if (lots.Count == 0)
+{
+    <div class="alert alert-info">
+        No hay lotes registrados. Ejecutá <code>mock_historical_data.py</code> para generar datos de prueba.
+    </div>
+}
+else
+{
+    <div class="mb-3 d-flex gap-2 align-items-center">
+        <label class="form-label mb-0">Lote:</label>
+        <select class="form-select form-select-sm" style="width: auto;" @bind="selectedLotId" @bind:after="LoadForecast">
+            @foreach (var lot in lots)
+            {
+                <option value="@lot.Id">#@lot.Id — @(lot.CropType?.Name ?? "—") (@(lot.Status?.Name ?? "—"), siembra @lot.SowingDate)</option>
+            }
+        </select>
+
+        <div class="ms-auto">
+            <AuthorizeView>
+                <Authorized>
+                    @if (context.User.IsInRole("Administrador"))
+                    {
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="weatherFetchToggle"
+                                   checked="@weatherFetchEnabled" @onchange="OnWeatherToggleChanged" />
+                            <label class="form-check-label" for="weatherFetchToggle">Sincronización climática diaria</label>
+                        </div>
+                    }
+                </Authorized>
+            </AuthorizeView>
         </div>
     </div>
 
-    <div class="chart-stack">
-        <SimpleLineChart Data="Historical" Height="300" AccentClass="emerald" />
-        <div class="chart-stack__overlay">
-            <SimpleLineChart Data="Predicted" Height="300" AccentClass="green" Dashed="true" Fill="false" />
-        </div>
-    </div>
-</section>
+    @if (forecast is not null)
+    {
+        <section class="metric-row metric-row--three">
+            <article class="metric-card">
+                <p>Rendimiento estimado</p>
+                <strong>@forecast.YieldBase.ToString("0.#") kg</strong>
+                <span>@forecast.ConfidencePercent% confianza</span>
+            </article>
+            <article class="metric-card">
+                <p>Fecha óptima de cosecha</p>
+                <strong>@(forecast.EstimatedHarvestDate?.ToString("dd MMM") ?? "—")</strong>
+                <span>@(forecast.DaysRemaining > 0 ? $"{forecast.DaysRemaining} días restantes" : "lista para cosecha")</span>
+            </article>
+            <article class="metric-card">
+                <p>GDD acumulado</p>
+                <strong>@forecast.GddAccumulated.ToString("0.#") °Cd</strong>
+                <span>objetivo @forecast.GddTarget.ToString("0.#") °Cd</span>
+            </article>
+        </section>
 
-<section class="split-grid split-grid--two">
-    <article class="panel">
-        <h3>Variables del modelo</h3>
-        <ul class="key-list">
-            <li><span>Temperatura ambiente</span><strong>22.5°C</strong></li>
-            <li><span>Radiación PAR</span><strong>812 μmol</strong></li>
-            <li><span>EC promedio</span><strong>1.8 mS/cm</strong></li>
-            <li><span>pH promedio</span><strong>6.4</strong></li>
-        </ul>
-    </article>
+        <section class="panel">
+            <div class="panel__header">
+                <div>
+                    <h3>GDD acumulado por día</h3>
+                    <p>@forecast.CropType — siembra @forecast.SowingDate, área @forecast.AreaM2 m²</p>
+                </div>
+                <div class="chip-row">
+                    <span class="tag tag--soft">GDD · Tbase 4.5°C</span>
+                    <span class="tag tag--soft">Promedio @forecast.GddDailyAverage.ToString("0.#") °Cd/día</span>
+                </div>
+            </div>
 
-    <article class="panel">
-        <h3>Escenarios alternativos</h3>
-        <div class="scenario-list">
-            <div class="scenario-card"><strong>Conservador</strong><span>198 kg</span><small>35%</small></div>
-            <div class="scenario-card scenario-card--active"><strong>Base</strong><span>218 kg</span><small>50%</small></div>
-            <div class="scenario-card"><strong>Optimista</strong><span>241 kg</span><small>15%</small></div>
-        </div>
-    </article>
-</section>
+            <div class="chart-stack">
+                @if (forecast.GddHistory.Count > 0)
+                {
+                    <SimpleLineChart
+                        Data="GddCumulativeData"
+                        Height="300"
+                        AccentClass="emerald"
+                        MinValue="0"
+                        MaxValue="GddChartMax"
+                        TargetValue="(double?)GddTargetValue"
+                        ShowGrid="true"
+                        RotateXLabels="true"
+                        XLabels="GddXLabels"
+                        YLabels="GddYLabels"
+                        PointLabels="GddPointLabels" />
+                }
+                else
+                {
+                    <p class="text-muted p-3">Sin lecturas de temperatura registradas para este lote.</p>
+                }
+            </div>
+        </section>
+
+        <section class="split-grid split-grid--two">
+            <article class="panel">
+                <h3>Datos del lote</h3>
+                <ul class="key-list">
+                    <li><span>Cultivo</span><strong>@forecast.CropType</strong></li>
+                    <li><span>Estado</span><strong>@forecast.Status</strong></li>
+                    <li><span>Fecha de siembra</span><strong>@forecast.SowingDate</strong></li>
+                    <li><span>Área plantada</span><strong>@forecast.AreaM2 m²</strong></li>
+                    <li><span>GDD diario promedio</span><strong>@forecast.GddDailyAverage.ToString("0.#") °Cd</strong></li>
+                </ul>
+            </article>
+
+            <article class="panel">
+                <h3>Escenarios de rendimiento</h3>
+                <div class="scenario-list">
+                    <div class="scenario-card"><strong>Conservador</strong><span>@forecast.YieldConservative.ToString("0.#") kg</span><small>-15%</small></div>
+                    <div class="scenario-card scenario-card--active"><strong>Base</strong><span>@forecast.YieldBase.ToString("0.#") kg</span><small>@forecast.ConfidencePercent%</small></div>
+                    <div class="scenario-card"><strong>Optimista</strong><span>@forecast.YieldOptimistic.ToString("0.#") kg</span><small>+15%</small></div>
+                </div>
+            </article>
+        </section>
+    }
+}
 
 @code {
-    private static readonly IReadOnlyList<double> Historical = [40, 42, 45, 47, 50, 52, 55, 58, 60, 63, 66, 70];
-    private static readonly IReadOnlyList<double> Predicted = [70, 73, 76, 80, 84, 88, 93, 98, 104, 110, 116, 123];
+    private List<Lot>? lots;
+    private ForecastView? forecast;
+    private string? error;
+    private int selectedLotId;
+    private bool weatherFetchEnabled;
+
+    private IReadOnlyList<double> GddCumulativeData
+    {
+        get
+        {
+            var cum = new List<double>();
+            double acc = 0;
+            foreach (var p in forecast?.GddHistory ?? [])
+            {
+                acc += (double)p.Gdd;
+                cum.Add(Math.Round(acc, 1));
+            }
+            return cum;
+        }
+    }
+
+    private double GddChartMax =>
+        Math.Max(GddCumulativeData.Count > 0 ? GddCumulativeData.Max() : 0, GddTargetValue);
+
+    private double GddTargetValue => forecast is not null ? (double)forecast.GddTarget : 0;
+
+    private IReadOnlyList<string>? GddYLabels =>
+        GddCumulativeData.Count > 0
+            ? [GddChartMax.ToString("0.#"), (GddChartMax / 2).ToString("0.#"), "0"]
+            : null;
+
+    private IReadOnlyList<string>? GddXLabels
+    {
+        get
+        {
+            var history = forecast?.GddHistory ?? [];
+            if (history.Count == 0) return null;
+            return history.Select(p => p.Date.ToString("dd/MM")).ToArray();
+        }
+    }
+
+    private IReadOnlyList<string>? GddPointLabels
+    {
+        get
+        {
+            var history = forecast?.GddHistory ?? [];
+            if (history.Count == 0) return null;
+
+            // Etiquetas por punto: fecha completa + GDD acumulado de ese día
+            var labels = new List<string>();
+            double acc = 0;
+            foreach (var p in history)
+            {
+                acc += (double)p.Gdd;
+                labels.Add($"{p.Date:dd/MM/yyyy} — {acc:0.#} °Cd acumulados");
+            }
+            return labels;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        weatherFetchEnabled = await SettingsService.GetBoolAsync(SettingsService.WeatherFetchEnabledKey);
+        await LoadLots();
+    }
+
+    private async Task OnWeatherToggleChanged(ChangeEventArgs e)
+    {
+        weatherFetchEnabled = e.Value is bool value && value;
+        await SettingsService.SetBoolAsync(SettingsService.WeatherFetchEnabledKey, weatherFetchEnabled);
+    }
+
+    private async Task LoadLots()
+    {
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync();
+            lots = await context.Lots
+                .Include(l => l.CropType)
+                .Include(l => l.Status)
+                .OrderByDescending(l => l.SowingDate)
+                .ToListAsync();
+            error = null;
+
+            if (lots.Count > 0)
+            {
+                selectedLotId = lots[0].Id;
+                await LoadForecast();
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al cargar lotes: {ex.Message}";
+            lots = [];
+        }
+    }
+
+    private async Task LoadForecast()
+    {
+        if (selectedLotId == 0) return;
+
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync();
+
+            var lot = await context.Lots
+                .Include(l => l.CropType)
+                .Include(l => l.Status)
+                .FirstOrDefaultAsync(l => l.Id == selectedLotId);
+
+            if (lot is null)
+            {
+                error = $"Lote '{selectedLotId}' no encontrado.";
+                return;
+            }
+
+            var dailyGdd = await GddService.GetDailyGddByDateAsync(lot);
+            var accumulated = dailyGdd.Values.Sum();
+            var futureProjection = await GddService.GetFutureGddProjectionAsync(lot);
+            var harvestDate = GddService.EstimateHarvestDateAsync(lot, accumulated, futureProjection);
+            var daysRemaining = harvestDate is not null
+                ? (harvestDate.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow.Date).Days
+                : 0;
+            var yield = YieldService.Estimate(lot, accumulated);
+            var avgDaily = futureProjection.Count > 0
+                ? futureProjection.Average(p => p.Gdd)
+                : 0m;
+
+            forecast = new ForecastView(
+                CropType: lot.CropType?.Name ?? "Desconocido",
+                Status: lot.Status?.Name,
+                SowingDate: lot.SowingDate,
+                AreaM2: lot.PlantedAreaM2,
+                GddAccumulated: accumulated,
+                GddTarget: lot.CropType?.GddTarget ?? 0m,
+                GddDailyAverage: avgDaily,
+                EstimatedHarvestDate: harvestDate,
+                DaysRemaining: daysRemaining,
+                YieldConservative: yield.Conservative,
+                YieldBase: yield.Base,
+                YieldOptimistic: yield.Optimistic,
+                ConfidencePercent: yield.ConfidencePercent,
+                GddHistory: dailyGdd.OrderBy(kv => kv.Key)
+                    .Select(kv => new DailyGddPoint(kv.Key, kv.Value))
+                    .ToList()
+            );
+
+            error = null;
+        }
+        catch (Exception ex)
+        {
+            error = $"Error al cargar el forecast: {ex.Message}";
+        }
+    }
+
+    private sealed record ForecastView(
+        string CropType,
+        string? Status,
+        DateOnly SowingDate,
+        decimal AreaM2,
+        decimal GddAccumulated,
+        decimal GddTarget,
+        decimal GddDailyAverage,
+        DateOnly? EstimatedHarvestDate,
+        int DaysRemaining,
+        decimal YieldConservative,
+        decimal YieldBase,
+        decimal YieldOptimistic,
+        int ConfidencePercent,
+        List<DailyGddPoint> GddHistory);
+
+    private sealed record DailyGddPoint(DateOnly Date, decimal Gdd);
 }

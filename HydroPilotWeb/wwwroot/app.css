@@ -983,9 +983,101 @@ button {
     overflow: visible;
 }
 
-.simple-line-chart__line,
-.simple-line-chart__fill {
+.simple-line-chart__wrap {
+    --plot-height: 280px;
+}
+
+.simple-line-chart__plotrow {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.simple-line-chart__y {
+    position: relative;
+    width: 52px;
+    height: var(--plot-height);
+    font-size: 11px;
+    color: var(--text-muted, #70869a);
+    user-select: none;
+}
+
+.simple-line-chart__y span {
+    position: absolute;
+    right: 0;
+    transform: translateY(-50%);
+}
+
+.simple-line-chart__plot {
+    flex: 1;
+    min-width: 0;
+}
+
+.simple-line-chart__plot svg {
+    display: block;
+    width: 100%;
+    height: var(--plot-height);
+}
+
+.simple-line-chart__x {
+    display: flex;
+    justify-content: space-between;
+    margin-left: 60px;
+    height: 22px;
+    font-size: 11px;
+    color: var(--text-muted, #70869a);
+    padding: 2px 2px 0;
+    user-select: none;
+}
+
+.simple-line-chart__x--rotated {
+    position: relative;
+    height: 110px;
+    display: block;
+    padding: 0;
+}
+
+.simple-line-chart__x--rotated span {
+    position: absolute;
+    bottom: 0;
+    transform: translateX(-50%);
+    writing-mode: vertical-rl;
+    font-size: 10px;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.simple-line-chart__point {
+    fill: transparent;
+    stroke: none;
+    pointer-events: all;
+    cursor: pointer;
     vector-effect: non-scaling-stroke;
+}
+
+.simple-line-chart__grid {
+    stroke: rgba(112, 134, 154, 0.18);
+    stroke-width: 0.35;
+    stroke-dasharray: 2 2;
+    vector-effect: non-scaling-stroke;
+}
+
+.simple-line-chart__target {
+    stroke: rgba(234, 88, 12, 0.75);
+    stroke-width: 0.6;
+    stroke-dasharray: 3 3;
+    vector-effect: non-scaling-stroke;
+}
+
+.simple-line-chart__line,
+.simple-line-chart__fill,
+.simple-line-chart__dot {
+    vector-effect: non-scaling-stroke;
+}
+
+.simple-line-chart__dot {
+    fill: var(--accent);
+    stroke: none;
 }
 
 .simple-line-chart__line {
