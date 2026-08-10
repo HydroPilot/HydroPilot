@@ -41,4 +41,11 @@ public class SettingsService
 
         await context.SaveChangesAsync(ct);
     }
+
+    public async Task<int> GetIntAsync(string key, int defaultValue, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var setting = await context.AppSettings.FindAsync([key], ct);
+        return setting is not null && int.TryParse(setting.Value, out var value) ? value : defaultValue;
+    }
 }

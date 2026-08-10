@@ -16,6 +16,10 @@ public class Lot
 
     public decimal PlantedAreaM2 { get; set; }
 
+    public decimal? ActualYieldKg { get; set; }
+
+    public DateOnly? ActualHarvestDate { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Greenhouse? Greenhouse { get; set; }

@@ -197,6 +197,7 @@ public class HydroPilotDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.Property(e => e.PlantedAreaM2).HasColumnType("decimal(10,2)");
+            entity.Property(e => e.ActualYieldKg).HasColumnType("decimal(10,2)");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
             entity.HasIndex(e => e.StatusId);

@@ -15,6 +15,9 @@ public record ForecastingResponse(
     decimal YieldBase,
     decimal YieldOptimistic,
     int ConfidencePercent,
+    decimal? AccuracyMape,
+    decimal? AccuracyDaysError,
+    int AccuracyCycles,
     List<DailyGddPoint> GddHistory
 );
 

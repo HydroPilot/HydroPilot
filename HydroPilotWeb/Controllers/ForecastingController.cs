@@ -32,6 +32,7 @@ public class ForecastingController : ControllerBase
     /// </summary>
     [HttpGet]
     [Authorize]
+    [TypeFilter(typeof(ApiKeyOrAuthorizeFilter))]
     public async Task<ActionResult<ForecastingResponse>> GetForecast(
         [FromQuery] int lotId,
         CancellationToken ct = default)
@@ -54,7 +55,7 @@ public class ForecastingController : ControllerBase
             ? (harvestDate.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow.Date).Days
             : 0;
 
-        var yield = _yieldService.Estimate(lot, accumulated);
+        var yield = await _yieldService.EstimateAsync(lot, accumulated, ct);
 
         // Persistir la predicción generada para historial
         context.Predictions.Add(new Models.Prediction
@@ -81,6 +82,9 @@ public class ForecastingController : ControllerBase
             ? futureProjection.Average(p => p.Gdd)
             : 0m;
 
+        // Precisión del modelo: comparar predicciones vs cosechas reales de ciclos cerrados
+        var accuracy = await GetModelAccuracyAsync(ct);
+
         return Ok(new ForecastingResponse(
             LotId: lot.Id,
             CropType: lot.CropType?.Name ?? "Desconocido",
@@ -96,8 +100,67 @@ public class ForecastingController : ControllerBase
             YieldBase: yield.Base,
             YieldOptimistic: yield.Optimistic,
             ConfidencePercent: yield.ConfidencePercent,
+            AccuracyMape: accuracy.Mape,
+            AccuracyDaysError: accuracy.DaysError,
+            AccuracyCycles: accuracy.Cycles,
             GddHistory: history
         ));
+    }
+
+    /// <summary>
+    /// Compara la última predicción de cada lote COSECHADO contra su resultado real.
+    /// Retorna MAPE del rendimiento y error promedio en días de la fecha de cosecha.
+    /// </summary>
+    private async Task<(decimal? Mape, decimal? DaysError, int Cycles)> GetModelAccuracyAsync(
+        CancellationToken ct)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+
+        var closedLots = await context.Lots
+            .Where(l => l.ActualYieldKg.HasValue)
+            .Select(l => new
+            {
+                l.Id,
+                l.ActualYieldKg,
+                l.ActualHarvestDate,
+                LatestPrediction = l.Predictions
+                    .OrderByDescending(p => p.GeneratedAt)
+                    .FirstOrDefault()
+            })
+            .ToListAsync(ct);
+
+        var withPrediction = closedLots
+            .Where(l => l.LatestPrediction is not null)
+            .ToList();
+
+        if (withPrediction.Count == 0)
+            return (null, null, 0);
+
+        var mapeValues = new List<decimal>();
+        var dayErrors = new List<decimal>();
+
+        foreach (var lot in withPrediction)
+        {
+            var pred = lot.LatestPrediction!;
+
+            if (pred.EstimatedYield.HasValue && pred.EstimatedYield > 0)
+            {
+                mapeValues.Add(Math.Abs(pred.EstimatedYield.Value - lot.ActualYieldKg!.Value)
+                               / lot.ActualYieldKg.Value * 100m);
+            }
+
+            if (pred.EstimatedHarvestDate.HasValue && lot.ActualHarvestDate.HasValue)
+            {
+                dayErrors.Add(Math.Abs(
+                    (pred.EstimatedHarvestDate.Value.ToDateTime(TimeOnly.MinValue)
+                     - lot.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue)).Days));
+            }
+        }
+
+        var mape = mapeValues.Count > 0 ? Math.Round(mapeValues.Average(), 1) : (decimal?)null;
+        var days = dayErrors.Count > 0 ? Math.Round(dayErrors.Average(), 1) : (decimal?)null;
+
+        return (mape, days, withPrediction.Count);
     }
 
     /// <summary>
@@ -174,7 +237,55 @@ public class ForecastingController : ControllerBase
             lot.PlantedAreaM2
         ));
     }
+
+    /// <summary>
+    /// Registra la cosecha real de un lote (rendimiento kg y fecha). Usado por el script mock
+    /// y por el productor al cerrar un ciclo. Marca el lote como COSECHADO.
+    /// </summary>
+    [HttpPost("lots/{id:int}/harvest")]
+    [TypeFilter(typeof(ApiKeyAuthFilter))]
+    public async Task<IActionResult> RecordHarvest(
+        int id,
+        [FromBody] RecordHarvestRequest request,
+        CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+
+        var lot = await context.Lots
+            .Include(l => l.CropType)
+            .FirstOrDefaultAsync(l => l.Id == id, ct);
+
+        if (lot is null)
+            return NotFound($"Lote '{id}' no encontrado.");
+
+        lot.ActualYieldKg = request.ActualYieldKg;
+        lot.ActualHarvestDate = request.ActualHarvestDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var harvestedStatus = await context.LotStatuses
+            .FirstOrDefaultAsync(s => s.Name == "COSECHADO", ct);
+        if (harvestedStatus is not null)
+            lot.StatusId = harvestedStatus.Id;
+
+        await context.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Cosecha registrada lote {LotId}: {Yield} kg el {Date}",
+            lot.Id, request.ActualYieldKg, lot.ActualHarvestDate);
+
+        return Ok(new
+        {
+            lotId = lot.Id,
+            lot.ActualYieldKg,
+            lot.ActualHarvestDate,
+            status = "COSECHADO"
+        });
+    }
 }
+
+public record RecordHarvestRequest(
+    decimal ActualYieldKg,
+    DateOnly? ActualHarvestDate
+);
 
 public record CreateLotRequest(
     string CropTypeName,

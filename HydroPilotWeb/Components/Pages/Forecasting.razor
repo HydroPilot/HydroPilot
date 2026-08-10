@@ -25,8 +25,49 @@
 else if (lots.Count == 0)
 {
     <div class="alert alert-info">
-        No hay lotes registrados. Ejecutá <code>mock_historical_data.py</code> para generar datos de prueba.
+        No hay lotes registrados. Creá uno con el botón "+ Nuevo lote" o ejecutá <code>mock_historical_data.py</code> para generar datos de prueba.
     </div>
+
+    <button class="btn btn-outline-primary btn-sm" @onclick="() => showNewLotForm = !showNewLotForm">
+        @(showNewLotForm ? "Ocultar" : "+ Nuevo lote")
+    </button>
+
+    @if (showNewLotForm)
+    {
+        <div class="card mt-3">
+            <div class="card-body">
+                <h5 class="card-title">Registrar nuevo lote</h5>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Cultivo</label>
+                        <select class="form-select" @bind="newLotCropTypeId">
+                            @foreach (var crop in cropTypes)
+                            {
+                                <option value="@crop.Id">@crop.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Fecha de siembra</label>
+                        <input type="date" class="form-control" @bind="newLotSowingDate" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Área (m²)</label>
+                        <input type="number" step="0.1" min="0.1" class="form-control" @bind="newLotAreaM2" />
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-primary" @onclick="CreateLot" disabled="@creatingLot">
+                            @(creatingLot ? "Guardando..." : "Guardar")
+                        </button>
+                    </div>
+                </div>
+                @if (lotError is not null)
+                {
+                    <div class="alert alert-danger mt-2 mb-0">@lotError</div>
+                }
+            </div>
+        </div>
+    }
 }
 else
 {
@@ -39,7 +80,10 @@ else
             }
         </select>
 
-        <div class="ms-auto">
+        <div class="ms-auto d-flex gap-2 align-items-center">
+            <button class="btn btn-outline-primary btn-sm" @onclick="() => showNewLotForm = !showNewLotForm">
+                @(showNewLotForm ? "Ocultar" : "+ Nuevo lote")
+            </button>
             <AuthorizeView>
                 <Authorized>
                     @if (context.User.IsInRole("Administrador"))
@@ -55,6 +99,43 @@ else
         </div>
     </div>
 
+    @if (showNewLotForm)
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <h5 class="card-title">Registrar nuevo lote</h5>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">Cultivo</label>
+                        <select class="form-select" @bind="newLotCropTypeId">
+                            @foreach (var crop in cropTypes)
+                            {
+                                <option value="@crop.Id">@crop.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Fecha de siembra</label>
+                        <input type="date" class="form-control" @bind="newLotSowingDate" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Área (m²)</label>
+                        <input type="number" step="0.1" min="0.1" class="form-control" @bind="newLotAreaM2" />
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-primary" @onclick="CreateLot" disabled="@creatingLot">
+                            @(creatingLot ? "Guardando..." : "Guardar")
+                        </button>
+                    </div>
+                </div>
+                @if (lotError is not null)
+                {
+                    <div class="alert alert-danger mt-2 mb-0">@lotError</div>
+                }
+            </div>
+        </div>
+    }
+
     @if (forecast is not null)
     {
         <section class="metric-row metric-row--three">
@@ -62,11 +143,21 @@ else
                 <p>Rendimiento estimado</p>
                 <strong>@forecast.YieldBase.ToString("0.#") kg</strong>
                 <span>@forecast.ConfidencePercent% confianza</span>
+                @if (forecast.AccuracyCycles > 0)
+                {
+                    <span class="text-muted" style="font-weight: 400; font-size: 0.75rem;">
+                        Precisión: MAPE @forecast.AccuracyMape?.ToString("0.#")% · ±@forecast.AccuracyDaysError?.ToString("0") días (@forecast.AccuracyCycles ciclos)
+                    </span>
+                }
             </article>
             <article class="metric-card">
                 <p>Fecha óptima de cosecha</p>
                 <strong>@(forecast.EstimatedHarvestDate?.ToString("dd MMM") ?? "—")</strong>
                 <span>@(forecast.DaysRemaining > 0 ? $"{forecast.DaysRemaining} días restantes" : "lista para cosecha")</span>
+                @if (forecast.DaysRemaining > 0 && forecast.DaysRemaining <= HarvestAlertDays)
+                {
+                    <span class="badge bg-warning text-dark mt-2">⚠ Cosecha inminente</span>
+                }
             </article>
             <article class="metric-card">
                 <p>GDD acumulado</p>
@@ -74,6 +165,10 @@ else
                 <span>objetivo @forecast.GddTarget.ToString("0.#") °Cd</span>
             </article>
         </section>
+
+        <p class="text-muted" style="font-size: 0.8rem; margin-top: -8px;">
+            Valores estimados de soporte a la decisión — no garantizan resultado.
+        </p>
 
         <section class="panel">
             <div class="panel__header">
@@ -102,6 +197,21 @@ else
                         XLabels="GddXLabels"
                         YLabels="GddYLabels"
                         PointLabels="GddPointLabels" />
+
+                    @if (GddProjectedData.Count > 0)
+                    {
+                        <div class="chart-stack__projection">
+                            <SimpleLineChart
+                                Data="GddProjectedData"
+                                Height="300"
+                                AccentClass="green"
+                                Dashed="true"
+                                Fill="false"
+                                MinValue="0"
+                                MaxValue="GddChartMax"
+                                HideLabels="true" />
+                        </div>
+                    }
                 }
                 else
                 {
@@ -119,15 +229,19 @@ else
                     <li><span>Fecha de siembra</span><strong>@forecast.SowingDate</strong></li>
                     <li><span>Área plantada</span><strong>@forecast.AreaM2 m²</strong></li>
                     <li><span>GDD diario promedio</span><strong>@forecast.GddDailyAverage.ToString("0.#") °Cd</strong></li>
+                    @if (forecast.ActualYieldKg is not null)
+                    {
+                        <li><span>Cosecha real</span><strong>@forecast.ActualYieldKg.Value.ToString("0.#") kg @(forecast.ActualHarvestDate is not null ? $"el {forecast.ActualHarvestDate}" : "")</strong></li>
+                    }
                 </ul>
             </article>
 
             <article class="panel">
                 <h3>Escenarios de rendimiento</h3>
                 <div class="scenario-list">
-                    <div class="scenario-card"><strong>Conservador</strong><span>@forecast.YieldConservative.ToString("0.#") kg</span><small>-15%</small></div>
+                    <div class="scenario-card"><strong>Conservador</strong><span>@forecast.YieldConservative.ToString("0.#") kg</span><small>@(forecast.YieldConservativePercent.ToString("0.#"))%</small></div>
                     <div class="scenario-card scenario-card--active"><strong>Base</strong><span>@forecast.YieldBase.ToString("0.#") kg</span><small>@forecast.ConfidencePercent%</small></div>
-                    <div class="scenario-card"><strong>Optimista</strong><span>@forecast.YieldOptimistic.ToString("0.#") kg</span><small>+15%</small></div>
+                    <div class="scenario-card"><strong>Optimista</strong><span>@forecast.YieldOptimistic.ToString("0.#") kg</span><small>+@(forecast.YieldOptimisticPercent.ToString("0.#"))%</small></div>
                 </div>
             </article>
         </section>
@@ -136,10 +250,18 @@ else
 
 @code {
     private List<Lot>? lots;
+    private List<CropType> cropTypes = [];
     private ForecastView? forecast;
     private string? error;
+    private string? lotError;
     private int selectedLotId;
     private bool weatherFetchEnabled;
+    private bool showNewLotForm;
+    private bool creatingLot;
+    private int newLotCropTypeId;
+    private DateOnly newLotSowingDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private decimal newLotAreaM2 = 4.5m;
+    private int HarvestAlertDays = 3;
 
     private IReadOnlyList<double> GddCumulativeData
     {
@@ -156,8 +278,24 @@ else
         }
     }
 
+    private IReadOnlyList<double> GddProjectedData
+    {
+        get
+        {
+            if (forecast is null || forecast.FutureProjection.Count == 0) return [];
+            var cum = GddCumulativeData.ToList();
+            double acc = cum.Count > 0 ? cum[^1] : 0;
+            foreach (var p in forecast.FutureProjection)
+            {
+                acc += (double)p.Gdd;
+                cum.Add(Math.Round(acc, 1));
+            }
+            return cum;
+        }
+    }
+
     private double GddChartMax =>
-        Math.Max(GddCumulativeData.Count > 0 ? GddCumulativeData.Max() : 0, GddTargetValue);
+        Math.Max(GddProjectedData.Count > 0 ? GddProjectedData.Max() : 0, GddTargetValue);
 
     private double GddTargetValue => forecast is not null ? (double)forecast.GddTarget : 0;
 
@@ -198,7 +336,41 @@ else
     protected override async Task OnInitializedAsync()
     {
         weatherFetchEnabled = await SettingsService.GetBoolAsync(SettingsService.WeatherFetchEnabledKey);
+        HarvestAlertDays = await SettingsService.GetIntAsync("HarvestAlertDays", 3);
         await LoadLots();
+    }
+
+    private async Task CreateLot()
+    {
+        creatingLot = true;
+        lotError = null;
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync();
+            var activeStatus = await context.LotStatuses.FirstOrDefaultAsync(s => s.Name == "ACTIVO");
+
+            context.Lots.Add(new Lot
+            {
+                GreenhouseId = (await context.Greenhouses.FirstOrDefaultAsync())?.Id ?? 0,
+                CropTypeId = newLotCropTypeId,
+                StatusId = activeStatus?.Id ?? 1,
+                SowingDate = newLotSowingDate,
+                PlantedAreaM2 = newLotAreaM2,
+                CreatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync();
+
+            showNewLotForm = false;
+            await LoadLots();
+        }
+        catch (Exception ex)
+        {
+            lotError = $"Error al crear el lote: {ex.Message}";
+        }
+        finally
+        {
+            creatingLot = false;
+        }
     }
 
     private async Task OnWeatherToggleChanged(ChangeEventArgs e)
@@ -217,6 +389,11 @@ else
                 .Include(l => l.Status)
                 .OrderByDescending(l => l.SowingDate)
                 .ToListAsync();
+
+            cropTypes = await context.CropTypes.OrderBy(c => c.Name).ToListAsync();
+            if (newLotCropTypeId == 0 && cropTypes.Count > 0)
+                newLotCropTypeId = cropTypes[0].Id;
+
             error = null;
 
             if (lots.Count > 0)
@@ -258,10 +435,15 @@ else
             var daysRemaining = harvestDate is not null
                 ? (harvestDate.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow.Date).Days
                 : 0;
-            var yield = YieldService.Estimate(lot, accumulated);
+            var yield = await YieldService.EstimateAsync(lot, accumulated);
             var avgDaily = futureProjection.Count > 0
                 ? futureProjection.Average(p => p.Gdd)
                 : 0m;
+
+            var conservativePct = yield.Base > 0 ? (yield.Base - yield.Conservative) / yield.Base * 100m : 0m;
+            var optimisticPct = yield.Base > 0 ? (yield.Optimistic - yield.Base) / yield.Base * 100m : 0m;
+
+            var accuracy = await GetAccuracyAsync();
 
             forecast = new ForecastView(
                 CropType: lot.CropType?.Name ?? "Desconocido",
@@ -276,9 +458,19 @@ else
                 YieldConservative: yield.Conservative,
                 YieldBase: yield.Base,
                 YieldOptimistic: yield.Optimistic,
+                YieldConservativePercent: conservativePct,
+                YieldOptimisticPercent: optimisticPct,
                 ConfidencePercent: yield.ConfidencePercent,
+                AccuracyMape: accuracy.Mape,
+                AccuracyDaysError: accuracy.DaysError,
+                AccuracyCycles: accuracy.Cycles,
+                ActualYieldKg: lot.ActualYieldKg,
+                ActualHarvestDate: lot.ActualHarvestDate,
                 GddHistory: dailyGdd.OrderBy(kv => kv.Key)
                     .Select(kv => new DailyGddPoint(kv.Key, kv.Value))
+                    .ToList(),
+                FutureProjection: futureProjection
+                    .Select(p => new DailyGddPoint(p.Date, p.Gdd))
                     .ToList()
             );
 
@@ -288,6 +480,43 @@ else
         {
             error = $"Error al cargar el forecast: {ex.Message}";
         }
+    }
+
+    private async Task<(decimal? Mape, decimal? DaysError, int Cycles)> GetAccuracyAsync()
+    {
+        await using var context = await DbFactory.CreateDbContextAsync();
+
+        var closed = await context.Lots
+            .Where(l => l.ActualYieldKg.HasValue)
+            .Select(l => new
+            {
+                l.ActualYieldKg,
+                l.ActualHarvestDate,
+                LatestPrediction = l.Predictions
+                    .OrderByDescending(p => p.GeneratedAt)
+                    .FirstOrDefault()
+            })
+            .ToListAsync();
+
+        var withPred = closed.Where(c => c.LatestPrediction is not null).ToList();
+        if (withPred.Count == 0) return (null, null, 0);
+
+        var mape = new List<decimal>();
+        var days = new List<decimal>();
+
+        foreach (var c in withPred)
+        {
+            var p = c.LatestPrediction!;
+            if (p.EstimatedYield.HasValue && p.EstimatedYield > 0)
+                mape.Add(Math.Abs(p.EstimatedYield.Value - c.ActualYieldKg!.Value) / c.ActualYieldKg.Value * 100m);
+            if (p.EstimatedHarvestDate.HasValue && c.ActualHarvestDate.HasValue)
+                days.Add(Math.Abs((p.EstimatedHarvestDate.Value.ToDateTime(TimeOnly.MinValue) - c.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue)).Days));
+        }
+
+        return (
+            mape.Count > 0 ? Math.Round(mape.Average(), 1) : null,
+            days.Count > 0 ? Math.Round(days.Average(), 1) : null,
+            withPred.Count);
     }
 
     private sealed record ForecastView(
@@ -303,8 +532,16 @@ else
         decimal YieldConservative,
         decimal YieldBase,
         decimal YieldOptimistic,
+        decimal YieldConservativePercent,
+        decimal YieldOptimisticPercent,
         int ConfidencePercent,
-        List<DailyGddPoint> GddHistory);
+        decimal? AccuracyMape,
+        decimal? AccuracyDaysError,
+        int AccuracyCycles,
+        decimal? ActualYieldKg,
+        DateOnly? ActualHarvestDate,
+        List<DailyGddPoint> GddHistory,
+        List<DailyGddPoint> FutureProjection);
 
     private sealed record DailyGddPoint(DateOnly Date, decimal Gdd);
 }

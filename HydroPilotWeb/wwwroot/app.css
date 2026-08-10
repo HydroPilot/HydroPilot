@@ -977,6 +977,15 @@ button {
     inset: 0;
 }
 
+.chart-stack__projection {
+    position: absolute;
+    top: 0;
+    left: 60px;
+    right: 0;
+    height: 300px;
+    pointer-events: none;
+}
+
 .simple-line-chart {
     width: 100%;
     display: block;

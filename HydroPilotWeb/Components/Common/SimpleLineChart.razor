@@ -1,73 +1,48 @@
 @using System.Globalization
 
-<div class="simple-line-chart__wrap" style="--plot-height: @HeightPx">
-    <div class="simple-line-chart__plotrow">
-        <div class="simple-line-chart__y">
-            @for (var i = 0; i < (YLabels ?? []).Count; i++)
+<div class="simple-line-chart__wrap @(HideLabels ? "simple-line-chart__wrap--labels-hidden" : null)" style="--plot-height: @HeightPx">
+    @if (!HideLabels)
+    {
+        <div class="simple-line-chart__plotrow">
+            <div class="simple-line-chart__y">
+                @for (var i = 0; i < (YLabels ?? []).Count; i++)
+                {
+                    var top = YLabelTop(i, (YLabels ?? []).Count);
+                    <span style="top: @(top.ToString(CultureInfo.InvariantCulture))%">@YLabels![i]</span>
+                }
+            </div>
+
+            <div class="simple-line-chart__plot">
+                @RenderChartSvg()
+            </div>
+        </div>
+    }
+    else
+    {
+        @RenderChartSvg()
+    }
+
+    @if (!HideLabels)
+    {
+        <div class="simple-line-chart__x @(RotateXLabels ? "simple-line-chart__x--rotated" : null)">
+            @if (RotateXLabels && XLabels is not null)
             {
-                var top = YLabelTop(i, (YLabels ?? []).Count);
-                <span style="top: @(top.ToString(CultureInfo.InvariantCulture))%">@YLabels![i]</span>
+                // Posición absoluta: cada etiqueta centrada exactamente bajo su punto de datos
+                @for (var i = 0; i < XLabels.Count; i++)
+                {
+                    var leftPct = XLabels.Count == 1 ? 0d : i * 100d / (XLabels.Count - 1);
+                    <span style="left: @(leftPct.ToString(CultureInfo.InvariantCulture))%">@XLabels[i]</span>
+                }
+            }
+            else
+            {
+                @foreach (var label in XLabels ?? [])
+                {
+                    <span>@label</span>
+                }
             }
         </div>
-
-        <div class="simple-line-chart__plot">
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="simple-line-chart simple-line-chart--@AccentClass">
-                @if (ShowGrid)
-                {
-                    @foreach (var (_, y) in GridLines)
-                    {
-                        <line x1="0" y1="@y" x2="100" y2="@y" class="simple-line-chart__grid"></line>
-                    }
-                }
-                @if (TargetValue is not null)
-                {
-                    <line x1="0" y1="@TargetY" x2="100" y2="@TargetY" class="simple-line-chart__target"></line>
-                }
-                @if (Fill && Data.Count >= 2)
-                {
-                    <path d="@FillPath" class="simple-line-chart__fill simple-line-chart__fill--@AccentClass"></path>
-                }
-                @if (Data.Count == 1)
-                {
-                    var (px, py) = Points[0];
-                    <circle cx="@px" cy="@py" r="1.8" class="simple-line-chart__dot"></circle>
-                }
-                else if (Data.Count >= 2)
-                {
-                    <path d="@LinePath" class="simple-line-chart__line simple-line-chart__line--@AccentClass" stroke-dasharray="@(Dashed ? "4 3" : null)"></path>
-                }
-                @if (PointLabels is not null)
-                {
-                    @for (var i = 0; i < Points.Count && i < PointLabels.Count; i++)
-                    {
-                        var (hx, hy) = Points[i];
-                        <circle cx="@hx" cy="@hy" r="2.2" class="simple-line-chart__point">
-                            <title>@PointLabels[i]</title>
-                        </circle>
-                    }
-                }
-            </svg>
-        </div>
-    </div>
-
-    <div class="simple-line-chart__x @(RotateXLabels ? "simple-line-chart__x--rotated" : null)">
-        @if (RotateXLabels && XLabels is not null)
-        {
-            // Posición absoluta: cada etiqueta centrada exactamente bajo su punto de datos
-            @for (var i = 0; i < XLabels.Count; i++)
-            {
-                var leftPct = XLabels.Count == 1 ? 0d : i * 100d / (XLabels.Count - 1);
-                <span style="left: @(leftPct.ToString(CultureInfo.InvariantCulture))%">@XLabels[i]</span>
-            }
-        }
-        else
-        {
-            @foreach (var label in XLabels ?? [])
-            {
-                <span>@label</span>
-            }
-        }
-    </div>
+    }
 </div>
 
 @code {
@@ -95,7 +70,86 @@
     // Una etiqueta por punto de datos → tooltip nativo al hacer hover
     [Parameter] public IReadOnlyList<string>? PointLabels { get; set; }
 
+    // Solo el plot (sin ejes ni etiquetas): para overlays alineados sobre otro chart
+    [Parameter] public bool HideLabels { get; set; }
+
     private string HeightPx => $"{Height}px";
+
+    private MarkupString RenderChartSvg()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<svg viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" class=\"simple-line-chart simple-line-chart--");
+        sb.Append(AccentClass);
+        sb.Append("\" style=\"height: var(--plot-height)\">");
+
+        if (ShowGrid)
+        {
+            foreach (var (_, y) in GridLines)
+            {
+                sb.Append("<line x1=\"0\" y1=\"");
+                sb.Append(y.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" x2=\"100\" y2=\"");
+                sb.Append(y.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" class=\"simple-line-chart__grid\"></line>");
+            }
+        }
+
+        if (TargetValue is not null)
+        {
+            sb.Append("<line x1=\"0\" y1=\"");
+            sb.Append(TargetY.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" x2=\"100\" y2=\"");
+            sb.Append(TargetY.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" class=\"simple-line-chart__target\"></line>");
+        }
+
+        if (Fill && Data.Count >= 2)
+        {
+            sb.Append("<path d=\"");
+            sb.Append(FillPath);
+            sb.Append("\" class=\"simple-line-chart__fill simple-line-chart__fill--");
+            sb.Append(AccentClass);
+            sb.Append("\"></path>");
+        }
+
+        if (Data.Count == 1)
+        {
+            var (px, py) = Points[0];
+            sb.Append("<circle cx=\"");
+            sb.Append(px.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" cy=\"");
+            sb.Append(py.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" r=\"1.8\" class=\"simple-line-chart__dot\"></circle>");
+        }
+        else if (Data.Count >= 2)
+        {
+            sb.Append("<path d=\"");
+            sb.Append(LinePath);
+            sb.Append("\" class=\"simple-line-chart__line simple-line-chart__line--");
+            sb.Append(AccentClass);
+            sb.Append("\" stroke-dasharray=\"");
+            sb.Append(Dashed ? "4 3" : "none");
+            sb.Append("\"></path>");
+        }
+
+        if (PointLabels is not null)
+        {
+            for (var i = 0; i < Points.Count && i < PointLabels.Count; i++)
+            {
+                var (hx, hy) = Points[i];
+                sb.Append("<circle cx=\"");
+                sb.Append(hx.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" cy=\"");
+                sb.Append(hy.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" r=\"2.2\" class=\"simple-line-chart__point\"><title>");
+                sb.Append(System.Net.WebUtility.HtmlEncode(PointLabels[i]));
+                sb.Append("</title></circle>");
+            }
+        }
+
+        sb.Append("</svg>");
+        return new MarkupString(sb.ToString());
+    }
 
     // Posición de cada etiqueta Y: alineada con las gridlines (20/56/92%)
     // o distribuida uniformemente si no hay grilla.
