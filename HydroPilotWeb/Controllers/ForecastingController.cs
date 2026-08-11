@@ -47,7 +47,7 @@ public class ForecastingController : ControllerBase
         if (lot is null)
             return NotFound($"Lote '{lotId}' no encontrado.");
 
-        var dailyGdd = await _gddService.GetDailyGddByDateAsync(lot, ct);
+        var dailyGdd = await _gddService.GetDailyGddByDateAsync(lot, ct: ct);
         var accumulated = dailyGdd.Values.Sum();
         var futureProjection = await _gddService.GetFutureGddProjectionAsync(lot, ct: ct);
         var harvestDate = _gddService.EstimateHarvestDateAsync(lot, accumulated, futureProjection);

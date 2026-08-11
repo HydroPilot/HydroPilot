@@ -36,14 +36,18 @@ public class GddService
 
     /// <summary>
     /// GDD diario por fecha, calculado desde lecturas de sensores de temperatura del invernadero.
+    /// asOfDate simula "hoy": solo se consideran lecturas hasta el final de ese día.
     /// </summary>
     public async Task<Dictionary<DateOnly, decimal>> GetDailyGddByDateAsync(
         Lot lot,
+        DateOnly? asOfDate = null,
         CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
+        var effectiveToday = asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var sowingDate = lot.SowingDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var cutoff = effectiveToday.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
         var baseTemp = lot.CropType?.BaseTemperature ?? 4.5m;
 
         var readings = await context.SensorReadings
@@ -52,6 +56,7 @@ public class GddService
             .Where(r => r.Sensor!.SensorType!.Name == "Temperatura")
             .Where(r => r.Sensor!.Node!.GreenhouseId == lot.GreenhouseId)
             .Where(r => r.Timestamp >= sowingDate)
+            .Where(r => r.Timestamp < cutoff)
             .Select(r => new { r.Timestamp, r.Value })
             .ToListAsync(ct);
 
@@ -70,9 +75,9 @@ public class GddService
     /// <summary>
     /// GDD acumulado del lote desde la fecha de siembra.
     /// </summary>
-    public async Task<decimal> GetAccumulatedGddAsync(Lot lot, CancellationToken ct = default)
+    public async Task<decimal> GetAccumulatedGddAsync(Lot lot, DateOnly? asOfDate = null, CancellationToken ct = default)
     {
-        var daily = await GetDailyGddByDateAsync(lot, ct);
+        var daily = await GetDailyGddByDateAsync(lot, asOfDate, ct);
         return daily.Values.Sum();
     }
 
@@ -81,12 +86,14 @@ public class GddService
     /// </summary>
     public async Task<decimal> GetRecentAverageDailyGddAsync(
         Lot lot,
+        DateOnly? asOfDate = null,
         int lastNDays = 7,
         CancellationToken ct = default)
     {
-        var daily = await GetDailyGddByDateAsync(lot, ct);
+        var daily = await GetDailyGddByDateAsync(lot, asOfDate, ct);
+        var effectiveToday = asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var recent = daily
-            .Where(kv => kv.Key >= DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-lastNDays))
+            .Where(kv => kv.Key >= effectiveToday.AddDays(-lastNDays))
             .Select(kv => kv.Value)
             .ToList();
 
@@ -100,11 +107,12 @@ public class GddService
     /// </summary>
     public async Task<List<DailyGddPoint>> GetFutureGddProjectionAsync(
         Lot lot,
+        DateOnly? asOfDate = null,
         int horizonDays = ForecastHorizonDays,
         CancellationToken ct = default)
     {
         var baseTemp = lot.CropType?.BaseTemperature ?? 4.5m;
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var from = today.AddDays(1);
         var to = today.AddDays(horizonDays);
 
@@ -150,12 +158,14 @@ public class GddService
     public DateOnly? EstimateHarvestDateAsync(
         Lot lot,
         decimal accumulatedGdd,
-        List<DailyGddPoint> futureProjection)
+        List<DailyGddPoint> futureProjection,
+        DateOnly? asOfDate = null)
     {
         var target = lot.CropType?.GddTarget ?? 300m;
+        var effectiveToday = asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
 
         if (accumulatedGdd >= target)
-            return DateOnly.FromDateTime(DateTime.UtcNow);
+            return effectiveToday;
 
         var remaining = target - accumulatedGdd;
 
@@ -179,9 +189,10 @@ public class GddService
 
         if (lot.CropType?.EstimatedDaysToHarvest is int estDays)
         {
-            var elapsed = (DateTime.UtcNow - lot.SowingDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)).Days;
+            var elapsed = (effectiveToday.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)
+                           - lot.SowingDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)).Days;
             var remainingDays = Math.Max(0, estDays - elapsed);
-            return DateOnly.FromDateTime(DateTime.UtcNow.AddDays(remainingDays));
+            return effectiveToday.AddDays(remainingDays);
         }
 
         return null;

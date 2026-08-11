@@ -81,6 +81,9 @@ else
         </select>
 
         <div class="ms-auto d-flex gap-2 align-items-center">
+            <label class="form-label mb-0">Simular fecha:</label>
+            <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="simDate" @bind:after="LoadForecast" />
+            <button class="btn btn-outline-secondary btn-sm" @onclick="ResetSimDate">Hoy</button>
             <button class="btn btn-outline-primary btn-sm" @onclick="() => showNewLotForm = !showNewLotForm">
                 @(showNewLotForm ? "Ocultar" : "+ Nuevo lote")
             </button>
@@ -264,6 +267,8 @@ else
     private bool weatherDailyLimitDisabled;
     private bool showNewLotForm;
     private bool creatingLot;
+    private DateOnly simDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
     private int newLotCropTypeId;
     private DateOnly newLotSowingDate = DateOnly.FromDateTime(DateTime.UtcNow);
     private decimal newLotAreaM2 = 4.5m;
@@ -351,6 +356,12 @@ else
     {
         weatherDailyLimitDisabled = e.Value is bool value && value;
         await SettingsService.SetBoolAsync(SettingsService.WeatherDailyLimitDisabledKey, weatherDailyLimitDisabled);
+    }
+
+    private async Task ResetSimDate()
+    {
+        simDate = Today;
+        await LoadForecast();
     }
 
     private async Task CreateLot()
@@ -441,12 +452,12 @@ else
                 return;
             }
 
-            var dailyGdd = await GddService.GetDailyGddByDateAsync(lot);
+            var dailyGdd = await GddService.GetDailyGddByDateAsync(lot, simDate);
             var accumulated = dailyGdd.Values.Sum();
-            var futureProjection = await GddService.GetFutureGddProjectionAsync(lot);
-            var harvestDate = GddService.EstimateHarvestDateAsync(lot, accumulated, futureProjection);
+            var futureProjection = await GddService.GetFutureGddProjectionAsync(lot, simDate);
+            var harvestDate = GddService.EstimateHarvestDateAsync(lot, accumulated, futureProjection, simDate);
             var daysRemaining = harvestDate is not null
-                ? (harvestDate.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow.Date).Days
+                ? (harvestDate.Value.ToDateTime(TimeOnly.MinValue) - simDate.ToDateTime(TimeOnly.MinValue)).Days
                 : 0;
             var yield = await YieldService.EstimateAsync(lot, accumulated);
             var avgDaily = futureProjection.Count > 0
