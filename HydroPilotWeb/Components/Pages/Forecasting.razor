@@ -93,6 +93,11 @@ else
                                    checked="@weatherFetchEnabled" @onchange="OnWeatherToggleChanged" />
                             <label class="form-check-label" for="weatherFetchToggle">Sincronización climática diaria</label>
                         </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="weatherNoLimitToggle"
+                                   checked="@weatherDailyLimitDisabled" @onchange="OnWeatherLimitToggleChanged" />
+                            <label class="form-check-label" for="weatherNoLimitToggle">Sin límite diario de clima</label>
+                        </div>
                     }
                 </Authorized>
             </AuthorizeView>
@@ -256,6 +261,7 @@ else
     private string? lotError;
     private int selectedLotId;
     private bool weatherFetchEnabled;
+    private bool weatherDailyLimitDisabled;
     private bool showNewLotForm;
     private bool creatingLot;
     private int newLotCropTypeId;
@@ -336,8 +342,15 @@ else
     protected override async Task OnInitializedAsync()
     {
         weatherFetchEnabled = await SettingsService.GetBoolAsync(SettingsService.WeatherFetchEnabledKey);
+        weatherDailyLimitDisabled = await SettingsService.GetBoolAsync(SettingsService.WeatherDailyLimitDisabledKey);
         HarvestAlertDays = await SettingsService.GetIntAsync("HarvestAlertDays", 3);
         await LoadLots();
+    }
+
+    private async Task OnWeatherLimitToggleChanged(ChangeEventArgs e)
+    {
+        weatherDailyLimitDisabled = e.Value is bool value && value;
+        await SettingsService.SetBoolAsync(SettingsService.WeatherDailyLimitDisabledKey, weatherDailyLimitDisabled);
     }
 
     private async Task CreateLot()

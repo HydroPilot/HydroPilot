@@ -10,6 +10,7 @@ namespace HydroPilotWeb.Services;
 public class SettingsService
 {
     public const string WeatherFetchEnabledKey = "WeatherFetchEnabled";
+    public const string WeatherDailyLimitDisabledKey = "WeatherDailyLimitDisabled";
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
 

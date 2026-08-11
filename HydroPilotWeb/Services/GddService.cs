@@ -16,13 +16,16 @@ public class GddService
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly WeatherService _weatherService;
+    private readonly SettingsService _settings;
 
     public GddService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
-        WeatherService weatherService)
+        WeatherService weatherService,
+        SettingsService settings)
     {
         _dbFactory = dbFactory;
         _weatherService = weatherService;
+        _settings = settings;
     }
 
     public static decimal DailyGdd(decimal tmax, decimal tmin, decimal baseTemperature)
@@ -108,12 +111,15 @@ public class GddService
         // 1. DB primero
         var rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
 
-        // 2. Si faltan fechas, fetch perezoso SOLO si hoy todavía no se consultó la API
-        //    (guard de 1 vez/día: evita llamar a OpenWeather en cada carga de página)
+        // 2. Si faltan fechas, fetch perezoso.
+        //    Por defecto hay un guard de 1 vez/día (evita llamar a OpenWeather en cada carga).
+        //    Si WeatherDailyLimitDisabled está activo, se consulta siempre que falten fechas.
         var existingDates = rows.Select(r => r.Date).ToHashSet();
         var expected = (to.DayNumber - from.DayNumber) + 1;
+        var limitDisabled = await _settings.GetBoolAsync(
+            SettingsService.WeatherDailyLimitDisabledKey, false, ct);
         var fetchedToday = rows.Any(r => r.FetchedAt.Date == DateTime.UtcNow.Date);
-        if (existingDates.Count < expected && !fetchedToday)
+        if (existingDates.Count < expected && (limitDisabled || !fetchedToday))
         {
             await _weatherService.FetchForecastForDatesAsync(from, to, ct);
             rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
