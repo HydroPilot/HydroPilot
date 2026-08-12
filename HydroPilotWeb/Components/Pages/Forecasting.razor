@@ -296,11 +296,12 @@ else
     {
         get
         {
-            // Solo la proyección futura, acumulada desde el último valor del historial.
+            // Proyección futura acumulada, arrancando desde el último valor del historial
+            // (primer punto duplicado → la punteada se conecta exactamente con la sólida).
             if (forecast is null || forecast.FutureProjection.Count == 0) return [];
             var hist = GddCumulativeData;
             double acc = hist.Count > 0 ? hist[^1] : 0;
-            var proj = new List<double>();
+            var proj = new List<double> { acc };
             foreach (var p in forecast.FutureProjection)
             {
                 acc += (double)p.Gdd;

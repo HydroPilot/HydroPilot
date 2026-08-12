@@ -192,7 +192,6 @@
 
     private IReadOnlyList<(double X, double Y)> Points => BuildPoints();
     private string LinePath => BuildPath(closeToBase: false);
-    private string FillPath => BuildPath(closeToBase: true);
 
     private IReadOnlyList<(double X, double Y)> BuildPoints()
     {
@@ -230,11 +229,24 @@
             path += $" L {points[i].X.ToString(CultureInfo.InvariantCulture)} {points[i].Y.ToString(CultureInfo.InvariantCulture)}";
         }
 
-        if (closeToBase)
-        {
-            path += " L 100 100 L 0 100 Z";
-        }
-
         return path;
+    }
+
+    // El área se cierra en la última x de los datos (no en 100):
+    // si la serie no ocupa todo el ancho (dominio X compartido con proyección),
+    // el fill no debe "caer" hasta el borde derecho.
+    private string FillPath
+    {
+        get
+        {
+            if (Data.Count < 2)
+            {
+                return string.Empty;
+            }
+
+            var path = LinePath;
+            var lastX = Points[^1].X.ToString(CultureInfo.InvariantCulture);
+            return $"{path} L {lastX} 100 L 0 100 Z";
+        }
     }
 }
