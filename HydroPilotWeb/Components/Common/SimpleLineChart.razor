@@ -27,10 +27,12 @@
         <div class="simple-line-chart__x @(RotateXLabels ? "simple-line-chart__x--rotated" : null)">
             @if (RotateXLabels && XLabels is not null)
             {
-                // Posición absoluta: cada etiqueta centrada exactamente bajo su punto de datos
+                // Posición absoluta: cada etiqueta centrada exactamente bajo su punto de datos.
+                // Usa el dominio X compartido (XPointCount) si está definido.
+                var labelTotal = XPointCount > 0 ? XPointCount : XLabels.Count;
                 @for (var i = 0; i < XLabels.Count; i++)
                 {
-                    var leftPct = XLabels.Count == 1 ? 0d : i * 100d / (XLabels.Count - 1);
+                    var leftPct = labelTotal == 1 ? 0d : (i + XOffset) * 100d / (labelTotal - 1);
                     <span style="left: @(leftPct.ToString(CultureInfo.InvariantCulture))%">@XLabels[i]</span>
                 }
             }
@@ -72,6 +74,12 @@
 
     // Solo el plot (sin ejes ni etiquetas): para overlays alineados sobre otro chart
     [Parameter] public bool HideLabels { get; set; }
+
+    // Dominio X compartido entre charts alineados (overlay):
+    // XPointCount = total de puntos del dominio, XOffset = índice inicial de esta serie.
+    // Ej: historial (n pts, offset 0) + proyección (m pts, offset n-1) sobre un dominio de n+m.
+    [Parameter] public int XPointCount { get; set; }
+    [Parameter] public int XOffset { get; set; }
 
     private string HeightPx => $"{Height}px";
 
@@ -193,12 +201,13 @@
             return [];
         }
 
-        var step = Data.Count == 1 ? 0 : 100d / (Data.Count - 1);
+        var total = XPointCount > 0 ? XPointCount : Data.Count;
+        var step = total == 1 ? 0 : 100d / (total - 1);
 
         return Data
             .Select((value, index) =>
             {
-                var x = index * step;
+                var x = (index + XOffset) * step;
                 var normalized = (value - RangeMin) / Range;
                 var y = 92 - normalized * 72;
                 return (x, y);

@@ -202,6 +202,7 @@ else
                         TargetValue="(double?)GddTargetValue"
                         ShowGrid="true"
                         RotateXLabels="true"
+                        XPointCount="GddTotalPoints"
                         XLabels="GddXLabels"
                         YLabels="GddYLabels"
                         PointLabels="GddPointLabels" />
@@ -217,6 +218,8 @@ else
                                 Fill="false"
                                 MinValue="0"
                                 MaxValue="GddChartMax"
+                                XPointCount="GddTotalPoints"
+                                XOffset="GddHistoryCountMinusOne"
                                 HideLabels="true" />
                         </div>
                     }
@@ -293,20 +296,35 @@ else
     {
         get
         {
+            // Solo la proyección futura, acumulada desde el último valor del historial.
             if (forecast is null || forecast.FutureProjection.Count == 0) return [];
-            var cum = GddCumulativeData.ToList();
-            double acc = cum.Count > 0 ? cum[^1] : 0;
+            var hist = GddCumulativeData;
+            double acc = hist.Count > 0 ? hist[^1] : 0;
+            var proj = new List<double>();
             foreach (var p in forecast.FutureProjection)
             {
                 acc += (double)p.Gdd;
-                cum.Add(Math.Round(acc, 1));
+                proj.Add(Math.Round(acc, 1));
             }
-            return cum;
+            return proj;
         }
     }
 
-    private double GddChartMax =>
-        Math.Max(GddProjectedData.Count > 0 ? GddProjectedData.Max() : 0, GddTargetValue);
+    // Dominio X compartido: historial + proyección (ambos charts usan el mismo total)
+    private int GddTotalPoints =>
+        (forecast?.GddHistory.Count ?? 0) + (forecast?.FutureProjection.Count ?? 0);
+
+    private int GddHistoryCountMinusOne => Math.Max(0, (forecast?.GddHistory.Count ?? 1) - 1);
+
+    private double GddChartMax
+    {
+        get
+        {
+            var max = GddCumulativeData.Count > 0 ? GddCumulativeData.Max() : 0d;
+            if (GddProjectedData.Count > 0) max = Math.Max(max, GddProjectedData.Max());
+            return Math.Max(max, GddTargetValue);
+        }
+    }
 
     private double GddTargetValue => forecast is not null ? (double)forecast.GddTarget : 0;
 
@@ -319,9 +337,13 @@ else
     {
         get
         {
-            var history = forecast?.GddHistory ?? [];
-            if (history.Count == 0) return null;
-            return history.Select(p => p.Date.ToString("dd/MM")).ToArray();
+            // Fechas del historial + fechas futuras de la proyección
+            var labels = new List<string>();
+            foreach (var p in forecast?.GddHistory ?? [])
+                labels.Add(p.Date.ToString("dd/MM"));
+            foreach (var p in forecast?.FutureProjection ?? [])
+                labels.Add(p.Date.ToString("dd/MM"));
+            return labels.Count > 0 ? labels : null;
         }
     }
 
