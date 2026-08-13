@@ -83,7 +83,9 @@ else
         <div class="ms-auto d-flex gap-2 align-items-center">
             <label class="form-label mb-0">Simular fecha:</label>
             <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="simDate" @bind:after="LoadForecast" />
+            <button class="btn btn-outline-secondary btn-sm" @onclick="() => ShiftSimDate(-1)">-1 día</button>
             <button class="btn btn-outline-secondary btn-sm" @onclick="ResetSimDate">Hoy</button>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="() => ShiftSimDate(1)">+1 día</button>
             <button class="btn btn-outline-primary btn-sm" @onclick="() => showNewLotForm = !showNewLotForm">
                 @(showNewLotForm ? "Ocultar" : "+ Nuevo lote")
             </button>
@@ -384,6 +386,12 @@ else
     private async Task ResetSimDate()
     {
         simDate = Today;
+        await LoadForecast();
+    }
+
+    private async Task ShiftSimDate(int days)
+    {
+        simDate = simDate.AddDays(days);
         await LoadForecast();
     }
 

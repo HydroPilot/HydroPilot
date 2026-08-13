@@ -116,34 +116,52 @@ public class GddService
         var from = today.AddDays(1);
         var to = today.AddDays(horizonDays);
 
-        // 1. DB primero
-        var rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
+        // 1. GDD real por fecha (lecturas del invernadero hasta la fecha actual real).
+        //    Los días de la "proyección" que ya tienen lecturas usan su valor real
+        //    (esto ancla la fecha estimada al simular dentro del rango de datos).
+        var realDaily = await GetDailyGddByDateAsync(lot, ct: ct);
 
-        // 2. Si faltan fechas, fetch perezoso.
-        //    Por defecto hay un guard de 1 vez/día (evita llamar a OpenWeather en cada carga).
-        //    Si WeatherDailyLimitDisabled está activo, se consulta siempre que falten fechas.
-        var existingDates = rows.Select(r => r.Date).ToHashSet();
-        var expected = (to.DayNumber - from.DayNumber) + 1;
-        var limitDisabled = await _settings.GetBoolAsync(
-            SettingsService.WeatherDailyLimitDisabledKey, false, ct);
-        var fetchedToday = rows.Any(r => r.FetchedAt.Date == DateTime.UtcNow.Date);
-        if (existingDates.Count < expected && (limitDisabled || !fetchedToday))
+        // 2. Fechas sin lectura real → pronóstico climático (DB primero, fetch perezoso).
+        var missingDates = new List<DateOnly>();
+        for (var date = from; date <= to; date = date.AddDays(1))
         {
-            await _weatherService.FetchForecastForDatesAsync(from, to, ct);
-            rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
+            if (!realDaily.ContainsKey(date))
+                missingDates.Add(date);
         }
 
-        var byDate = rows.ToDictionary(r => r.Date);
+        var forecastByDate = new Dictionary<DateOnly, decimal>();
+        if (missingDates.Count > 0)
+        {
+            var rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
+            var existingDates = rows.Select(r => r.Date).ToHashSet();
 
-        // 3. Fallback para fechas que sigan faltando
-        var fallback = await GetRecentAverageDailyGddAsync(lot, ct: ct);
+            // Fetch perezoso solo si faltan fechas y el límite diario lo permite.
+            if (existingDates.Count < missingDates.Count)
+            {
+                var limitDisabled = await _settings.GetBoolAsync(
+                    SettingsService.WeatherDailyLimitDisabledKey, false, ct);
+                var fetchedToday = rows.Any(r => r.FetchedAt.Date == DateTime.UtcNow.Date);
+                if (limitDisabled || !fetchedToday)
+                {
+                    await _weatherService.FetchForecastForDatesAsync(from, to, ct);
+                    rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
+                }
+            }
+
+            forecastByDate = rows.ToDictionary(r => r.Date, r => DailyGdd(r.TempMax, r.TempMin, baseTemp));
+        }
+
+        // 3. Fallback para las fechas que sigan sin dato
+        var fallback = await GetRecentAverageDailyGddAsync(lot, asOfDate, ct: ct);
 
         var projection = new List<DailyGddPoint>();
         for (var date = from; date <= to; date = date.AddDays(1))
         {
-            var gdd = byDate.TryGetValue(date, out var row)
-                ? DailyGdd(row.TempMax, row.TempMin, baseTemp)
-                : fallback;
+            var gdd = realDaily.TryGetValue(date, out var real)
+                ? real
+                : forecastByDate.TryGetValue(date, out var fc)
+                    ? fc
+                    : fallback;
 
             projection.Add(new DailyGddPoint(date, Math.Round(gdd, 2)));
         }
