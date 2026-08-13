@@ -129,6 +129,53 @@ public static class DbInitializer
             });
         }
 
+        // --- Seed de catálogos de forecasting ---
+        if (!context.LotStatuses.Any())
+        {
+            context.LotStatuses.AddRange(
+                new LotStatus { Name = "ACTIVO" },
+                new LotStatus { Name = "COSECHADO" },
+                new LotStatus { Name = "DESCARTADO" },
+                new LotStatus { Name = "EN_PAUSA" }
+            );
+        }
+
+        if (!context.CropTypes.Any())
+        {
+            context.CropTypes.Add(new CropType
+            {
+                Name = "Lechuga Baby Leaf",
+                GddTarget = 300m,
+                BaseTemperature = 4.5m,
+                OptimalPhMin = 5.5m,
+                OptimalPhMax = 6.5m,
+                OptimalEcMin = 1.2m,
+                OptimalEcMax = 1.8m,
+                EstimatedDaysToHarvest = 25,
+                YieldPerM2 = 3.0m,
+                Description = "Lechuga de hoja cortada en estado juvenil (ciclo corto)"
+            });
+        }
+
+        context.SaveChanges();
+
+        // --- Seed de lote demo ---
+        if (!context.Lots.Any())
+        {
+            var cropType = context.CropTypes.First();
+            var status = context.LotStatuses.First(s => s.Name == "ACTIVO");
+
+            context.Lots.Add(new Lot
+            {
+                GreenhouseId = greenhouse.Id,
+                CropTypeId = cropType.Id,
+                StatusId = status.Id,
+                SowingDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-15)),
+                PlantedAreaM2 = 4.5m,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
         context.SaveChanges();
     }
 }

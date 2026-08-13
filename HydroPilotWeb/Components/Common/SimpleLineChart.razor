@@ -1,12 +1,51 @@
 @using System.Globalization
 
-<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="simple-line-chart simple-line-chart--@AccentClass" style="height:@HeightPx">
-    @if (Fill)
+<div class="simple-line-chart__wrap @(HideLabels ? "simple-line-chart__wrap--labels-hidden" : null)" style="--plot-height: @HeightPx">
+    @if (!HideLabels)
     {
-        <path d="@FillPath" class="simple-line-chart__fill simple-line-chart__fill--@AccentClass"></path>
+        <div class="simple-line-chart__plotrow">
+            <div class="simple-line-chart__y">
+                @for (var i = 0; i < (YLabels ?? []).Count; i++)
+                {
+                    var top = YLabelTop(i, (YLabels ?? []).Count);
+                    <span style="top: @(top.ToString(CultureInfo.InvariantCulture))%">@YLabels![i]</span>
+                }
+            </div>
+
+            <div class="simple-line-chart__plot">
+                @RenderChartSvg()
+            </div>
+        </div>
     }
-    <path d="@LinePath" class="simple-line-chart__line simple-line-chart__line--@AccentClass" stroke-dasharray="@(Dashed ? "4 3" : null)"></path>
-</svg>
+    else
+    {
+        @RenderChartSvg()
+    }
+
+    @if (!HideLabels)
+    {
+        <div class="simple-line-chart__x @(RotateXLabels ? "simple-line-chart__x--rotated" : null)">
+            @if (RotateXLabels && XLabels is not null)
+            {
+                // Posición absoluta: cada etiqueta centrada exactamente bajo su punto de datos.
+                // Usa el dominio X compartido (XPointCount) si está definido.
+                var labelTotal = XPointCount > 0 ? XPointCount : XLabels.Count;
+                @for (var i = 0; i < XLabels.Count; i++)
+                {
+                    var leftPct = labelTotal == 1 ? 0d : (i + XOffset) * 100d / (labelTotal - 1);
+                    <span style="left: @(leftPct.ToString(CultureInfo.InvariantCulture))%">@XLabels[i]</span>
+                }
+            }
+            else
+            {
+                @foreach (var label in XLabels ?? [])
+                {
+                    <span>@label</span>
+                }
+            }
+        </div>
+    }
+</div>
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<double> Data { get; set; } = [];
@@ -15,10 +54,144 @@
     [Parameter] public bool Dashed { get; set; }
     [Parameter] public string AccentClass { get; set; } = "hydro";
 
+    // Valores opcionales: si no se pasan, se calculan del mínimo/máximo de los datos
+    [Parameter] public double? MinValue { get; set; }
+    [Parameter] public double? MaxValue { get; set; }
+
+    // Línea punteada horizontal en un valor específico (ej: objetivo GDD)
+    [Parameter] public double? TargetValue { get; set; }
+
+    // Grilla horizontal + etiquetas de ejes
+    [Parameter] public bool ShowGrid { get; set; }
+    [Parameter] public IReadOnlyList<string>? XLabels { get; set; }
+    [Parameter] public IReadOnlyList<string>? YLabels { get; set; }
+
+    // Etiquetas X verticales (legibles cuando hay muchos puntos)
+    [Parameter] public bool RotateXLabels { get; set; }
+
+    // Una etiqueta por punto de datos → tooltip nativo al hacer hover
+    [Parameter] public IReadOnlyList<string>? PointLabels { get; set; }
+
+    // Solo el plot (sin ejes ni etiquetas): para overlays alineados sobre otro chart
+    [Parameter] public bool HideLabels { get; set; }
+
+    // Dominio X compartido entre charts alineados (overlay):
+    // XPointCount = total de puntos del dominio, XOffset = índice inicial de esta serie.
+    // Ej: historial (n pts, offset 0) + proyección (m pts, offset n-1) sobre un dominio de n+m.
+    [Parameter] public int XPointCount { get; set; }
+    [Parameter] public int XOffset { get; set; }
+
     private string HeightPx => $"{Height}px";
+
+    private MarkupString RenderChartSvg()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<svg viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" class=\"simple-line-chart simple-line-chart--");
+        sb.Append(AccentClass);
+        sb.Append("\" style=\"height: var(--plot-height)\">");
+
+        if (ShowGrid)
+        {
+            foreach (var (_, y) in GridLines)
+            {
+                sb.Append("<line x1=\"0\" y1=\"");
+                sb.Append(y.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" x2=\"100\" y2=\"");
+                sb.Append(y.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" class=\"simple-line-chart__grid\"></line>");
+            }
+        }
+
+        if (TargetValue is not null)
+        {
+            sb.Append("<line x1=\"0\" y1=\"");
+            sb.Append(TargetY.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" x2=\"100\" y2=\"");
+            sb.Append(TargetY.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" class=\"simple-line-chart__target\"></line>");
+        }
+
+        if (Fill && Data.Count >= 2)
+        {
+            sb.Append("<path d=\"");
+            sb.Append(FillPath);
+            sb.Append("\" class=\"simple-line-chart__fill simple-line-chart__fill--");
+            sb.Append(AccentClass);
+            sb.Append("\"></path>");
+        }
+
+        if (Data.Count == 1)
+        {
+            var (px, py) = Points[0];
+            sb.Append("<circle cx=\"");
+            sb.Append(px.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" cy=\"");
+            sb.Append(py.ToString(CultureInfo.InvariantCulture));
+            sb.Append("\" r=\"1.8\" class=\"simple-line-chart__dot\"></circle>");
+        }
+        else if (Data.Count >= 2)
+        {
+            sb.Append("<path d=\"");
+            sb.Append(LinePath);
+            sb.Append("\" class=\"simple-line-chart__line simple-line-chart__line--");
+            sb.Append(AccentClass);
+            sb.Append("\" stroke-dasharray=\"");
+            sb.Append(Dashed ? "4 3" : "none");
+            sb.Append("\"></path>");
+        }
+
+        if (PointLabels is not null)
+        {
+            for (var i = 0; i < Points.Count && i < PointLabels.Count; i++)
+            {
+                var (hx, hy) = Points[i];
+                sb.Append("<circle cx=\"");
+                sb.Append(hx.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" cy=\"");
+                sb.Append(hy.ToString(CultureInfo.InvariantCulture));
+                sb.Append("\" r=\"2.2\" class=\"simple-line-chart__point\"><title>");
+                sb.Append(System.Net.WebUtility.HtmlEncode(PointLabels[i]));
+                sb.Append("</title></circle>");
+            }
+        }
+
+        sb.Append("</svg>");
+        return new MarkupString(sb.ToString());
+    }
+
+    // Posición de cada etiqueta Y: alineada con las gridlines (20/56/92%)
+    // o distribuida uniformemente si no hay grilla.
+    private static double YLabelTop(int index, int count)
+    {
+        if (count <= 1) return 92;
+        if (count == 3) return new[] { 20.0, 56.0, 92.0 }[index];
+        return 92 - index * 72.0 / (count - 1);
+    }
+
+    private double RangeMin => MinValue ?? (Data.Count > 0 ? Data.Min() : 0);
+    private double RangeMax => MaxValue ?? (Data.Count > 0 ? Data.Max() : 1);
+    private double Range => Math.Max(RangeMax - RangeMin, 1);
+
+    private IReadOnlyList<(double Value, double Y)> GridLines
+    {
+        get
+        {
+            if (!ShowGrid || Data.Count == 0) return [];
+            return new[]
+            {
+                (RangeMax, 20.0),
+                (RangeMin + Range / 2, 56.0),
+                (RangeMin, 92.0)
+            };
+        }
+    }
+
+    private double TargetY => Data.Count > 0 && TargetValue is not null
+        ? 92 - ((TargetValue.Value - RangeMin) / Range) * 72
+        : 0;
+
     private IReadOnlyList<(double X, double Y)> Points => BuildPoints();
     private string LinePath => BuildPath(closeToBase: false);
-    private string FillPath => BuildPath(closeToBase: true);
 
     private IReadOnlyList<(double X, double Y)> BuildPoints()
     {
@@ -27,16 +200,14 @@
             return [];
         }
 
-        var min = Data.Min();
-        var max = Data.Max();
-        var range = Math.Max(max - min, 1);
-        var step = Data.Count == 1 ? 0 : 100d / (Data.Count - 1);
+        var total = XPointCount > 0 ? XPointCount : Data.Count;
+        var step = total == 1 ? 0 : 100d / (total - 1);
 
         return Data
             .Select((value, index) =>
             {
-                var x = index * step;
-                var normalized = (value - min) / range;
+                var x = (index + XOffset) * step;
+                var normalized = (value - RangeMin) / Range;
                 var y = 92 - normalized * 72;
                 return (x, y);
             })
@@ -58,11 +229,24 @@
             path += $" L {points[i].X.ToString(CultureInfo.InvariantCulture)} {points[i].Y.ToString(CultureInfo.InvariantCulture)}";
         }
 
-        if (closeToBase)
-        {
-            path += " L 100 100 L 0 100 Z";
-        }
-
         return path;
+    }
+
+    // El área se cierra en la última x de los datos (no en 100):
+    // si la serie no ocupa todo el ancho (dominio X compartido con proyección),
+    // el fill no debe "caer" hasta el borde derecho.
+    private string FillPath
+    {
+        get
+        {
+            if (Data.Count < 2)
+            {
+                return string.Empty;
+            }
+
+            var path = LinePath;
+            var lastX = Points[^1].X.ToString(CultureInfo.InvariantCulture);
+            return $"{path} L {lastX} 100 L 0 100 Z";
+        }
     }
 }

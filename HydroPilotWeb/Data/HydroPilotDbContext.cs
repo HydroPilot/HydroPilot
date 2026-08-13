@@ -18,6 +18,14 @@ public class HydroPilotDbContext : DbContext
     public DbSet<Sensor> Sensors => Set<Sensor>();
     public DbSet<SensorReading> SensorReadings => Set<SensorReading>();
 
+    public DbSet<CropType> CropTypes => Set<CropType>();
+    public DbSet<LotStatus> LotStatuses => Set<LotStatus>();
+    public DbSet<Lot> Lots => Set<Lot>();
+    public DbSet<Prediction> Predictions => Set<Prediction>();
+
+    public DbSet<DailyWeatherForecast> DailyWeatherForecasts => Set<DailyWeatherForecast>();
+    public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         optionsBuilder.ConfigureWarnings(w =>
@@ -151,6 +159,100 @@ public class HydroPilotDbContext : DbContext
                   .HasForeignKey(e => e.MeasurementUnitId)
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CropType>(entity =>
+        {
+            entity.ToTable("CropTypes");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.GddTarget).HasColumnType("decimal(8,2)");
+            entity.Property(e => e.BaseTemperature).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.OptimalPhMin).HasColumnType("decimal(4,2)");
+            entity.Property(e => e.OptimalPhMax).HasColumnType("decimal(4,2)");
+            entity.Property(e => e.OptimalEcMin).HasColumnType("decimal(6,2)");
+            entity.Property(e => e.OptimalEcMax).HasColumnType("decimal(6,2)");
+            entity.Property(e => e.YieldPerM2).HasColumnType("decimal(8,2)");
+        });
+
+        modelBuilder.Entity<LotStatus>(entity =>
+        {
+            entity.ToTable("LotStatuses");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(50);
+            entity.HasIndex(e => e.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<Lot>(entity =>
+        {
+            entity.ToTable("Lots");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.PlantedAreaM2).HasColumnType("decimal(10,2)");
+            entity.Property(e => e.ActualYieldKg).HasColumnType("decimal(10,2)");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => e.StatusId);
+            entity.HasIndex(e => e.CropTypeId);
+
+            entity.HasOne(e => e.Greenhouse)
+                  .WithMany()
+                  .HasForeignKey(e => e.GreenhouseId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.CropType)
+                  .WithMany(c => c.Lots)
+                  .HasForeignKey(e => e.CropTypeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Status)
+                  .WithMany(s => s.Lots)
+                  .HasForeignKey(e => e.StatusId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Prediction>(entity =>
+        {
+            entity.ToTable("Predictions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.AccumulatedGdd).HasColumnType("decimal(8,2)");
+            entity.Property(e => e.EstimatedYield).HasColumnType("decimal(8,2)");
+            entity.Property(e => e.ModelVersion).HasMaxLength(50);
+
+            entity.HasIndex(e => e.LotId);
+            entity.HasIndex(e => e.GeneratedAt);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany(l => l.Predictions)
+                  .HasForeignKey(e => e.LotId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DailyWeatherForecast>(entity =>
+        {
+            entity.ToTable("DailyWeatherForecasts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.TempMin).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.TempMax).HasColumnType("decimal(5,2)");
+            entity.HasIndex(e => e.Date).IsUnique();
+        });
+
+        modelBuilder.Entity<AppSetting>(entity =>
+        {
+            entity.ToTable("AppSettings");
+            entity.HasKey(e => e.Key);
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
         });
     }
 }
