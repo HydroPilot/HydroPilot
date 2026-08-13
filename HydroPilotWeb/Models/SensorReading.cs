@@ -20,4 +20,5 @@ public class SensorReading
 
     public Sensor? Sensor { get; set; }
     public MeasurementUnit? MeasurementUnit { get; set; }
+    public Lot? Lot { get; set; }
 }
