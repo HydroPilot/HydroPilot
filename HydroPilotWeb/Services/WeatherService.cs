@@ -92,7 +92,9 @@ public class WeatherService
         var (lat, lon, apiKey) = GetWeatherConfig();
         if (apiKey is null) return;
 
-        var url = $"https://api.openweathermap.org/data/4.0/onecall/forecast?lat={lat}&lon={lon}&units=metric&appid={apiKey}";
+        // One Call 4.0 usa timeline/1day (no existe /onecall/forecast).
+        // Devuelve hasta 10 días con temp.min/temp.max por día.
+        var url = $"https://api.openweathermap.org/data/4.0/onecall/timeline/1day?lat={lat}&lon={lon}&units=metric&appid={apiKey}";
 
         try
         {
