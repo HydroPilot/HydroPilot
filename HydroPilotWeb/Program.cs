@@ -15,7 +15,7 @@ var connectionString = builder.Configuration.GetConnectionString(connectionStrin
 
 builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
     options.UseSqlServer(connectionString, sqlOptions =>
-        sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
+        sqlOptions.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null)));
 
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<GddService>();
