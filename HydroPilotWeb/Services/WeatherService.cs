@@ -36,35 +36,43 @@ public class WeatherService
 
         var url = $"https://api.openweathermap.org/data/4.0/onecall/current?lat={lat}&lon={lon}&units=metric&appid={apiKey}";
 
-        var response = await _httpClient.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-
-        var json = await response.Content.ReadAsStringAsync();
-        var result = JsonSerializer.Deserialize<OneCall4CurrentResponse>(json);
-
-        if (result?.data is not { Length: > 0 })
-            return;
-
-        var current = result.data[0];
-        var timestamp = DateTimeOffset.FromUnixTimeSeconds(current.dt).UtcDateTime;
-
-        await using var context = _dbFactory.CreateDbContext();
-
-        var record = new WeatherRecord
+        try
         {
-            Timestamp = timestamp,
-            Temp = current.temp,
-            FeelsLike = current.feels_like,
-            Humidity = current.humidity,
-            Pressure = current.pressure,
-            WindSpeed = current.wind_speed,
-            Clouds = current.clouds,
-            Visibility = current.visibility,
-            Description = current.weather is { Length: > 0 } ? current.weather[0].description : ""
-        };
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
 
-        context.WeatherRecords.Add(record);
-        await context.SaveChangesAsync();
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<OneCall4CurrentResponse>(json);
+
+            if (result?.data is not { Length: > 0 })
+                return;
+
+            var current = result.data[0];
+            var timestamp = DateTimeOffset.FromUnixTimeSeconds(current.dt).UtcDateTime;
+
+            await using var context = _dbFactory.CreateDbContext();
+
+            var record = new WeatherRecord
+            {
+                Timestamp = timestamp,
+                Temp = current.temp,
+                FeelsLike = current.feels_like,
+                Humidity = current.humidity,
+                Pressure = current.pressure,
+                WindSpeed = current.wind_speed,
+                Clouds = current.clouds,
+                Visibility = current.visibility,
+                Description = current.weather is { Length: > 0 } ? current.weather[0].description : ""
+            };
+
+            context.WeatherRecords.Add(record);
+            await context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            // El clima nunca debe romper el resto del sistema: se loguea y se degrada.
+            _logger.LogWarning(ex, "Fallo al obtener el clima actual de OpenWeather");
+        }
     }
 
     public async Task<List<WeatherRecord>> GetForecastAsync()
@@ -84,50 +92,60 @@ public class WeatherService
         var (lat, lon, apiKey) = GetWeatherConfig();
         if (apiKey is null) return;
 
-        var url = $"https://api.openweathermap.org/data/4.0/onecall/forecast?lat={lat}&lon={lon}&units=metric&appid={apiKey}";
+        // One Call 4.0 usa timeline/1day (no existe /onecall/forecast).
+        // Devuelve hasta 10 días con temp.min/temp.max por día.
+        var url = $"https://api.openweathermap.org/data/4.0/onecall/timeline/1day?lat={lat}&lon={lon}&units=metric&appid={apiKey}";
 
-        var response = await _httpClient.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-
-        var json = await response.Content.ReadAsStringAsync();
-        var result = JsonSerializer.Deserialize<OneCallForecastResponse>(json);
-
-        if (result?.data is not { Length: > 0 }) return;
-
-        await using var context = _dbFactory.CreateDbContext();
-
-        var fetchedAt = DateTime.UtcNow;
-        var inserted = 0;
-
-        foreach (var day in result.data)
+        try
         {
-            var date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(day.dt).UtcDateTime);
-            var existing = await context.DailyWeatherForecasts
-                .FirstOrDefaultAsync(f => f.Date == date);
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
 
-            if (existing is null)
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<OneCallForecastResponse>(json);
+
+            if (result?.data is not { Length: > 0 }) return;
+
+            await using var context = _dbFactory.CreateDbContext();
+
+            var fetchedAt = DateTime.UtcNow;
+            var inserted = 0;
+
+            foreach (var day in result.data)
             {
-                context.DailyWeatherForecasts.Add(new Models.DailyWeatherForecast
+                var date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(day.dt).UtcDateTime);
+                var existing = await context.DailyWeatherForecasts
+                    .FirstOrDefaultAsync(f => f.Date == date);
+
+                if (existing is null)
                 {
-                    Date = date,
-                    TempMin = (decimal)day.temp.min,
-                    TempMax = (decimal)day.temp.max,
-                    FetchedAt = fetchedAt
-                });
-                inserted++;
+                    context.DailyWeatherForecasts.Add(new Models.DailyWeatherForecast
+                    {
+                        Date = date,
+                        TempMin = (decimal)day.temp.min,
+                        TempMax = (decimal)day.temp.max,
+                        FetchedAt = fetchedAt
+                    });
+                    inserted++;
+                }
+                else
+                {
+                    existing.TempMin = (decimal)day.temp.min;
+                    existing.TempMax = (decimal)day.temp.max;
+                    existing.FetchedAt = fetchedAt;
+                }
             }
-            else
-            {
-                existing.TempMin = (decimal)day.temp.min;
-                existing.TempMax = (decimal)day.temp.max;
-                existing.FetchedAt = fetchedAt;
-            }
+
+            await context.SaveChangesAsync();
+
+            _logger.LogInformation("Forecast climático guardado: {Inserted} fechas nuevas (rango {First}..{Last})",
+                inserted, result.data[0].dt, result.data[^1].dt);
         }
-
-        await context.SaveChangesAsync();
-
-        _logger.LogInformation("Forecast climático guardado: {Inserted} fechas nuevas (rango {First}..{Last})",
-            inserted, result.data[0].dt, result.data[^1].dt);
+        catch (Exception ex)
+        {
+            // El clima nunca debe romper el forecasting: se loguea y se degrada al fallback del sensor.
+            _logger.LogWarning(ex, "Fallo al obtener el pronóstico de OpenWeather");
+        }
     }
 
     /// <summary>
