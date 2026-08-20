@@ -5,65 +5,119 @@
 <PageTitle>Configuración de usuario</PageTitle>
 
 <section class="settings-layout">
-    <nav class="settings-nav">
-        <a class="settings-nav__item settings-nav__item--active" href="/settings/profile">Perfil</a>
-        <a class="settings-nav__item" href="/settings/notifications">Notificaciones</a>
+    <nav class="settings-nav" aria-label="Configuración de usuario">
+        <NavLink class="settings-nav__item" href="settings/profile" Match="NavLinkMatch.All">Perfil</NavLink>
+        <NavLink class="settings-nav__item" href="settings/notifications">Notificaciones</NavLink>
     </nav>
 
     <div class="settings-stack">
         <AuthorizeView>
             <Authorized>
-                <article class="panel">
-                    <h3>Perfil</h3>
+                <article class="panel settings-panel">
+                    <div class="settings-panel__header">
+                        <div>
+                            <span class="settings-eyebrow">Cuenta</span>
+                            <h3>Perfil</h3>
+                            <p class="panel__subtitle">Información sincronizada desde tu proveedor de identidad.</p>
+                        </div>
+                        <span class="settings-readonly-badge">Solo lectura</span>
+                    </div>
+
+                    <div class="profile-summary">
+                        <span class="profile-summary__avatar">@GetInitials(context.User)</span>
+                        <div>
+                            <strong>@GetDisplayName(context.User)</strong>
+                            <span>@GetClaim(context.User, ClaimTypes.Email)</span>
+                        </div>
+                    </div>
+
                     <form class="settings-form">
-                        <label class="field-block"><span>Nombre</span><input value="@GetClaim(context.User, ClaimTypes.GivenName)" readonly /></label>
-                        <label class="field-block"><span>Apellido</span><input value="@GetClaim(context.User, ClaimTypes.Surname)" readonly /></label>
-                        <label class="field-block"><span>Correo electrónico</span><input type="email" value="@GetClaim(context.User, ClaimTypes.Email)" readonly /></label>
-                        <label class="field-block"><span>Proveedor de identidad</span><input value="Google" readonly /></label>
+                        <label class="field-block">
+                            <span>Nombre</span>
+                            <input value="@GetClaim(context.User, ClaimTypes.GivenName)" readonly aria-readonly="true" />
+                        </label>
+                        <label class="field-block">
+                            <span>Apellido</span>
+                            <input value="@GetClaim(context.User, ClaimTypes.Surname)" readonly aria-readonly="true" />
+                        </label>
+                        <label class="field-block">
+                            <span>Correo electrónico</span>
+                            <input type="email" value="@GetClaim(context.User, ClaimTypes.Email)" readonly aria-readonly="true" />
+                        </label>
+                        <label class="field-block">
+                            <span>Proveedor de identidad</span>
+                            <input value="Google" readonly aria-readonly="true" />
+                        </label>
                         <div class="settings-form__footer">
-                            <p>Rol: <strong>@GetRole(context.User)</strong></p>
-                            <p class="settings-form__note">Tus datos provienen de tu cuenta de Google.</p>
+                            <div class="profile-role">
+                                <span>Rol actual</span>
+                                <span class="role-badge @(GetRoleClass(context.User))">@GetRole(context.User)</span>
+                            </div>
+                            <p class="settings-form__note">Para cambiar estos datos, actualizalos en tu cuenta de Google.</p>
                         </div>
                     </form>
                 </article>
             </Authorized>
         </AuthorizeView>
 
-        <article class="panel">
-            <h3>Seguridad</h3>
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Acceso</span>
+                    <h3>Seguridad</h3>
+                    <p class="panel__subtitle">Los controles de acceso se administran desde Google.</p>
+                </div>
+                <span class="settings-readonly-badge">Administrado externamente</span>
+            </div>
             <div class="settings-list">
                 <div class="settings-list__row">
+                    <span class="settings-list__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 2.9 8.4 7 10 4.1-1.6 7-5.6 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-4" /></svg>
+                    </span>
                     <div>
                         <strong>Autenticación</strong>
                         <p>Inicio de sesión gestionado por Google (OAuth 2.0)</p>
                     </div>
+                    <span class="settings-status">Activa</span>
                 </div>
                 <div class="settings-list__row">
+                    <span class="settings-list__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3l-2 3h18l-2-3v-3a7 7 0 0 0-7-7Z" /><path d="M9.5 20h5" /></svg>
+                    </span>
                     <div>
                         <strong>Verificación en dos pasos</strong>
                         <p>Gestionada desde tu cuenta de Google</p>
                     </div>
+                    <span class="settings-status settings-status--muted">Externa</span>
                 </div>
             </div>
         </article>
 
-        <article class="panel">
-            <h3>Preferencias</h3>
-            <div class="preferences-grid">
-                <label class="field-block"><span>Idioma</span><select><option>Español</option><option>English</option><option>Português</option></select></label>
-                <label class="field-block"><span>Zona horaria</span><select><option>GMT-3 Buenos Aires</option><option>GMT-5 Bogotá</option><option>GMT+1 Madrid</option></select></label>
-                <label class="field-block"><span>Unidad de temperatura</span><select><option>Celsius</option><option>Fahrenheit</option></select></label>
-                <label class="field-block"><span>Formato de fecha</span><select><option>DD/MM/AAAA</option><option>MM/DD/AAAA</option></select></label>
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Experiencia</span>
+                    <h3>Preferencias</h3>
+                    <p class="panel__subtitle">Opciones disponibles para personalizar tu vista.</p>
+                </div>
+                <span class="settings-readonly-badge settings-readonly-badge--muted">Próximamente</span>
             </div>
+            <div class="preferences-grid" aria-describedby="preferences-note">
+                <label class="field-block"><span>Idioma</span><select disabled aria-disabled="true"><option>Español</option><option>English</option><option>Português</option></select></label>
+                <label class="field-block"><span>Zona horaria</span><select disabled aria-disabled="true"><option>GMT-3 Buenos Aires</option><option>GMT-5 Bogotá</option><option>GMT+1 Madrid</option></select></label>
+                <label class="field-block"><span>Unidad de temperatura</span><select disabled aria-disabled="true"><option>Celsius</option><option>Fahrenheit</option></select></label>
+                <label class="field-block"><span>Formato de fecha</span><select disabled aria-disabled="true"><option>DD/MM/AAAA</option><option>MM/DD/AAAA</option></select></label>
+            </div>
+            <p id="preferences-note" class="settings-form__note">Estas preferencias son informativas y todavía no se guardan.</p>
         </article>
     </div>
 </section>
 
 <style>
     .settings-form__note {
-        font-size: 12px;
-        color: #70869a;
-        margin-top: 8px;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        margin: 0;
     }
 </style>
 
@@ -79,5 +133,24 @@
     private static string GetRole(ClaimsPrincipal user)
     {
         return user.FindFirst(ClaimTypes.Role)?.Value ?? "Operador";
+    }
+
+    private static string GetRoleClass(ClaimsPrincipal user)
+    {
+        return GetRole(user) == "no-asignado" ? "role-badge--warning" : "role-badge--active";
+    }
+
+    private static string GetInitials(ClaimsPrincipal user)
+    {
+        var first = GetClaim(user, ClaimTypes.GivenName);
+        var last = GetClaim(user, ClaimTypes.Surname);
+        var initials = string.Concat(first.FirstOrDefault(), last.FirstOrDefault()).Trim();
+        return string.IsNullOrWhiteSpace(initials) ? "HP" : initials.ToUpperInvariant();
+    }
+
+    private static string GetDisplayName(ClaimsPrincipal user)
+    {
+        var name = string.Join(" ", GetClaim(user, ClaimTypes.GivenName), GetClaim(user, ClaimTypes.Surname)).Trim();
+        return string.IsNullOrWhiteSpace(name) ? GetClaim(user, ClaimTypes.Email) : name;
     }
 }
