@@ -126,6 +126,11 @@ public sealed class LotesSqlFixture : IAsyncLifetime
     /// <summary>Siembra ~14 días de lecturas de temperatura que dan GDD acumulado ~329.</summary>
     public static async Task SeedTemperatureReadingsAsync(HydroPilotDbContext context, int greenhouseId, DateTime startUtc, int days = 14)
     {
+        // Id de siembra único por llamada: varias pruebas comparten la misma base
+        // (colección serializada) y el índice único NodeId+ExternalReadingId exige
+        // lecturas no duplicadas entre siembras (contrato de lectura v2 de IoT).
+        var seedTag = "fixture-temp-" + Interlocked.Increment(ref _seedCounter);
+
         var sensor = await context.Sensors
             .Include(s => s.Node)
             .FirstAsync(s => s.Node!.GreenhouseId == greenhouseId && s.SensorType!.Name == "Temperatura");
@@ -133,15 +138,24 @@ public sealed class LotesSqlFixture : IAsyncLifetime
 
         for (var i = 0; i < days; i++)
         {
+            // Contrato de lectura v2 (IoT): NodeId obligatorio, timestamps UTC
+            // y ExternalReadingId único por nodo (índice único NodeId+ExternalReadingId).
+            var observed = startUtc.AddDays(i).AddHours(12);
             context.SensorReadings.Add(new SensorReading
             {
                 SensorId = sensor.Id,
+                NodeId = sensor.Node!.Id,
                 MeasurementUnitId = sensor.MeasurementUnitId,
                 Value = 28m,
-                Timestamp = startUtc.AddDays(i).AddHours(12),
+                Timestamp = observed,
+                ObservedAtUtc = observed,
+                ReceivedAtUtc = DateTime.UtcNow,
+                ExternalReadingId = $"{seedTag}-{i}",
                 CreatedAt = DateTime.UtcNow
             });
         }
         await context.SaveChangesAsync();
     }
+
+    private static int _seedCounter;
 }
