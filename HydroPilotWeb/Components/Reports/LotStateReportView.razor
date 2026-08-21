@@ -1,0 +1,206 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+@using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Components.Lotes
+@using Microsoft.JSInterop
+@inject ReportQueryService Reports
+@inject IJSRuntime JS
+
+<section class="panel">
+    <div class="panel__header panel__header--compact">
+        <h4>Reporte de estado de lote</h4>
+        <p class="text-muted small mb-0">
+            Datos compartidos del lote (superficie, siembra, GDD, pH/EC, fenología) y conteos por estado
+            comercial. La predominancia (con "Mixto" ante empate) proviene del dominio
+            (LotAggregateService); los colores y la leyenda son los mismos de la vista de lote.
+        </p>
+    </div>
+
+    <div class="row g-2 mb-3">
+        <div class="col-md-4">
+            <label class="form-label small mb-1">Lote</label>
+            <select class="form-select form-select-sm" @bind="lotId">
+                <option value="">— seleccionar —</option>
+                @foreach (var lot in options?.Lots ?? [])
+                {
+                    <option value="@lot.Id">@lot.Label</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small mb-1">Fecha de corte (GDD)</label>
+            <input type="date" class="form-control form-control-sm" @bind="asOfDate" />
+        </div>
+    </div>
+
+    <div class="d-flex gap-2 mb-2">
+        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading || lotId is null">
+            @(loading ? "Generando..." : "Generar")
+        </button>
+    </div>
+
+    @if (loading)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Consultando...</span></div>
+        </div>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>No se pudo generar el reporte.</strong> @error
+            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+        </div>
+    }
+    else if (result is not null)
+    {
+        <ReportNotice Warnings="result.Warnings" Parameters="result.Parameters" />
+
+        @if (result.State is null)
+        {
+            <div class="alert alert-info">Lote no encontrado.</div>
+        }
+        else
+        {
+            var state = result.State;
+
+            <div class="row g-3 mb-3">
+                <div class="col-md-8">
+                    <h5 class="small text-uppercase text-muted">Mapa del lote (leyenda compartida)</h5>
+                    <LotMap Rows="state.GridRows ?? 0"
+                            Columns="state.GridColumns ?? 0"
+                            Cells="state.Cells"
+                            OnCellSelected="OnCellClicked" />
+                    <div class="mt-2">
+                        <LotLegend Counts="state.CommercialCounts"
+                                   EmptyPositions="state.EmptyPositions"
+                                   DiscardedPlants="state.DiscardedPlants" />
+                    </div>
+                    <div class="text-muted small mt-2">
+                        Posición vacía ≠ planta descartada: los conteos separan activas, cosechadas,
+                        descartadas y posiciones vacías.
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <h5 class="small text-uppercase text-muted">Resumen del lote</h5>
+                    <ul class="list-group list-group-flush small">
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Lote</span><strong>@(state.Name ?? $"#{state.LotId}")</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Cultivo</span><strong>@state.CropTypeName</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Estado</span><strong>@(state.StatusName ?? "—")</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Siembra</span><strong>@state.SowingDate.ToString("dd/MM/yyyy")</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Superficie</span><strong>@state.AreaM2.ToString("0.##") m²</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>GDD base</span><strong>@state.GddAccumulated.ToString("0.##")</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Etapa fenológica</span><strong>@(state.PhenologicalStageName ?? "—")</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Estado comercial</span>
+                            <strong>
+                                @(state.CommercialStageName ?? "(sin activas)")
+                                @if (state.IsCommercialStageMixed)
+                                {
+                                    <span class="badge text-bg-warning ms-1" title="Empate de conteos: Mixto (regla de dominio)">Mixto</span>
+                                }
+                            </strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>pH / EC</span>
+                            <strong>@(state.CurrentPh?.ToString() ?? "—") / @(state.CurrentEc?.ToString() ?? "—")</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Activas</span><strong>@state.ActivePlants</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Cosechadas</span><strong>@state.HarvestedPlants</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Descartadas</span><strong>@state.DiscardedPlants</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Posiciones vacías</span><strong>@state.EmptyPositions</strong>
+                        </li>
+                    </ul>
+
+                    @if (state.HarvestReadiness is { } readiness)
+                    {
+                        <div class="alert @(readiness.IsReady == true ? "alert-success" : "alert-info") small mt-2 mb-1 py-2 px-2">
+                            Cosecha Baby Leaf: @readiness.AptaPlantCount/@readiness.TotalActivePlants aptas
+                            (@readiness.AptaPercent.ToString("0.#")%, objetivo @(readiness.TargetPercent?.ToString() ?? "sin definir")).
+                            @foreach (var w in readiness.Warnings)
+                            {
+                                <div>⚠ @w</div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <button class="btn btn-outline-secondary btn-sm" @onclick="Download">⬇ CSV estado de lote (conteos y resumen)</button>
+        }
+    }
+</section>
+
+@code {
+    private ReportFilterOptions? options;
+    private LotStateReportResult? result;
+    private bool loading;
+    private string? error;
+
+    private int? lotId;
+    private DateOnly? asOfDate;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            options = await Reports.GetFilterOptionsAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar las opciones de filtros: {ex.Message}";
+        }
+    }
+
+    private async Task Generate()
+    {
+        if (lotId is null) return;
+        error = null;
+        loading = true;
+        try
+        {
+            result = await Reports.GetLotStateReportAsync(lotId.Value, asOfDate);
+        }
+        catch (Exception ex)
+        {
+            result = null;
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task Download()
+    {
+        if (result is null) return;
+        var csv = CsvExportService.LotState(result);
+        await JS.InvokeVoidAsync("hydroReportsDownload", csv.FileName,
+            Convert.ToBase64String(csv.Content));
+    }
+
+    // El mapa del reporte es de solo lectura: el clic en una celda no abre detalle.
+    private void OnCellClicked(Services.Lotes.PlantCellDto cell) { }
+}

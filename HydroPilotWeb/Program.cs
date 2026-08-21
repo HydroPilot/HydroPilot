@@ -46,6 +46,8 @@ builder.Services.AddScoped<LotDailyFlowService>();
 // --- Dashboard (plan 12) ---
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddOptions<DashboardOptions>().BindConfiguration(DashboardOptions.SectionName);
+// --- Módulo de reportes (plan 13): consultas y exportación bajo demanda ---
+builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

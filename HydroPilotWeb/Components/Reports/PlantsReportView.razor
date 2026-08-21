@@ -1,0 +1,270 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+@using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Components.Lotes
+@using HydroPilotWeb.Models
+@using Microsoft.JSInterop
+@inject ReportQueryService Reports
+@inject IJSRuntime JS
+
+<section class="panel">
+    <div class="panel__header panel__header--compact">
+        <h4>Reporte de plantas</h4>
+        <p class="text-muted small mb-0">
+            Fila/columna, estados, BabyLeafScore, GrowthRate, última evaluación e imagen por planta.
+            Seleccioná una fila para ver el detalle completo (evaluaciones, imagen e historial de
+            cosecha/descarte) con el mismo contrato de dominio que la vista de lotes.
+        </p>
+    </div>
+
+    <div class="row g-2 mb-3">
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Lote</label>
+            <select class="form-select form-select-sm" @bind="lotId">
+                <option value="">Todos</option>
+                @foreach (var lot in options?.Lots ?? [])
+                {
+                    <option value="@lot.Id">@lot.Label</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Fila</label>
+            <input type="number" min="1" class="form-control form-control-sm" @bind="row" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Columna</label>
+            <input type="number" min="1" class="form-control form-control-sm" @bind="column" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Estado operativo</label>
+            <select class="form-select form-select-sm" @bind="operationalState">
+                <option value="">Todos</option>
+                @foreach (var o in Enum.GetValues<PlantOperationalState>())
+                {
+                    <option value="@((int)o)">@o</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Etapa comercial</label>
+            <select class="form-select form-select-sm" @bind="commercialStageId">
+                <option value="">Todas</option>
+                @foreach (var s in options?.Stages ?? [])
+                {
+                    <option value="@s.Id">@s.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2 mb-2">
+        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+            @(loading ? "Generando..." : "Generar")
+        </button>
+    </div>
+
+    @if (loading)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Consultando...</span></div>
+        </div>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>No se pudo generar el reporte.</strong> @error
+            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+        </div>
+    }
+    else if (result is not null)
+    {
+        <ReportNotice Warnings="result.Warnings" Parameters="result.Parameters" />
+
+        @if (result.TotalRows == 0)
+        {
+            <div class="alert alert-info">No hay plantas con los filtros elegidos.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                    <thead>
+                        <tr>
+                            <th>Posición</th>
+                            <th>Estado operativo</th>
+                            <th>Etapa fenológica</th>
+                            <th>Etapa comercial</th>
+                            <th class="text-end">Score</th>
+                            <th class="text-end">GrowthRate</th>
+                            <th>Última evaluación</th>
+                            <th>Imagen</th>
+                            <th>Cosecha/Descarte</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in result.Rows)
+                        {
+                            var style = CommercialStagePalette.ForStage(p.CommercialStageName);
+                            <tr class="@(selectedPlantId == p.PlantId ? "table-primary" : null)">
+                                <td>F@p.Row-C@p.Column
+                                    <div class="text-muted small">@(p.LotName ?? $"lote #{p.LotId}")</div>
+                                </td>
+                                <td>
+                                    <span class="badge @OpBadge(p.OperationalState)">@p.OperationalState</span>
+                                </td>
+                                <td class="small">@(p.PhenologicalStageName ?? "—")</td>
+                                <td>
+                                    @if (p.CommercialStageName is not null)
+                                    {
+                                        <span class="badge" style="background: @style.Background; color: @style.Color;">@p.CommercialStageName</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="text-end">@(p.BabyLeafScore?.ToString("0.#") ?? "—")</td>
+                                <td class="text-end">@(p.GrowthRate?.ToString("0.#") ?? "—")</td>
+                                <td class="small" title="@(p.LastEvaluationResult ?? "")">
+                                    @(p.LastEvaluationAtUtc?.ToString("dd/MM/yyyy HH:mm") ?? "—")
+                                </td>
+                                <td>@(p.HasImage ? "📷" : "—")</td>
+                                <td class="small">
+                                    @if (p.HarvestDate is { } hd)
+                                    {
+                                        <span class="text-success">Cosechada @hd.ToString("dd/MM/yyyy")</span>
+                                    }
+                                    else if (p.DiscardDate is { } dd)
+                                    {
+                                        <span class="text-secondary" title="@p.DiscardReason">Descartada @dd.ToString("dd/MM/yyyy")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td>
+                                    <button class="btn btn-outline-primary btn-sm" @onclick="() => ShowDetail(p.PlantId)">Detalle</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <ReportPager Page="result.Page" TotalRows="result.TotalRows" PageSize="result.PageSize"
+                         PageChanged="OnPageChanged" />
+            <button class="btn btn-outline-secondary btn-sm mt-2" @onclick="Download">⬇ CSV plantas (página actual)</button>
+
+            @if (detail is not null || selectedPlantId is not null)
+            {
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <PlantDetailCard Detail="detail" />
+                    </div>
+                </div>
+            }
+        }
+    }
+</section>
+
+@code {
+    private ReportFilterOptions? options;
+    private PlantReportResult? result;
+    private PlantDetailDto? detail;
+    private int? selectedPlantId;
+    private bool loading;
+    private string? error;
+
+    private int? lotId;
+    private int? row;
+    private int? column;
+    private PlantOperationalState? operationalState;
+    private int? commercialStageId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            options = await Reports.GetFilterOptionsAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar las opciones de filtros: {ex.Message}";
+        }
+    }
+
+    private async Task Generate()
+    {
+        error = null;
+        loading = true;
+        try
+        {
+            result = await Reports.GetPlantReportAsync(
+                new PlantReportRequest(lotId, row, column, operationalState, commercialStageId),
+                page: 1,
+                pageSize: ReportLimits.DefaultPageSize);
+            selectedPlantId = null;
+            detail = null;
+        }
+        catch (Exception ex)
+        {
+            result = null;
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OnPageChanged(int page)
+    {
+        loading = true;
+        try
+        {
+            result = await Reports.GetPlantReportAsync(
+                new PlantReportRequest(lotId, row, column, operationalState, commercialStageId),
+                page,
+                result?.PageSize ?? ReportLimits.DefaultPageSize);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task ShowDetail(int plantId)
+    {
+        selectedPlantId = plantId;
+        detail = null;
+        try
+        {
+            detail = await Reports.GetPlantDetailAsync(plantId);
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo cargar el detalle de la planta: {ex.Message}";
+        }
+    }
+
+    private async Task Download()
+    {
+        if (result is null) return;
+        var csv = CsvExportService.Plants(result);
+        await JS.InvokeVoidAsync("hydroReportsDownload", csv.FileName,
+            Convert.ToBase64String(csv.Content));
+    }
+
+    private static string OpBadge(PlantOperationalState op) => op switch
+    {
+        PlantOperationalState.Cosechada => "text-bg-success",
+        PlantOperationalState.Descartada => "text-bg-secondary",
+        _ => "text-bg-primary",
+    };
+}

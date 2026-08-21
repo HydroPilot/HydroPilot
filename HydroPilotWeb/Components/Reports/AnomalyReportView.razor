@@ -1,0 +1,96 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+@inject ReportQueryService Reports
+
+<section class="panel">
+    <div class="panel__header panel__header--compact">
+        <h4>Reporte de anomalías <span class="badge text-bg-warning ms-1">Pendiente</span></h4>
+        <p class="text-muted small mb-0">
+            El módulo de anomalías todavía no existe en dev (plan 15). El diseño de datos de este
+            reporte queda definido y NO se inventan datos: las filas de abajo son la descripción
+            del contrato que se conectará cuando el módulo exista.
+        </p>
+    </div>
+
+    @if (loading)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Consultando...</span></div>
+        </div>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>No se pudo cargar el reporte.</strong> @error
+            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Load">Reintentar</button>
+        </div>
+    }
+    else if (result is not null)
+    {
+        <ReportNotice Warnings="result.Warnings" Parameters="result.Parameters" />
+
+        <div class="table-responsive">
+            <table class="table table-sm table-striped">
+                <thead>
+                    <tr>
+                        <th>Tipo</th>
+                        <th>Severidad</th>
+                        <th class="text-end">Cantidad de episodios</th>
+                        <th>Duración promedio</th>
+                        <th>Estado</th>
+                        <th>Lote</th>
+                        <th>Sensor</th>
+                        <th>Tiempo a resolución</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in result.Rows)
+                    {
+                        <tr class="text-muted small">
+                            <td>@a.Type</td>
+                            <td>@a.Severity</td>
+                            <td class="text-end">—</td>
+                            <td>@(a.AverageDuration?.ToString() ?? "—")</td>
+                            <td>@a.Status</td>
+                            <td>@a.LotName</td>
+                            <td>@a.SensorName</td>
+                            <td>@(a.AverageTimeToResolution?.ToString() ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="alert alert-secondary small">
+            Contrato futuro (módulo de anomalías): tipo, severidad, cantidad de episodios, duración,
+            estado, lote y sensor, tiempo hasta resolución. Sin datos inventados hasta que exista la
+            consulta real.
+        </div>
+    }
+</section>
+
+@code {
+    private AnomalyReportResult? result;
+    private bool loading = true;
+    private string? error;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task Load()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            result = await Reports.GetAnomalyReportAsync();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

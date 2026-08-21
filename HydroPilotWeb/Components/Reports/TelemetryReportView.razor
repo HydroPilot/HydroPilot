@@ -1,0 +1,351 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+@using Microsoft.JSInterop
+@inject ReportQueryService Reports
+@inject IJSRuntime JS
+
+<section class="panel">
+    <div class="panel__header panel__header--compact">
+        <h4>Reporte de telemetría</h4>
+        <p class="text-muted small mb-0">
+            Estadísticas por sensor y detalle de lecturas en el rango. Promedios y extremos se
+            calculan solo sobre lecturas utilizables (VALID/SUSPECT/STALE); las inválidas nunca
+            contaminan las estadísticas y se cuentan por calidad.
+        </p>
+    </div>
+
+    <div class="row g-2 mb-3">
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Desde (fecha)</label>
+            <input type="date" class="form-control form-control-sm" @bind="fromDate" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Hasta (fecha)</label>
+            <input type="date" class="form-control form-control-sm" @bind="toDate" />
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Lote</label>
+            <select class="form-select form-select-sm" @bind="lotId">
+                <option value="">Todos</option>
+                @foreach (var lot in options?.Lots ?? [])
+                {
+                    <option value="@lot.Id">@lot.Label</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Nodo</label>
+            <select class="form-select form-select-sm" @bind="nodeId">
+                <option value="">Todos</option>
+                @foreach (var n in options?.Nodes ?? [])
+                {
+                    <option value="@n.Id">@n.Identifier</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Sensor</label>
+            <select class="form-select form-select-sm" @bind="sensorId">
+                <option value="">Todos</option>
+                @foreach (var s in options?.Sensors ?? [])
+                {
+                    <option value="@s.Id">@s.Label (nodo @s.NodeId)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-1">Tipo de variable</label>
+            <select class="form-select form-select-sm" @bind="sensorTypeId">
+                <option value="">Todos</option>
+                @foreach (var t in options?.SensorTypes ?? [])
+                {
+                    <option value="@t.Id">@t.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <div class="d-flex gap-3 align-items-center mb-2 flex-wrap">
+        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+            @(loading ? "Generando..." : "Generar")
+        </button>
+        <label class="form-check small mb-0">
+            <input class="form-check-input" type="checkbox" @bind="includeNonUsable" />
+            <span class="form-check-label">Incluir lecturas no utilizables en el detalle</span>
+        </label>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(validationError))
+    {
+        <div class="alert alert-danger py-2 px-3 small">@validationError</div>
+    }
+
+    @if (loading)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Consultando...</span></div>
+        </div>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>No se pudo generar el reporte.</strong> @error
+            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+        </div>
+    }
+    else if (result is not null)
+    {
+        <ReportNotice Warnings="result.Warnings" Parameters="result.Parameters" />
+
+        @if (result.Stats.Count == 0 && result.Rows.Count == 0)
+        {
+            <div class="alert alert-info">
+                No hay lecturas en el rango con los filtros elegidos (no se muestran ceros engañosos).
+            </div>
+        }
+        else
+        {
+            <div class="d-flex gap-2 flex-wrap mb-2">
+                <span class="badge text-bg-secondary">Rango: @result.RangeDays día(s)</span>
+                <span class="badge text-bg-light border" title="Todas las lecturas del rango">Total: @result.TotalReadings</span>
+                <span class="badge text-bg-success" title="IsOperationallyUsable">Utilizables: @result.UsableReadings</span>
+                <span class="badge text-bg-danger" title="INVALID/FUTURE/NO_DATA/SENSOR_ERROR">No utilizables: @result.NonUsableReadings</span>
+                @if (result.MockReadings > 0)
+                {
+                    <span class="badge text-bg-warning">Mock/fixture: @result.MockReadings</span>
+                }
+            </div>
+
+            <h5 class="small text-uppercase text-muted mt-3">Estadísticas por sensor</h5>
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                    <thead>
+                        <tr>
+                            <th>Sensor</th>
+                            <th>Tipo</th>
+                            <th>Unidad</th>
+                            <th class="text-end">Mín</th>
+                            <th class="text-end">Máx</th>
+                            <th class="text-end">Promedio</th>
+                            <th class="text-end">Mediana</th>
+                            <th class="text-end">Utilizables</th>
+                            <th class="text-end">Sospechosas</th>
+                            <th class="text-end">Inválidas</th>
+                            <th class="text-end">Cobertura</th>
+                            <th>Última lectura</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in result.Stats)
+                        {
+                            <tr>
+                                <td>@s.SensorName <span class="text-muted small">(#@s.SensorId, @s.NodeIdentifier)</span></td>
+                                <td>@s.SensorType</td>
+                                <td>@(s.Unit ?? "—")</td>
+                                <td class="text-end">@(s.Min?.ToString("0.####") ?? "—")</td>
+                                <td class="text-end">@(s.Max?.ToString("0.####") ?? "—")</td>
+                                <td class="text-end">@(s.Average?.ToString("0.####") ?? "—")</td>
+                                <td class="text-end" title="@(s.MedianComputed ? "mediana del conjunto utilizable" : "volumen alto: no calculada")">
+                                    @(s.Median?.ToString("0.####") ?? "—")
+                                </td>
+                                <td class="text-end">@s.UsableCount</td>
+                                <td class="text-end">@s.SuspectCount</td>
+                                <td class="text-end">@s.InvalidCount</td>
+                                <td class="text-end" title="@s.DaysWithData día(s) con datos de @result.RangeDays">@s.CoveragePercent%</td>
+                                <td class="small">
+                                    @if (s.LastObservedAtUtc is { } lastAt)
+                                    {
+                                        <span>@lastAt.ToString("yyyy-MM-dd HH:mm") UTC</span>
+                                        <span class="badge text-bg-light border ms-1">@(s.LastQuality ?? "") @(s.LastValue?.ToString("0.####"))</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (result.Stats.Count > 0)
+            {
+                <button class="btn btn-outline-secondary btn-sm mb-2" @onclick="DownloadStatsCsv">⬇ CSV estadísticas</button>
+            }
+
+            <h5 class="small text-uppercase text-muted mt-3">Detalle de lecturas (@(result.IncludeNonUsable ? "incluye no utilizables" : "solo utilizables"))</h5>
+            @if (result.TotalRows == 0)
+            {
+                <div class="alert alert-info">Sin lecturas para mostrar en el detalle con el filtro de calidad elegido.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Observado (UTC)</th>
+                                <th>Nodo</th>
+                                <th>Sensor</th>
+                                <th class="text-end">Valor</th>
+                                <th>Unidad</th>
+                                <th>Calidad</th>
+                                <th>Motivo</th>
+                                <th>Ingesta</th>
+                                <th>Lote</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in result.Rows)
+                            {
+                                <tr>
+                                    <td class="text-muted small">@r.Id</td>
+                                    <td class="small">@r.ObservedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td class="small">@r.NodeIdentifier</td>
+                                    <td class="small">@r.SensorName <span class="text-muted">(@r.SensorType)</span></td>
+                                    <td class="text-end">@r.Value.ToString("0.####")</td>
+                                    <td class="small">@(r.Unit ?? "—")</td>
+                                    <td><span class="badge @QualityBadge(r.Quality)">@r.Quality</span></td>
+                                    <td class="small">@(r.QualityReason ?? "—")</td>
+                                    <td class="small">@r.IngestionResult</td>
+                                    <td class="small">@(r.LotId.HasValue ? $"#{r.LotId} {r.LotLabel}" : "sin lote")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <ReportPager Page="result.Page" TotalRows="result.TotalRows" PageSize="result.PageSize"
+                             PageChanged="OnPageChanged" />
+                <button class="btn btn-outline-secondary btn-sm mt-2" @onclick="DownloadRowsCsv">⬇ CSV detalle (página actual)</button>
+            }
+        }
+    }
+</section>
+
+@code {
+    private ReportFilterOptions? options;
+    private TelemetryReportResult? result;
+    private bool loading;
+    private string? error;
+    private string? validationError;
+
+    private DateOnly? fromDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30));
+    private DateOnly? toDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private int? lotId;
+    private int? nodeId;
+    private int? sensorId;
+    private int? sensorTypeId;
+    private bool includeNonUsable;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            options = await Reports.GetFilterOptionsAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar las opciones de filtros: {ex.Message}";
+        }
+    }
+
+    private async Task Generate()
+    {
+        validationError = null;
+        error = null;
+        if (fromDate is null || toDate is null)
+        {
+            validationError = "El rango de fechas es obligatorio (Desde y Hasta).";
+            return;
+        }
+        if (fromDate.Value > toDate.Value)
+        {
+            validationError = "La fecha 'Desde' debe ser anterior o igual a 'Hasta'.";
+            return;
+        }
+
+        loading = true;
+        try
+        {
+            result = await Reports.GetTelemetryReportAsync(
+                new TelemetryReportRequest(
+                    FromUtc: fromDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+                    ToUtc: toDate.Value.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
+                    LotId: lotId,
+                    NodeId: nodeId,
+                    SensorId: sensorId,
+                    SensorTypeId: sensorTypeId,
+                    IncludeNonUsable: includeNonUsable),
+                page: 1,
+                pageSize: ReportLimits.DefaultPageSize);
+        }
+        catch (Exception ex)
+        {
+            result = null;
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task OnPageChanged(int page)
+    {
+        if (result is null || fromDate is null || toDate is null)
+            return;
+        loading = true;
+        try
+        {
+            result = await Reports.GetTelemetryReportAsync(
+                new TelemetryReportRequest(
+                    FromUtc: fromDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+                    ToUtc: toDate.Value.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
+                    LotId: lotId,
+                    NodeId: nodeId,
+                    SensorId: sensorId,
+                    SensorTypeId: sensorTypeId,
+                    IncludeNonUsable: includeNonUsable),
+                page,
+                result.PageSize);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task DownloadRowsCsv()
+    {
+        if (result is null) return;
+        var csv = CsvExportService.TelemetryReadings(result);
+        await DownloadAsync(csv);
+    }
+
+    private async Task DownloadStatsCsv()
+    {
+        if (result is null) return;
+        var csv = CsvExportService.TelemetryStats(result);
+        await DownloadAsync(csv);
+    }
+
+    private async Task DownloadAsync(CsvExportResult csv)
+    {
+        await JS.InvokeVoidAsync("hydroReportsDownload", csv.FileName,
+            Convert.ToBase64String(csv.Content));
+    }
+
+    private static string QualityBadge(string quality) => quality switch
+    {
+        "VALID" => "text-bg-success",
+        "SUSPECT" => "text-bg-warning",
+        "STALE" => "text-bg-info",
+        _ => "text-bg-danger",
+    };
+}
