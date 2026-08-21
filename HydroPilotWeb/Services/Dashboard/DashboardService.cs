@@ -319,6 +319,10 @@ public sealed class DashboardService
         var bucketSeconds = DashboardSeriesAggregation.BucketSeconds(range, maxPoints);
         var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var since = DateTime.UtcNow - duration;
+        // Ancla el grid de buckets al inicio del rango: sin ancla, la fase del
+        // reloj puede hacer que un rango de maxPoints*bucketSeconds caiga en
+        // maxPoints+1 buckets (test flaky detectado en la integración).
+        var sinceEpochSeconds = (long)(since - epoch).TotalSeconds;
 
         // Agrupación en SQL por bucket (segundos desde epoch / bucketSeconds):
         // evita bajar todo el histórico y devuelve a lo sumo maxPoints puntos.
@@ -328,16 +332,20 @@ public sealed class DashboardService
             .Where(r => r.Sensor!.Node!.GreenhouseId == ghId)
             .Where(r => r.ObservedAtUtc >= since)
             .Where(TelemetryQualityPolicy.OperationallyUsableReading)
-            .GroupBy(r => EF.Functions.DateDiffSecond(epoch, r.ObservedAtUtc) / bucketSeconds)
+            .GroupBy(r => (EF.Functions.DateDiffSecond(epoch, r.ObservedAtUtc) - sinceEpochSeconds) / bucketSeconds)
             .Select(g => new { Bucket = g.Key, Value = g.Average(r => r.Value), Count = g.Count() })
             .OrderBy(x => x.Bucket)
             .ToListAsync(ct);
 
+        // Clasificación en cliente: la lectura exactamente en el borde del rango
+        // puede caer en el bucket maxPoints; se fusiona en el último para
+        // garantizar a lo sumo maxPoints puntos.
         var points = grouped
+            .GroupBy(x => Math.Min(Math.Max(x.Bucket, 0), maxPoints - 1))
             .Select(g => new DashboardSeriesPointDto(
-                epoch.AddSeconds(((long)g.Bucket + 1) * bucketSeconds),
-                Math.Round(g.Value, 2),
-                g.Count))
+                epoch.AddSeconds(((long)g.Max(x => x.Bucket) + 1) * bucketSeconds),
+                Math.Round(g.Average(x => x.Value), 2),
+                g.Sum(x => x.Count)))
             .ToList();
 
         return new DashboardSeriesDto(variableKey, label, unit, range, points);
