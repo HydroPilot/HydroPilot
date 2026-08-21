@@ -1,0 +1,33 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+
+<div class="d-flex align-items-center gap-2 flex-wrap my-2">
+    <span class="text-muted small">
+        Página <strong>@Page</strong> de <strong>@TotalPages</strong> · @TotalRows fila(s)
+    </span>
+    <div class="btn-group btn-group-sm">
+        <button type="button" class="btn btn-outline-secondary" disabled="@(Page <= 1)"
+                @onclick="() => Go(Page - 1)">← Anterior</button>
+        <button type="button" class="btn btn-outline-secondary" disabled="@(Page >= TotalPages)"
+                @onclick="() => Go(Page + 1)">Siguiente →</button>
+    </div>
+    @if (TotalPages > 0)
+    {
+        <span class="text-muted small">(tope @ReportLimits.MaxPageSize filas por página)</span>
+    }
+</div>
+
+@code {
+    [Parameter] public int Page { get; set; } = 1;
+    [Parameter] public int TotalRows { get; set; }
+    [Parameter] public int PageSize { get; set; } = ReportLimits.DefaultPageSize;
+    [Parameter] public EventCallback<int> PageChanged { get; set; }
+
+    private int TotalPages => PageSize <= 0 ? 0 : (int)Math.Ceiling(TotalRows / (double)PageSize);
+
+    private async Task Go(int newPage)
+    {
+        if (newPage < 1) return;
+        await PageChanged.InvokeAsync(newPage);
+    }
+}

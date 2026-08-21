@@ -39,6 +39,9 @@ builder.Services.AddScoped<PlantEvaluationService>();
 builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
 
+// --- Módulo de reportes (plan 13): consultas y exportación bajo demanda ---
+builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
+
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {

@@ -1,0 +1,162 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+@using Microsoft.JSInterop
+@inject ReportQueryService Reports
+@inject IJSRuntime JS
+
+<section class="panel">
+    <div class="panel__header panel__header--compact">
+        <h4>Reporte de cambios de estado</h4>
+        <p class="text-muted small mb-0">
+            Transiciones registradas en PlantStageHistory (flujo diario, cosecha y descarte).
+            Si no hay historial, el reporte queda pendiente (REP-08): no se inventan transiciones.
+        </p>
+    </div>
+
+    <div class="row g-2 mb-3">
+        <div class="col-md-4">
+            <label class="form-label small mb-1">Lote</label>
+            <select class="form-select form-select-sm" @bind="lotId">
+                <option value="">Todos</option>
+                @foreach (var lot in options?.Lots ?? [])
+                {
+                    <option value="@lot.Id">@lot.Label</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small mb-1">Origen</label>
+            <select class="form-select form-select-sm" @bind="source">
+                <option value="">Todos</option>
+                <option value="seed">seed</option>
+                <option value="daily-flow">daily-flow</option>
+                <option value="harvest">harvest</option>
+                <option value="discard">discard</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2 mb-2">
+        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+            @(loading ? "Generando..." : "Generar")
+        </button>
+    </div>
+
+    @if (loading)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Consultando...</span></div>
+        </div>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>No se pudo generar el reporte.</strong> @error
+            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+        </div>
+    }
+    else if (result is not null)
+    {
+        <ReportNotice Warnings="result.Warnings" Parameters="result.Parameters" />
+
+        @if (result.TotalRows == 0)
+        {
+            <div class="alert alert-info">
+                PENDIENTE: no hay historial de cambios de estado con los filtros elegidos.
+                El reporte se completa cuando el flujo diario / cosecha / descarte registre transiciones.
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                    <thead>
+                        <tr>
+                            <th>Cambio (UTC)</th>
+                            <th>Planta</th>
+                            <th>Lote</th>
+                            <th>Etapa anterior</th>
+                            <th>Etapa nueva</th>
+                            <th>Operativo anterior</th>
+                            <th>Operativo nuevo</th>
+                            <th>Origen</th>
+                            <th>Motivo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var h in result.Rows)
+                        {
+                            <tr>
+                                <td class="small">@h.ChangedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td>#@h.PlantId <span class="text-muted small">F@h.Row-C@h.Column</span></td>
+                                <td class="small">@(h.LotName ?? $"#{h.LotId}")</td>
+                                <td class="small">@(h.PreviousCommercialStage ?? "·")</td>
+                                <td class="small">@(h.NewCommercialStage ?? "·")</td>
+                                <td class="small">@(h.PreviousOperationalState ?? "·")</td>
+                                <td class="small">@(h.NewOperationalState ?? "·")</td>
+                                <td><span class="badge text-bg-light border">@h.Source</span></td>
+                                <td class="small" title="@h.Reason">@(h.Reason ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (result.IsTruncated)
+            {
+                <div class="alert alert-warning small">
+                    El historial se recortó al límite del reporte (@ReportLimits.MaxHistoryRows): exportá CSV para conservar el detalle disponible.
+                </div>
+            }
+            <button class="btn btn-outline-secondary btn-sm mt-1" @onclick="Download">⬇ CSV cambios de estado</button>
+        }
+    }
+</section>
+
+@code {
+    private ReportFilterOptions? options;
+    private StageChangeReportResult? result;
+    private bool loading;
+    private string? error;
+
+    private int? lotId;
+    private string? source;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            options = await Reports.GetFilterOptionsAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar las opciones de filtros: {ex.Message}";
+        }
+    }
+
+    private async Task Generate()
+    {
+        error = null;
+        loading = true;
+        try
+        {
+            result = await Reports.GetStageChangesAsync(lotId, string.IsNullOrWhiteSpace(source) ? null : source);
+        }
+        catch (Exception ex)
+        {
+            result = null;
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task Download()
+    {
+        if (result is null) return;
+        var csv = CsvExportService.StageChanges(result);
+        await JS.InvokeVoidAsync("hydroReportsDownload", csv.FileName,
+            Convert.ToBase64String(csv.Content));
+    }
+}

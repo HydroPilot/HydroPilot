@@ -1,0 +1,129 @@
+@namespace HydroPilotWeb.Components.Reports
+@using HydroPilotWeb.Services.Reports
+@using Microsoft.JSInterop
+@inject ReportQueryService Reports
+@inject IJSRuntime JS
+
+<section class="panel">
+    <div class="panel__header panel__header--compact">
+        <h4>Reporte forecast vs cosecha real</h4>
+        <p class="text-muted small mb-0">
+            Compara la predicción más reciente de cada lote contra su cosecha real, con la misma métrica
+            de precisión del módulo de forecasting (MAPE de rendimiento; error absoluto en días para
+            predicciones generadas antes de la cosecha). No hay fórmula paralela en Reports.
+        </p>
+    </div>
+
+    <div class="d-flex gap-2 mb-2">
+        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+            @(loading ? "Generando..." : "Generar")
+        </button>
+    </div>
+
+    @if (loading)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Consultando...</span></div>
+        </div>
+    }
+    else if (error is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>No se pudo generar el reporte.</strong> @error
+            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+        </div>
+    }
+    else if (result is not null)
+    {
+        <ReportNotice Warnings="result.Warnings" Parameters="result.Parameters" />
+
+        @if (result.Rows.Count == 0)
+        {
+            <div class="alert alert-info">
+                Sin ciclos cerrados para comparar (no se muestran ceros engañosos).
+            </div>
+        }
+        else
+        {
+            <div class="d-flex gap-2 flex-wrap mb-2">
+                <span class="badge text-bg-secondary">Ciclos: @result.Summary.Cycles</span>
+                <span class="badge text-bg-light border">Con MAPE: @result.Summary.CyclesWithYield</span>
+                <span class="badge text-bg-light border">Con error días: @result.Summary.CyclesWithDays</span>
+                <span class="badge text-bg-primary">MAPE promedio: @(result.Summary.AverageMapePercent?.ToString("0.#") ?? "—")%</span>
+                <span class="badge text-bg-primary">Error días promedio: @(result.Summary.AverageDaysError?.ToString("0.#") ?? "—")</span>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                    <thead>
+                        <tr>
+                            <th>Lote</th>
+                            <th>Siembra</th>
+                            <th>Cosecha estimada</th>
+                            <th>Cosecha real</th>
+                            <th class="text-end">Error días</th>
+                            <th class="text-end">Rend. estimado (kg)</th>
+                            <th class="text-end">Rend. real (kg)</th>
+                            <th class="text-end">Error rend. (%)</th>
+                            <th>Predicción (UTC)</th>
+                            <th>Modelo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in result.Rows)
+                        {
+                            <tr>
+                                <td>@(r.LotName ?? $"#{r.LotId}") <div class="text-muted small">@r.CropTypeName</div></td>
+                                <td class="small">@r.SowingDate.ToString("dd/MM/yyyy")</td>
+                                <td class="small">@(r.PredictedHarvestDate?.ToString("dd/MM/yyyy") ?? "—")</td>
+                                <td class="small">@(r.ActualHarvestDate?.ToString("dd/MM/yyyy") ?? "—")</td>
+                                <td class="text-end" title="@(r.DaysComputed ? "" : "la predicción se generó después de la cosecha: no se computa error de días")">
+                                    @(r.DaysError?.ToString() ?? "—")
+                                </td>
+                                <td class="text-end">@(r.PredictedYieldKg?.ToString("0.##") ?? "—")</td>
+                                <td class="text-end">@(r.ActualYieldKg?.ToString("0.##") ?? "—")</td>
+                                <td class="text-end">@(r.YieldErrorPercent?.ToString("0.#") ?? "—")</td>
+                                <td class="small">@r.PredictedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="small">@r.ModelVersion</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" @onclick="Download">⬇ CSV forecast vs cosecha</button>
+        }
+    }
+</section>
+
+@code {
+    private ForecastVsHarvestResult? result;
+    private bool loading;
+    private string? error;
+
+    private async Task Generate()
+    {
+        error = null;
+        loading = true;
+        try
+        {
+            result = await Reports.GetForecastVsHarvestAsync();
+        }
+        catch (Exception ex)
+        {
+            result = null;
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task Download()
+    {
+        if (result is null) return;
+        var csv = CsvExportService.ForecastVsHarvest(result);
+        await JS.InvokeVoidAsync("hydroReportsDownload", csv.FileName,
+            Convert.ToBase64String(csv.Content));
+    }
+}
