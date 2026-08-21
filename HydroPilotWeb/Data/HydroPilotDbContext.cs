@@ -97,6 +97,7 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.Location).HasMaxLength(255);
             entity.Property(e => e.Latitude).HasColumnType("decimal(9,6)");
             entity.Property(e => e.Longitude).HasColumnType("decimal(9,6)");
+            entity.Property(e => e.TimeZoneId).HasMaxLength(100);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
             entity.HasOne(e => e.User)
@@ -358,9 +359,18 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.AccumulatedGdd).HasColumnType("decimal(8,2)");
             entity.Property(e => e.EstimatedYield).HasColumnType("decimal(8,2)");
             entity.Property(e => e.ModelVersion).HasMaxLength(50);
+            entity.Property(e => e.AsOfDate).HasColumnType("date");
+            entity.Property(e => e.DataSource).HasMaxLength(60);
+            entity.Property(e => e.CoveragePercent).HasColumnType("decimal(5,2)");
 
             entity.HasIndex(e => e.LotId);
             entity.HasIndex(e => e.GeneratedAt);
+            // Idempotencia (F-05): una consulta repetida por (lote, fecha de cálculo,
+            // versión) actualiza la misma fila en vez de duplicar predicciones.
+            // Filtrado: las filas legadas con AsOfDate null no participan del índice único.
+            entity.HasIndex(e => new { e.LotId, e.AsOfDate, e.ModelVersion })
+                  .IsUnique()
+                  .HasFilter("[AsOfDate] IS NOT NULL");
 
             entity.HasOne(e => e.Lot)
                   .WithMany(l => l.Predictions)
