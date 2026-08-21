@@ -1,6 +1,7 @@
 using HydroPilotWeb.Components;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using Microsoft.AspNetCore.Authentication;
@@ -41,6 +42,10 @@ builder.Services.AddScoped<LotAggregateService>();
 builder.Services.AddScoped<PlantEvaluationService>();
 builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
+
+// --- Dashboard (plan 12) ---
+builder.Services.AddScoped<DashboardService>();
+builder.Services.AddOptions<DashboardOptions>().BindConfiguration(DashboardOptions.SectionName);
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

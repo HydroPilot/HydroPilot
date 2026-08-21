@@ -362,10 +362,15 @@ button {
     gap: 24px;
 }
 
-.dashboard-kpis,
-.dashboard-secondary {
+.dashboard-kpis {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.dashboard-secondary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 18px;
 }
 
@@ -1989,3 +1994,144 @@ button {
     stroke-linejoin: round;
 }
 
+
+/* --- Dashboard (plan 12) --- */
+.dashboard-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-panel);
+    border-radius: 18px;
+    box-shadow: var(--shadow-panel);
+}
+
+.dashboard-toolbar__context {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dashboard-toolbar__context strong {
+    font-size: 0.98rem;
+    letter-spacing: -0.02em;
+}
+
+.dashboard-toolbar__context span {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.dashboard-toolbar__actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.dashboard-toolbar__updated {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+}
+
+.kpi-card__delta--up {
+    color: #16a34a;
+}
+
+.kpi-card__delta--down {
+    color: #dc2626;
+}
+
+.kpi-card__delta--flat {
+    color: var(--text-dim);
+}
+
+.kpi-card__meta {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-panel);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.74rem;
+    color: var(--text-dim);
+}
+
+.kpi-card__origin {
+    color: var(--text-secondary);
+}
+
+.kpi-card__age {
+    color: var(--text-dimmer);
+}
+
+.kpi-card__fresh {
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.kpi-card__fresh::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.freshness--ok {
+    background: rgba(22, 163, 74, 0.12);
+    color: #16a34a;
+}
+
+.freshness--warn {
+    background: rgba(245, 158, 11, 0.14);
+    color: #d97706;
+}
+
+.freshness--muted {
+    background: var(--bg-subtle);
+    color: var(--text-dim);
+}
+
+.status-hint {
+    margin-top: 18px;
+    color: var(--text-dimmer);
+}
+
+/* Píldora de estado global: el tono deriva del estado real de los nodos. */
+.status-pill--ok span {
+    background: #16a34a;
+    box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.18);
+}
+
+.status-pill--warn {
+    border-color: rgba(245, 158, 11, 0.4);
+    background: rgba(245, 158, 11, 0.1);
+    color: #d97706;
+}
+
+.status-pill--warn span {
+    background: #f59e0b;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+}
+
+.status-pill--muted {
+    border-color: var(--border-panel);
+    background: var(--bg-subtle);
+    color: var(--text-dim);
+}
+
+.status-pill--muted span {
+    background: var(--text-dimmer);
+    box-shadow: none;
+}

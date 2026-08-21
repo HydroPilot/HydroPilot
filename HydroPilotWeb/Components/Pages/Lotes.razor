@@ -93,6 +93,27 @@ else
                 <h6 class="small text-uppercase text-muted">Conteos por estado</h6>
                 <LotCountsSummary Counts="state.CommercialCounts" />
             </div>
+
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h6 class="card-title">Forecast de cosecha</h6>
+                    <ul class="list-group list-group-flush small">
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Fecha estimada</span>
+                            <strong>—</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Rendimiento estimado</span>
+                            <strong>—</strong>
+                        </li>
+                    </ul>
+                    <p class="text-muted small mb-0 mt-2">
+                        El módulo de forecasting todavía no está integrado en esta rama:
+                        no se muestran valores estimados. El resultado híbrido disponible
+                        (ventana GDD + porcentaje de aptas) se muestra en el aviso de cosecha.
+                    </p>
+                </div>
+            </div>
         </div>
 
         <div class="col-md-6">
