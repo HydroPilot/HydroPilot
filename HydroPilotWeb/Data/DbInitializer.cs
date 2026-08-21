@@ -62,6 +62,19 @@ public static class DbInitializer
 
         var node = context.IotNodes.First();
 
+        if (!context.IotNodes.Any(n => n.Identifier == "rpi-inv-02"))
+        {
+            // Nodo demo de contraste: nunca conectado (para ver estados de conexión).
+            context.IotNodes.Add(new IotNode
+            {
+                GreenhouseId = greenhouse.Id,
+                Identifier = "rpi-inv-02",
+                Status = "ACTIVO",
+                ExpectedIntervalSeconds = 300,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
         if (!context.Sensors.Any())
         {
             var sensorTypes = context.SensorTypes.ToDictionary(t => t.Name);
@@ -74,6 +87,7 @@ public static class DbInitializer
                     SensorTypeId = sensorTypes["pH"].Id,
                     MeasurementUnitId = units["pH"].Id,
                     Name = "ph-solucion",
+                    TechnicalKey = "ph-solucion",
                     Model = "PH-4502C",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
@@ -84,6 +98,7 @@ public static class DbInitializer
                     SensorTypeId = sensorTypes["CE"].Id,
                     MeasurementUnitId = units["milisiemens por centímetro"].Id,
                     Name = "ec-solucion",
+                    TechnicalKey = "ec-solucion",
                     Model = "TDS-EC-Meter",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
@@ -94,6 +109,7 @@ public static class DbInitializer
                     SensorTypeId = sensorTypes["Temperatura"].Id,
                     MeasurementUnitId = units["grados Celsius"].Id,
                     Name = "temp-ambiente",
+                    TechnicalKey = "temp-ambiente",
                     Model = "DHT22",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
@@ -104,11 +120,30 @@ public static class DbInitializer
                     SensorTypeId = sensorTypes["Humedad"].Id,
                     MeasurementUnitId = units["porcentaje"].Id,
                     Name = "hum-ambiente",
+                    TechnicalKey = "hum-ambiente",
                     Model = "DHT22",
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 }
             );
+            context.SaveChanges();
+        }
+
+        // --- Asignación temporal nodo → lote (fixture demo, IOT-05/IOT-10) ---
+        // El lote se resuelve por fecha de observación. La grilla/posiciones de plantas
+        // pertenecen al módulo de lotes y plantas; aquí solo se fija la asignación.
+        if (!context.NodeLotAssignments.Any() && context.Lots.Any())
+        {
+            var activeLot = context.Lots.OrderBy(l => l.Id).First();
+            context.NodeLotAssignments.Add(new NodeLotAssignment
+            {
+                NodeId = node.Id,
+                LotId = activeLot.Id,
+                ValidFromUtc = DateTime.UtcNow.AddDays(-60),
+                ValidUntilUtc = null,
+                Source = "fixture",
+                CreatedAt = DateTime.UtcNow
+            });
             context.SaveChanges();
         }
 
