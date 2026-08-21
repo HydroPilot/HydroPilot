@@ -17,6 +17,9 @@ public class HydroPilotDbContext : DbContext
     public DbSet<IotNode> IotNodes => Set<IotNode>();
     public DbSet<Sensor> Sensors => Set<Sensor>();
     public DbSet<SensorReading> SensorReadings => Set<SensorReading>();
+    public DbSet<TelemetryBatch> TelemetryBatches => Set<TelemetryBatch>();
+    public DbSet<TelemetryRejection> TelemetryRejections => Set<TelemetryRejection>();
+    public DbSet<NodeLotAssignment> NodeLotAssignments => Set<NodeLotAssignment>();
 
     public DbSet<CropType> CropTypes => Set<CropType>();
     public DbSet<LotStatus> LotStatuses => Set<LotStatus>();
@@ -100,6 +103,10 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.Identifier).IsRequired().HasMaxLength(100);
             entity.Property(e => e.FirmwareVersion).HasMaxLength(50);
             entity.Property(e => e.Status).HasMaxLength(30).HasDefaultValue("ACTIVO");
+            entity.Property(e => e.ConnectionState)
+                  .HasMaxLength(20)
+                  .HasDefaultValue(TelemetryContract.ConnectionNeverConnected);
+            entity.Property(e => e.ExpectedIntervalSeconds).HasDefaultValue(300);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
             entity.HasIndex(e => e.Identifier).IsUnique();
@@ -117,9 +124,11 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.Property(e => e.Model).HasMaxLength(100);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.TechnicalKey).IsRequired().HasMaxLength(100);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
             entity.HasIndex(e => e.Name).IsUnique();
+            entity.HasIndex(e => new { e.NodeId, e.TechnicalKey }).IsUnique();
 
             entity.HasOne(e => e.Node)
                   .WithMany(n => n.Sensors)
@@ -144,14 +153,27 @@ public class HydroPilotDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.Property(e => e.Value).HasColumnType("decimal(12,4)").IsRequired();
+            entity.Property(e => e.ExternalReadingId).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.Quality).IsRequired().HasMaxLength(20).HasDefaultValue(TelemetryContract.QualityValid);
+            entity.Property(e => e.QualityReason).HasMaxLength(100);
+            entity.Property(e => e.IngestionResult).IsRequired().HasMaxLength(20).HasDefaultValue(TelemetryContract.ResultAceptada);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
             entity.HasIndex(e => e.Timestamp);
             entity.HasIndex(e => e.SensorId);
+            entity.HasIndex(e => e.LotId);
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.ObservedAtUtc);
+            entity.HasIndex(e => new { e.NodeId, e.ExternalReadingId }).IsUnique();
 
             entity.HasOne(e => e.Sensor)
                   .WithMany(s => s.Readings)
                   .HasForeignKey(e => e.SensorId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Node)
+                  .WithMany()
+                  .HasForeignKey(e => e.NodeId)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(e => e.MeasurementUnit)
@@ -165,6 +187,80 @@ public class HydroPilotDbContext : DbContext
                   .HasForeignKey(e => e.LotId)
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.LotAssignment)
+                  .WithMany()
+                  .HasForeignKey(e => e.NodeLotAssignmentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<TelemetryBatch>(entity =>
+        {
+            entity.ToTable("TelemetryBatches");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.BatchId).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.SchemaVersion).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.FirmwareVersion).HasMaxLength(50);
+            entity.Property(e => e.PayloadHash).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.Result).IsRequired().HasMaxLength(20).HasDefaultValue(TelemetryContract.BatchResultProcesado);
+            entity.Property(e => e.ResponseJson);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => new { e.NodeId, e.BatchId }).IsUnique();
+
+            entity.HasOne(e => e.Node)
+                  .WithMany(n => n.Batches)
+                  .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<TelemetryRejection>(entity =>
+        {
+            entity.ToTable("TelemetryRejections");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.BatchId).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.ReadingId).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.SensorRef).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.Unit).HasMaxLength(20);
+            entity.Property(e => e.Reason).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Quality).HasMaxLength(20);
+            entity.Property(e => e.Result).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => new { e.NodeId, e.BatchId });
+
+            entity.HasOne(e => e.Node)
+                  .WithMany(n => n.Rejections)
+                  .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<NodeLotAssignment>(entity =>
+        {
+            entity.ToTable("NodeLotAssignments");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Source).IsRequired().HasMaxLength(20).HasDefaultValue(TelemetryContract.AssignmentSourceManual);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+            // Un nodo solo puede tener una asignación abierta a la vez.
+            entity.HasIndex(e => e.NodeId)
+                  .IsUnique()
+                  .HasFilter("[ValidUntilUtc] IS NULL");
+
+            entity.HasOne(e => e.Node)
+                  .WithMany(n => n.LotAssignments)
+                  .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<CropType>(entity =>

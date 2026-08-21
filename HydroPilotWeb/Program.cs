@@ -21,6 +21,11 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<GddService>();
 builder.Services.AddScoped<YieldService>();
 builder.Services.AddScoped<SettingsService>();
+builder.Services.AddScoped<TelemetryValidationService>();
+builder.Services.AddScoped<TelemetryIngestionService>();
+builder.Services.AddScoped<NodeLotAssignmentService>();
+builder.Services.AddOptions<TelemetryOptions>().BindConfiguration(TelemetryOptions.SectionName);
+builder.Services.AddHostedService<NodeConnectionMonitorHostedService>();
 builder.Services.AddHttpClient<WeatherService>();
 builder.Services.AddHostedService<WeatherFetcherHostedService>();
 
