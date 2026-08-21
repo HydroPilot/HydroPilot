@@ -1,6 +1,7 @@
 using HydroPilotWeb.Components;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
@@ -42,6 +43,15 @@ builder.Services.AddScoped<LotAggregateService>();
 builder.Services.AddScoped<PlantEvaluationService>();
 builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
+
+// --- Módulo de anomalías (plan 15 / ANO-01..09) ---
+// El proveedor de riesgo REAL se registra después del NoPlantRiskProvider: gana el último.
+builder.Services.AddSingleton<IPlantRiskProvider, AnomalyRiskProvider>();
+builder.Services.AddOptions<AnomalyOptions>().BindConfiguration(AnomalyOptions.SectionName);
+builder.Services.AddSingleton<AnomalyLotRiskEvaluator>();
+builder.Services.AddSingleton<AnomalyEventService>();
+builder.Services.AddScoped<AnomalyQueryService>();
+builder.Services.AddHostedService<AnomalySweepHostedService>();
 
 // --- Dashboard (plan 12) ---
 builder.Services.AddScoped<DashboardService>();

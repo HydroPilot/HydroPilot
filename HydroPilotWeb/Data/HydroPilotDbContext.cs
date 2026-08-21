@@ -40,6 +40,10 @@ public class HydroPilotDbContext : DbContext
     public DbSet<DailyWeatherForecast> DailyWeatherForecasts => Set<DailyWeatherForecast>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
 
+    // --- Módulo de anomalías (plan 15 / ANO-03) ---
+    public DbSet<AnomalyEvent> AnomalyEvents => Set<AnomalyEvent>();
+    public DbSet<AnomalyRuleCatalog> AnomalyRuleCatalogs => Set<AnomalyRuleCatalog>();
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         optionsBuilder.ConfigureWarnings(w =>
@@ -598,6 +602,65 @@ public class HydroPilotDbContext : DbContext
             entity.HasKey(e => e.Key);
             entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<AnomalyEvent>(entity =>
+        {
+            entity.ToTable("AnomalyEvents");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(60);
+            entity.Property(e => e.Severity).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.ObservedValue).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.TargetValue).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.OperationalMin).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.OperationalMax).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.RuleCode).IsRequired().HasMaxLength(60);
+            entity.Property(e => e.RuleDescription).HasMaxLength(500);
+            entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Fingerprint).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.Origin).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.ResolutionReason).HasMaxLength(200);
+            entity.Property(e => e.CreatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            // Deduplicación global por corrida: un mismo episodio jamás se duplica,
+            // incluso ante reinicios o barreras concurrentes del worker.
+            entity.HasIndex(e => e.Fingerprint).IsUnique();
+            entity.HasIndex(e => e.LotId);
+            entity.HasIndex(e => e.SensorId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.Type);
+            entity.HasIndex(e => e.FirstObservedAtUtc);
+            entity.HasIndex(e => e.LastObservedAtUtc);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AnomalyRuleCatalog>(entity =>
+        {
+            entity.ToTable("AnomalyRuleCatalogs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(60);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.SensorTypeName).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Source).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Notes).HasMaxLength(300);
+            entity.Property(e => e.PhysicalMin).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.PhysicalMax).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.OperationalMin).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.OperationalMax).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.TargetValue).HasColumnType("decimal(12,4)");
+
+            entity.HasIndex(e => new { e.CropTypeId, e.Code }).IsUnique();
+
+            entity.HasOne(e => e.CropType)
+                  .WithMany()
+                  .HasForeignKey(e => e.CropTypeId)
+                  .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }
