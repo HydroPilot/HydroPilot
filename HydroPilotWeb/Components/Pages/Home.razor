@@ -1,306 +1,506 @@
-﻿@page "/"
+@page "/"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
-@using Microsoft.EntityFrameworkCore
-@inject IDbContextFactory<HydroPilotDbContext> DbFactory
+@using HydroPilotWeb.Services.Dashboard
+@inject DashboardService Dashboard
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Dashboard HydroPilot</PageTitle>
 
-<div class="dashboard-grid">
-	<section class="dashboard-kpis">
-		@foreach (var item in Kpis)
-		{
-			<article class="kpi-card">
-				<div class="kpi-card__header">
-					<div>
-						<p>@item.Label</p>
-						<h2>@item.Value <span>@item.Unit</span></h2>
-					</div>
-					<div class="kpi-card__icon">@item.Icon</div>
-				</div>
-				<div class="kpi-card__delta">@item.Delta</div>
-			</article>
-		}
-	</section>
+@if (_error is not null)
+{
+    <div class="alert alert-danger d-flex justify-content-between align-items-center">
+        <span>@_error</span>
+        <button class="btn btn-sm btn-outline-danger" @onclick="RefreshAsync">Reintentar</button>
+    </div>
+}
 
-	<section class="dashboard-main">
-		<article class="panel panel--chart">
-			<div class="panel__header">
-				<div>
-					<h3>Lecturas de sensores</h3>
-					<p>Valores del invernadero</p>
-				</div>
-				<div class="panel__toggles d-flex gap-2">
-					<select class="form-select form-select-sm" style="width: auto;" @bind="selectedTimeRange" @bind:after="LoadReadings">
-						<option value="1m">Último minuto</option>
-						<option value="1h">Última hora</option>
-						<option value="24h" selected>Últimas 24 horas</option>
-						<option value="7d">Última semana</option>
-						<option value="30d">Último mes</option>
-						<option value="all">Todo</option>
-					</select>
-				</div>
-			</div>
+@if (_initialLoading)
+{
+    <div class="d-flex justify-content-center my-5">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Cargando...</span>
+        </div>
+    </div>
+}
+else if (_snapshot is null)
+{
+    <div class="alert alert-info mb-0">
+        No se pudo cargar el dashboard. Verificá la conexión con la base de datos y reintentá.
+    </div>
+}
+else
+{
+    <div class="dashboard-grid">
 
-			@if (latestReadings is not null && latestReadings.Count > 0)
-			{
-				<table class="table table-sm table-striped m-3">
-					<thead>
-						<tr>
-							<th>Sensor</th>
-							<th>Tipo</th>
-							<th>Valor</th>
-							<th>Fecha</th>
-						</tr>
-					</thead>
-					<tbody>
-						@foreach (var r in latestReadings)
-						{
-							<tr>
-								<td>@r.Sensor?.Name</td>
-								<td>@(r.Sensor?.SensorType?.Name ?? "-")</td>
-								<td>@r.Value @(r.Sensor?.MeasurementUnit?.Symbol ?? "")</td>
-								<td>@r.Timestamp.ToLocalTime().ToString("dd/MM HH:mm:ss")</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			}
-			else
-			{
-				<div class="p-4 text-muted">
-					<p>Sin lecturas</p>
-				</div>
-			}
-		</article>
+        <div class="dashboard-toolbar">
+            <div class="dashboard-toolbar__context">
+                <strong>◫ @_snapshot.Context.GreenhouseName</strong>
+                <span>
+                    @(string.IsNullOrWhiteSpace(_snapshot.Context.ActiveLotCrop)
+                        ? "Sin lote activo"
+                        : _snapshot.Context.ActiveLotCrop)
+                    @(_snapshot.Context.Location is { Length: > 0 } loc ? $" · {loc}" : null)
+                </span>
+            </div>
 
-		<aside class="panel panel--resources">
-			<h3>Estado del sistema</h3>
+            <div class="dashboard-toolbar__actions">
+                <span class="dashboard-toolbar__updated">Actualizado @LastRefreshText</span>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="RefreshAsync" disabled="@_busy">
+                    @if (_busy)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                    }
+                    Actualizar
+                </button>
+            </div>
+        </div>
 
-			<div class="resource-list">
-				@if (nodeStatus is not null)
-				{
-					<div class="resource-row">
-						<div class="resource-row__meta">
-							<span>Nodo IoT</span>
-							<strong>@nodeStatus.Identifier</strong>
-						</div>
-						<div class="resource-row__bar">
-							<span style="width: 100%" class="@(nodeStatus.Status == "ACTIVO" ? "tone-green" : "tone-amber")"></span>
-						</div>
-					</div>
-					<div class="resource-row">
-						<div class="resource-row__meta">
-							<span>Estado</span>
-							<strong>@nodeStatus.Status</strong>
-						</div>
-					</div>
-					<div class="resource-row">
-						<div class="resource-row__meta">
-							<span>Última conexión</span>
-							<strong>@(nodeStatus.LastConnection?.ToLocalTime().ToString("dd/MM HH:mm") ?? "Nunca")</strong>
-						</div>
-					</div>
-				}
-				else
-				{
-					<p class="text-muted">Sin datos de nodo IoT.</p>
-				}
-			</div>
+        <section class="dashboard-kpis">
+            @foreach (var kpi in _snapshot.Kpis)
+            {
+                <article class="kpi-card" title="@KpiTitle(kpi)">
+                    <div class="kpi-card__header">
+                        <div>
+                            <p>@kpi.Label</p>
+                            @if (kpi.Value is not null)
+                            {
+                                <h2>@kpi.Value.Value.ToString("0.0") <span>@kpi.Unit</span></h2>
+                            }
+                            else
+                            {
+                                <h2>—</h2>
+                            }
+                        </div>
+                        <div class="kpi-card__icon">@kpi.Icon</div>
+                    </div>
 
-			<div class="panel__callout">
-				<h4>Recomendación</h4>
-				<p>El módulo de simulación sugiere aumentar el flujo de agua un 5% durante las horas pico de luz.</p>
-				<a href="/optimization">Aplicar cambio</a>
-			</div>
-		</aside>
-	</section>
+                    <div class="kpi-card__delta @DeltaClass(kpi)">@DeltaText(kpi)</div>
 
-	<section class="dashboard-secondary">
-		<article class="panel">
-			<div class="panel__header panel__header--compact">
-				<h3>Anomalías recientes</h3>
-				<a href="/anomalies">Ver todas →</a>
-			</div>
+                    <div class="kpi-card__meta">
+                        @if (kpi.Value is not null)
+                        {
+                            <span class="kpi-card__origin">@kpi.NodeIdentifier · @kpi.SensorName</span>
+                            <span class="kpi-card__age">hace @AgeText(kpi.ObservedAtUtc)</span>
+                            @if (kpi.Quality is not null && kpi.Quality != TelemetryContract.QualityValid)
+                            {
+                                <span class="badge text-bg-warning">@kpi.Quality</span>
+                            }
+                        }
+                        <span class="kpi-card__fresh @FreshnessClass(kpi.FreshnessState)">@FreshnessText(kpi.FreshnessState)</span>
+                    </div>
+                </article>
+            }
+        </section>
 
-			<div class="anomaly-list">
-				@foreach (var anomaly in Anomalies)
-				{
-					<div class="anomaly-row @anomaly.State">
-						<span class="anomaly-row__dot"></span>
-						<div>
-							<strong>@anomaly.Title</strong>
-							<p>@anomaly.Detail</p>
-						</div>
-						@if (!anomaly.Resolved)
-						{
-							<a href="/anomalies">Revisar</a>
-						}
-					</div>
-				}
-			</div>
-		</article>
+        <section class="dashboard-main">
+            <article class="panel panel--chart">
+                <div class="panel__header">
+                    <div>
+                        <h3>@(_snapshot.Series.Label.Length > 0 ? $"{_snapshot.Series.Label} — tendencia" : "Tendencia")</h3>
+                        <p>Promedio por intervalo @(_snapshot.Series.Unit.Length > 0 ? $"· {_snapshot.Series.Unit}" : null)</p>
+                    </div>
+                    <div class="panel__toggles d-flex gap-2">
+                        @if (_snapshot.Kpis.Count > 0)
+                        {
+                            <select class="form-select form-select-sm" style="width: auto;" @bind="_selectedVariable" @bind:after="OnSelectionChanged">
+                                @foreach (var kpi in _snapshot.Kpis)
+                                {
+                                    <option value="@kpi.Key">@kpi.Label</option>
+                                }
+                            </select>
+                        }
+                        <select class="form-select form-select-sm" style="width: auto;" @bind="_selectedRange" @bind:after="OnSelectionChanged">
+                            <option value="@DashboardTimeRange.Hour1">1 hora</option>
+                            <option value="@DashboardTimeRange.Day1">1 día</option>
+                            <option value="@DashboardTimeRange.Days7">7 días</option>
+                            <option value="@DashboardTimeRange.Days30">30 días</option>
+                        </select>
+                    </div>
+                </div>
 
-		<article class="panel">
-			<div class="panel__header panel__header--compact">
-				<h3>Accesos rápidos</h3>
-			</div>
+                @if (_snapshot.Series.Points.Count == 0)
+                {
+                    @if (_snapshot.Kpis.Count == 0)
+                    {
+                        <div class="p-4 text-muted text-center">
+                            <p class="mb-1">Sin sensores configurados en este invernadero.</p>
+                            <p class="small">El dashboard funciona con base vacía; los KPIs y la tendencia aparecerán cuando existan sensores y lecturas.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="p-4 text-muted text-center">
+                            <p class="mb-1">Sin lecturas en el rango seleccionado para @(_snapshot.Series.Label.Length > 0 ? _snapshot.Series.Label : "la variable").</p>
+                            <p class="small">El rango no tiene lecturas operativamente usables. Cambiá el rango o verificá la ingesta de telemetría.</p>
+                        </div>
+                    }
+                }
+                else if (_snapshot.Series.Points.Count == 1)
+                {
+                    var single = _snapshot.Series.Points[0];
+                    <div class="text-center p-4">
+                        <p class="mb-1"><strong>@single.Value.ToString("0.0")</strong> @(_snapshot.Series.Unit)</p>
+                        <p class="text-muted small mb-0">Un único intervalo con @single.ReadingCount lecturas en el rango.</p>
+                    </div>
+                }
+                else
+                {
+                    <SimpleLineChart Data="SeriesValues"
+                                     Height="300"
+                                     Fill="true"
+                                     ShowGrid="true"
+                                     YLabels="YLabels"
+                                     XLabels="XLabels"
+                                     XPointCount="SeriesValues.Count"
+                                     RotateXLabels="true"
+                                     PointLabels="PointLabels" />
+                }
+            </article>
 
-			<div class="quick-grid">
-				@foreach (var shortcut in Shortcuts)
-				{
-					<a href="@shortcut.Href" class="quick-card">
-						<strong>@shortcut.Title</strong>
-						<span>@shortcut.Description</span>
-					</a>
-				}
-			</div>
-		</article>
-    </section>
-</div>
+            <aside class="panel panel--resources">
+                <h3>Estado del sistema</h3>
+
+                <div class="resource-list">
+                    @if (_snapshot.Nodes.Count == 0)
+                    {
+                        <p class="text-muted">Sin nodos registrados en este invernadero.</p>
+                    }
+                    else
+                    {
+                        @foreach (var node in _snapshot.Nodes)
+                        {
+                            <div class="resource-row">
+                                <div class="resource-row__meta">
+                                    <span>@node.Identifier @(node.SensorCount > 0 ? $"· {node.SensorCount} sensores" : null)</span>
+                                    <strong><span class="badge @NodeBadgeClass(node.ConnectionState)">@NodeBadgeText(node.ConnectionState)</span></strong>
+                                </div>
+                                <div class="resource-row__meta">
+                                    <span>Última telemetría aceptada</span>
+                                    <strong>@(node.LastAcceptedAt is not null ? node.LastAcceptedAt.Value.ToLocalTime().ToString("dd/MM HH:mm") : "Nunca")</strong>
+                                </div>
+                                @if (node.RejectionsLast24h > 0)
+                                {
+                                    <div class="resource-row__meta">
+                                        <span>Rechazos últimas 24 h</span>
+                                        <strong>@node.RejectionsLast24h</strong>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+
+                <p class="status-hint small">Estado de conexión calculado por frescura de la última telemetría aceptada (monitor de nodos).</p>
+            </aside>
+        </section>
+
+        <section class="dashboard-secondary">
+            <article class="panel">
+                <div class="panel__header panel__header--compact">
+                    <h3>Anomalías recientes</h3>
+                    <a href="/anomalies">Ver todas →</a>
+                </div>
+
+                @if (_snapshot.Anomalies.Count == 0)
+                {
+                    <p class="text-muted mb-0">No hay anomalías recientes.</p>
+                    <p class="text-muted small mt-1 mb-0">El módulo de anomalías todavía no está integrado; cuando genere eventos, aparecerán acá.</p>
+                }
+                else
+                {
+                    <div class="anomaly-list">
+                        @foreach (var anomaly in _snapshot.Anomalies)
+                        {
+                            <div class="anomaly-row">
+                                <span class="anomaly-row__dot"></span>
+                                <div>
+                                    <strong>@anomaly.Type</strong>
+                                    <p>@anomaly.Detail</p>
+                                </div>
+                                <a href="/anomalies">Revisar</a>
+                            </div>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel__header panel__header--compact">
+                    <h3>Recomendaciones</h3>
+                    <a href="/optimization">Ver todas →</a>
+                </div>
+
+                @if (_snapshot.Recommendations.Count == 0)
+                {
+                    <p class="text-muted mb-0">No hay recomendaciones disponibles.</p>
+                    <p class="text-muted small mt-1 mb-0">El módulo de optimización todavía no está integrado; cuando genere recomendaciones, aparecerán acá.</p>
+                }
+                else
+                {
+                    <div class="anomaly-list">
+                        @foreach (var recommendation in _snapshot.Recommendations)
+                        {
+                            <div class="anomaly-row">
+                                <span class="anomaly-row__dot"></span>
+                                <div>
+                                    <strong>@recommendation.Type</strong>
+                                    <p>@recommendation.Summary</p>
+                                </div>
+                                <a href="/optimization">Revisar</a>
+                            </div>
+                        }
+                    </div>
+                }
+            </article>
+
+            <article class="panel">
+                <div class="panel__header panel__header--compact">
+                    <h3>Accesos rápidos</h3>
+                </div>
+
+                <div class="quick-grid">
+                    @foreach (var shortcut in Shortcuts)
+                    {
+                        <a href="@shortcut.Href" class="quick-card">
+                            <strong>@shortcut.Title</strong>
+                            <span>@shortcut.Description</span>
+                        </a>
+                    }
+                </div>
+            </article>
+        </section>
+    </div>
+}
 
 @code {
-	private List<DashboardKpi> Kpis { get; set; } = [];
-	private List<SensorReading>? latestReadings;
-	private IotNode? nodeStatus;
-	private string selectedTimeRange = "24h";
+    private DashboardSnapshot? _snapshot;
+    private string _selectedVariable = DashboardVariableKeys.Ph;
+    private DashboardTimeRange _selectedRange = DashboardTimeRange.Day1;
 
-	private static readonly AnomalyItem[] Anomalies =
-	[
-		new("Caída de presión Bomba B2", "hace 12 min", false, "high"),
-		new("Pico térmico sensor 04", "hace 4 h", true, "med"),
-		new("Drift de calibración pH", "hace 1 d", true, "low"),
-	];
+    private string? _error;
+    private DateTime? _lastRefreshUtc;
+    private bool _initialLoading = true;
+    private bool _busy;
 
-	private static readonly ShortcutItem[] Shortcuts =
-	[
-		new("Forecasting", "Predicción de rendimiento", "/forecasting"),
-		new("Simulación", "Escenarios what-if", "/simulation"),
-		new("Optimización", "Recomendaciones IA", "/optimization"),
-		new("Anomalías", "Timeline de eventos", "/anomalies"),
-	];
+    private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private readonly CancellationTokenSource _cts = new();
 
-	protected override async Task OnInitializedAsync()
-	{
-		await LoadKpis();
-		await LoadNodeStatus();
-		await LoadReadings();
-	}
+    private static readonly ShortcutItem[] Shortcuts =
+    [
+        new("Forecasting", "Predicción de rendimiento", "/forecasting"),
+        new("Simulación", "Escenarios what-if", "/simulation"),
+        new("Optimización", "Recomendaciones del módulo", "/optimization"),
+        new("Anomalías", "Timeline de eventos", "/anomalies"),
+    ];
 
-	private async Task LoadKpis()
-	{
-		try
-		{
-			await using var context = await DbFactory.CreateDbContextAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _ = RunPeriodicRefreshAsync();
+    }
 
-			var sensorTypes = await context.SensorTypes.ToListAsync();
-			Kpis = [];
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+        _refreshLock.Dispose();
+    }
 
-			foreach (var type in sensorTypes)
-			{
-				var latest = await context.SensorReadings
-					.Include(r => r.Sensor!).ThenInclude(s => s.MeasurementUnit)
-					.Where(r => r.Sensor!.SensorTypeId == type.Id)
-					.OrderByDescending(r => r.Timestamp)
-					.FirstOrDefaultAsync();
+    // ------------------------------------------------------------------
+    // Refresh (DASH-06): manual + periódico, sin concurrencia, con cancelación
+    // ------------------------------------------------------------------
 
-				if (latest is not null)
-				{
-					var (label, icon) = type.Name switch
-					{
-						"pH" => ("pH del agua", "💧"),
-						"CE" => ("Conductividad (EC)", "◌"),
-						"Temperatura" => ("Temp. nutrientes", "🌡"),
-						"Humedad" => ("Humedad", "🍃"),
-						_ => (type.Name, "📊")
-					};
+    private int RefreshIntervalSeconds => Math.Clamp(Dashboard.CurrentOptions.RefreshIntervalSeconds, 30, 60);
 
-					var unit = latest.Sensor?.MeasurementUnit?.Symbol ?? "";
-					Kpis.Add(new DashboardKpi(label, $"{latest.Value:F1}", unit, "Activo", icon));
-				}
-				else
-				{
-					var (label, icon) = type.Name switch
-					{
-						"pH" => ("pH del agua", "💧"),
-						"CE" => ("Conductividad (EC)", "◌"),
-						"Temperatura" => ("Temp. nutrientes", "🌡"),
-						"Humedad" => ("Humedad", "🍃"),
-						_ => (type.Name, "📊")
-					};
+    private async Task RunPeriodicRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(RefreshIntervalSeconds));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_cts.Token))
+            {
+                await RefreshAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Componente destruido: se libera el timer y se cancela la consulta.
+        }
+    }
 
-					Kpis.Add(new DashboardKpi(label, "—", "", "Sin datos", icon));
-				}
-			}
-		}
-		catch
-		{
-			Kpis = [
-				new("pH del agua", "—", "", "Error", "💧"),
-				new("Conductividad (EC)", "—", "", "Error", "◌"),
-				new("Temp. nutrientes", "—", "", "Error", "🌡"),
-				new("Humedad", "—", "", "Error", "🍃"),
-			];
-		}
-	}
+    /// <summary>
+    /// Refresca el snapshot completo. Mantiene el último snapshot válido si la
+    /// consulta falla (DASH-05) y evita refrescos concurrentes.
+    /// </summary>
+    private async Task RefreshAsync()
+    {
+        if (!await _refreshLock.WaitAsync(0))
+            return; // ya hay un refresco en curso: se omite el nuevo
 
-	private async Task LoadNodeStatus()
-	{
-		try
-		{
-			await using var context = await DbFactory.CreateDbContextAsync();
+        _busy = true;
+        try
+        {
+            var snapshot = await Dashboard.GetSnapshotAsync(_selectedVariable, _selectedRange, _cts.Token);
+            _snapshot = snapshot; // último snapshot válido
+            _error = null;
+            _lastRefreshUtc = DateTime.UtcNow;
 
-			nodeStatus = await context.IotNodes
-				.OrderByDescending(n => n.LastConnection)
-				.FirstOrDefaultAsync();
-		}
-		catch
-		{
-			nodeStatus = null;
-		}
-	}
+            // Si la variable seleccionada dejó de existir, caer a la primera disponible.
+            if (_snapshot.Kpis.Count > 0 && !_snapshot.Kpis.Any(k => k.Key == _selectedVariable))
+                _selectedVariable = _snapshot.Kpis[0].Key;
+        }
+        catch (OperationCanceledException)
+        {
+            // Componente destruido: no se reporta error.
+        }
+        catch (Exception ex)
+        {
+            // Se conserva _snapshot anterior y se muestra el error con reintento.
+            _error = $"No se pudo actualizar el dashboard: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            _initialLoading = false;
+            _refreshLock.Release();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
 
-	private async Task LoadReadings()
-	{
-		try
-		{
-			await using var context = await DbFactory.CreateDbContextAsync();
+    private async Task OnSelectionChanged()
+    {
+        await RefreshAsync();
+    }
 
-			var query = context.SensorReadings
-				.Include(r => r.Sensor!).ThenInclude(s => s.SensorType)
-				.Include(r => r.Sensor!).ThenInclude(s => s.MeasurementUnit)
-				.AsQueryable();
+    // ------------------------------------------------------------------
+    // Derivados para la vista
+    // ------------------------------------------------------------------
 
-			var since = GetTimeRangeCutoff();
-			if (since.HasValue)
-				query = query.Where(r => r.Timestamp >= since.Value);
+    private string LastRefreshText =>
+        _lastRefreshUtc is not null
+            ? $"{_lastRefreshUtc.Value.ToLocalTime():HH:mm:ss} ({AgeText(_lastRefreshUtc.Value)})"
+            : "—";
 
-			latestReadings = await query
-				.OrderByDescending(r => r.Timestamp)
-				.Take(200)
-				.ToListAsync();
-		}
-		catch
-		{
-			latestReadings = [];
-		}
-	}
+    private DashboardSeriesDto? Series => _snapshot?.Series;
 
-	private DateTime? GetTimeRangeCutoff()
-	{
-		var now = DateTime.UtcNow;
-		return selectedTimeRange switch
-		{
-			"1m" => now.AddMinutes(-1),
-			"1h" => now.AddHours(-1),
-			"24h" => now.AddHours(-24),
-			"7d" => now.AddDays(-7),
-			"30d" => now.AddDays(-30),
-			_ => null
-		};
-	}
+    private IReadOnlyList<double> SeriesValues =>
+        (Series?.Points.Select(p => (double)p.Value).ToList()) ?? [];
 
-	private sealed record DashboardKpi(string Label, string Value, string Unit, string Delta, string Icon);
-	private sealed record AnomalyItem(string Title, string Detail, bool Resolved, string State);
-	private sealed record ShortcutItem(string Title, string Description, string Href);
+    private IReadOnlyList<string> PointLabels
+    {
+        get
+        {
+            var series = Series;
+            var unit = series?.Unit ?? string.Empty;
+            return series?.Points
+                .Select(p => $"{p.BucketEndUtc.ToLocalTime():dd/MM HH:mm} · {p.Value.ToString("0.0")} {unit} · {p.ReadingCount} lecturas")
+                .ToList() ?? [];
+        }
+    }
+
+    /// <summary>Etiquetas X parciales (1 de cada N puntos) para no saturar el eje.</summary>
+    private IReadOnlyList<string> XLabels
+    {
+        get
+        {
+            var points = Series?.Points ?? [];
+            if (points.Count == 0)
+                return [];
+
+            var step = Math.Max(1, (int)Math.Ceiling(points.Count / 8.0));
+            return points
+                .Select((p, i) => i % step == 0 ? p.BucketEndUtc.ToLocalTime().ToString("dd/MM HH:mm") : string.Empty)
+                .ToList();
+        }
+    }
+
+    private IReadOnlyList<string> YLabels
+    {
+        get
+        {
+            var values = SeriesValues;
+            var unit = Series?.Unit ?? string.Empty;
+            if (values.Count == 0)
+                return [];
+
+            var min = values.Min();
+            var max = values.Max();
+            var mid = (min + max) / 2;
+            string Fmt(double v) => $"{v.ToString("0.###")}{(unit.Length > 0 ? $" {unit}" : null)}";
+            return [Fmt(max), Fmt(mid), Fmt(min)];
+        }
+    }
+
+    private static string KpiTitle(DashboardKpiDto kpi) =>
+        kpi.ObservedAtUtc is DateTime observed
+            ? $"{kpi.Label}: {kpi.Value?.ToString("0.0") ?? "—"} {kpi.Unit} · observado {observed.ToLocalTime():dd/MM/yyyy HH:mm:ss} · {kpi.NodeIdentifier}/{kpi.SensorName}"
+            : $"{kpi.Label}: sin lecturas";
+
+    private static string DeltaText(DashboardKpiDto kpi)
+    {
+        if (kpi.DeltaPercent is double pct)
+        {
+            var arrow = pct > 0 ? "↑" : pct < 0 ? "↓" : "→";
+            return $"{arrow} {Math.Abs(pct).ToString("0.0")}% vs anterior";
+        }
+
+        if (kpi.PreviousValue is not null && kpi.Value is not null)
+            return $"Δ {(kpi.Value.Value - kpi.PreviousValue.Value).ToString("+0.00;-0.00;0.00")} {kpi.Unit} vs anterior";
+
+        return "Sin comparación";
+    }
+
+    private static string DeltaClass(DashboardKpiDto kpi) => kpi.DeltaPercent switch
+    {
+        > 0 => "kpi-card__delta--up",
+        < 0 => "kpi-card__delta--down",
+        _ => "kpi-card__delta--flat"
+    };
+
+    private static string FreshnessText(string state) => state switch
+    {
+        DashboardFreshness.Reciente => "Reciente",
+        DashboardFreshness.Desactualizado => "Desactualizado",
+        _ => "Sin datos"
+    };
+
+    private static string FreshnessClass(string state) => state switch
+    {
+        DashboardFreshness.Reciente => "freshness--ok",
+        DashboardFreshness.Desactualizado => "freshness--warn",
+        _ => "freshness--muted"
+    };
+
+    private static string AgeText(DateTime? valueUtc)
+    {
+        if (valueUtc is not DateTime value)
+            return "—";
+
+        var age = DateTime.UtcNow - value;
+        return age switch
+        {
+            { TotalMinutes: < 1 } => $"{Math.Max(0, (int)age.TotalSeconds)} s",
+            { TotalHours: < 1 } => $"{Math.Max(0, (int)age.TotalMinutes)} min",
+            { TotalDays: < 1 } => $"{Math.Max(0, (int)age.TotalHours)} h",
+            _ => $"{Math.Max(0, (int)age.TotalDays)} d"
+        };
+    }
+
+    private static string NodeBadgeText(string connectionState) => connectionState switch
+    {
+        TelemetryContract.ConnectionOnline => "Online",
+        TelemetryContract.ConnectionDegraded => "Degradado",
+        TelemetryContract.ConnectionOffline => "Offline",
+        _ => "Sin conexión"
+    };
+
+    private static string NodeBadgeClass(string connectionState) => connectionState switch
+    {
+        TelemetryContract.ConnectionOnline => "text-bg-success",
+        TelemetryContract.ConnectionDegraded => "text-bg-warning",
+        TelemetryContract.ConnectionOffline => "text-bg-danger",
+        _ => "text-bg-secondary"
+    };
+
+    private sealed record ShortcutItem(string Title, string Description, string Href);
 }

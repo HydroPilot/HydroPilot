@@ -1,6 +1,8 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@using HydroPilotWeb.Services.Dashboard
 @inject NavigationManager Navigation
 @inject IJSRuntime JsRuntime
+@inject DashboardService Dashboard
 
 <div class="shell">
     <aside class="shell-sidebar">
@@ -11,11 +13,11 @@
         <header class="shell-topbar">
             <div class="shell-topbar__titles">
                 <h1>@CurrentPage.Title</h1>
-                <p>@CurrentPage.Subtitle</p>
+                <p>@_subtitle</p>
             </div>
 
             <div class="shell-topbar__actions">
-                <div class="status-pill"><span></span> Sistemas estables</div>
+                <div class="status-pill @_statusCss" title="Estado global derivado de los nodos del invernadero (frescura de la última telemetría aceptada)."><span></span> @_statusText</div>
 
                 <NavLink class="topbar-action" href="settings/notifications" aria-label="Notificaciones">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -70,7 +72,48 @@
 </div>
 
 @code {
+    private string _subtitle = "Cargando contexto...";
+    private string _statusText = "Consultando estado...";
+    private string _statusCss = "status-pill--muted";
+
+    // Título específico de cada página (el contexto de invernadero/cultivo se
+    // resuelve desde datos, ya no es un texto fijo "Invernadero Alpha-01").
     private PageHeader CurrentPage => ResolvePage(Navigation.ToBaseRelativePath(Navigation.Uri));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Dashboard.DataChanged += OnDashboardChanged;
+        await RefreshHeaderAsync();
+    }
+
+    public void Dispose()
+    {
+        Dashboard.DataChanged -= OnDashboardChanged;
+    }
+
+    private async Task RefreshHeaderAsync()
+    {
+        try
+        {
+            var status = await Dashboard.GetHeaderStatusAsync();
+            _subtitle = status.Subtitle;
+            _statusText = status.StatusText;
+            _statusCss = status.StatusCss;
+        }
+        catch (Exception)
+        {
+            _subtitle = "Contexto no disponible";
+            _statusText = "Sin estado";
+            _statusCss = "status-pill--muted";
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnDashboardChanged()
+    {
+        // El dashboard se refrescó: actualizá la barra superior con el estado real.
+        _ = RefreshHeaderAsync();
+    }
 
     private static PageHeader ResolvePage(string relativePath)
     {
@@ -78,7 +121,7 @@
 
         return path switch
         {
-            "" => new PageHeader("Vista General del Sistema", "Invernadero Alpha-01 · Lechuga hidropónica NFT"),
+            "" => new PageHeader("Vista General del Sistema", "Resumen operativo del invernadero"),
             "reports" => new PageHeader("Informes", "Histórico de producción, consumo y reportes exportables."),
             "forecasting" => new PageHeader("Módulo de Forecasting", "Predicción de variables clave del cultivo para los próximos 14 días."),
             "simulation" => new PageHeader("Módulo de Simulación", "Probá escenarios what-if y observá el impacto estimado en la cosecha."),
@@ -86,7 +129,8 @@
             "anomalies" => new PageHeader("Módulo de Anomalías", "Detección automática de eventos fuera de rango y desvíos de comportamiento."),
             "settings/profile" => new PageHeader("Configuración de usuario", "Datos personales, idioma y seguridad de tu cuenta."),
             "settings/notifications" => new PageHeader("Configuración de notificaciones", "Definí cómo y cuándo querés recibir avisos del sistema."),
-            "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Verificá el acceso al motor y el estado de los sensores de prueba."),
+            "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Herramienta interna de diagnóstico."),
+            "test-clima" => new PageHeader("Test de clima", "Herramienta interna de diagnóstico."),
             "counter" => new PageHeader("Counter", "Demo de interacción."),
             "weather" => new PageHeader("Weather", "Demo de datos de ejemplo."),
             _ => new PageHeader("HydroPilot", "Vista operativa"),
