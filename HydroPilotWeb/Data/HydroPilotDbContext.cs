@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Optimization;
 
 namespace HydroPilotWeb.Data;
 
@@ -39,6 +40,12 @@ public class HydroPilotDbContext : DbContext
 
     public DbSet<DailyWeatherForecast> DailyWeatherForecasts => Set<DailyWeatherForecast>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+
+    // --- Módulo de optimización (plan 16) ---
+    public DbSet<OptimizationRecommendation> OptimizationRecommendations => Set<OptimizationRecommendation>();
+    public DbSet<RecommendationDetail> RecommendationDetails => Set<RecommendationDetail>();
+    public DbSet<RecommendationAction> RecommendationActions => Set<RecommendationAction>();
+    public DbSet<CostPriceCatalog> CostPriceCatalogs => Set<CostPriceCatalog>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -598,6 +605,104 @@ public class HydroPilotDbContext : DbContext
             entity.HasKey(e => e.Key);
             entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Value).IsRequired().HasMaxLength(500);
+        });
+
+        // --- Módulo de optimización (plan 16): recomendaciones informativas ---
+        modelBuilder.Entity<OptimizationRecommendation>(entity =>
+        {
+            entity.ToTable("OptimizationRecommendations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.RecommendationType).IsRequired().HasMaxLength(40);
+            entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Direction).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Priority).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.CurrentValue).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.TargetValue).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.TargetLabel).HasMaxLength(200);
+            entity.Property(e => e.Explanation).IsRequired();
+            entity.Property(e => e.EstimatedImpact).HasColumnType("decimal(10,4)");
+            entity.Property(e => e.ImpactUnit).HasMaxLength(30);
+            entity.Property(e => e.DataSourceSummary).HasMaxLength(200);
+            entity.Property(e => e.RuleVersion).IsRequired().HasMaxLength(40);
+            entity.Property(e => e.DecisionNote).HasMaxLength(500);
+            entity.Property(e => e.SnapshotJson).IsRequired();
+            entity.Property(e => e.SnapshotHash).IsRequired().HasMaxLength(64);
+
+            // Idempotencia (OPT-04): por (lote, tipo, snapshot) existe UNA
+            // recomendación; repetir el cálculo con el mismo snapshot no duplica.
+            entity.HasIndex(e => new { e.LotId, e.RecommendationType, e.SnapshotHash }).IsUnique();
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.GeneratedAtUtc);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RecommendationDetail>(entity =>
+        {
+            entity.ToTable("RecommendationDetails");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Label).IsRequired().HasMaxLength(120);
+            entity.Property(e => e.Kind).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Value).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.Target).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.Unit).HasMaxLength(30);
+            entity.Property(e => e.Note).HasMaxLength(300);
+
+            entity.HasOne(e => e.Recommendation)
+                  .WithMany(r => r.Details)
+                  .HasForeignKey(e => e.RecommendationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RecommendationAction>(entity =>
+        {
+            entity.ToTable("RecommendationActions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Action).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Note).HasMaxLength(500);
+            entity.Property(e => e.PerformedBy).HasMaxLength(150);
+
+            entity.HasIndex(e => e.RecommendationId);
+
+            entity.HasOne(e => e.Recommendation)
+                  .WithMany(r => r.Actions)
+                  .HasForeignKey(e => e.RecommendationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CostPriceCatalog>(entity =>
+        {
+            entity.ToTable("CostPriceCatalogs");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Destination).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Item).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Value).HasColumnType("decimal(14,4)");
+            entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
+            entity.Property(e => e.ValidFrom).HasColumnType("date");
+            entity.Property(e => e.ValidUntil).HasColumnType("date");
+            entity.Property(e => e.Source).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.CreatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => new { e.Destination, e.Item });
+
+            entity.HasOne(e => e.CropType)
+                  .WithMany()
+                  .HasForeignKey(e => e.CropTypeId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }
