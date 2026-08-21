@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -181,6 +181,34 @@ namespace HydroPilotWeb.Migrations
                 table: "CropTypes",
                 type: "decimal(4,2)",
                 nullable: true);
+
+            // Backfill de datos legados (restaurado de la migración original de IoT):
+            // las filas preexistentes quedaron con valores por defecto y deben
+            // rellenarse antes de crear los índices únicos de la sección siguiente.
+            migrationBuilder.Sql("""
+                UPDATE [Sensors]
+                SET [TechnicalKey] = [Name]
+                WHERE [TechnicalKey] = '';
+
+                UPDATE r
+                SET
+                    r.[NodeId] = s.[NodeId],
+                    r.[ExternalReadingId] = 'legacy-' + CAST(r.[Id] AS nvarchar(20)),
+                    r.[ObservedAtUtc] = r.[Timestamp],
+                    r.[ReceivedAtUtc] = r.[CreatedAt]
+                FROM [SensorReadings] r
+                INNER JOIN [Sensors] s ON s.[Id] = r.[SensorId]
+                WHERE r.[NodeId] = 0;
+
+                UPDATE [IotNodes]
+                SET [LastAcceptedAt] = [LastConnection],
+                    [ConnectionState] = 'ONLINE'
+                WHERE [LastConnection] IS NOT NULL;
+
+                UPDATE [IotNodes]
+                SET [ConnectionState] = 'NEVER_CONNECTED'
+                WHERE [LastConnection] IS NULL;
+                """);
 
             migrationBuilder.CreateTable(
                 name: "BabyLeafConfigs",
