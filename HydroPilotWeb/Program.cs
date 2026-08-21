@@ -1,6 +1,7 @@
 using HydroPilotWeb.Components;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Lotes;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,15 @@ builder.Services.AddScoped<YieldService>();
 builder.Services.AddScoped<SettingsService>();
 builder.Services.AddHttpClient<WeatherService>();
 builder.Services.AddHostedService<WeatherFetcherHostedService>();
+
+// --- Dominio de lotes y plantas (plan 09) ---
+// El proveedor de riesgo lo reemplazará el módulo de anomalies registrando su
+// implementación DESPUÉS de esta línea (último registro gana en DI).
+builder.Services.AddSingleton<IPlantRiskProvider, NoPlantRiskProvider>();
+builder.Services.AddScoped<LotAggregateService>();
+builder.Services.AddScoped<PlantEvaluationService>();
+builder.Services.AddScoped<PlantLifecycleService>();
+builder.Services.AddScoped<LotDailyFlowService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

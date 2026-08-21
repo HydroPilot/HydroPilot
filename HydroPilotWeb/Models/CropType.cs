@@ -16,6 +16,9 @@ public class CropType
 
     public decimal? OptimalPhMin { get; set; }
 
+    /// <summary>pH objetivo de la solución del lote (referencia aproximada 5,8-6,2 para lechuga).</summary>
+    public decimal? OptimalPhTarget { get; set; }
+
     public decimal? OptimalPhMax { get; set; }
 
     public decimal? OptimalEcMin { get; set; }
