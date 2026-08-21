@@ -2,7 +2,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Data;
+using HydroPilotWeb.Models;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Forecasting;
 
 namespace HydroPilotWeb.Controllers;
 
@@ -11,185 +13,59 @@ namespace HydroPilotWeb.Controllers;
 public class ForecastingController : ControllerBase
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
-    private readonly GddService _gddService;
-    private readonly YieldService _yieldService;
+    private readonly ForecastService _forecastService;
     private readonly ILogger<ForecastingController> _logger;
 
     public ForecastingController(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
-        GddService gddService,
-        YieldService yieldService,
+        ForecastService forecastService,
         ILogger<ForecastingController> logger)
     {
         _dbFactory = dbFactory;
-        _gddService = gddService;
-        _yieldService = yieldService;
+        _forecastService = forecastService;
         _logger = logger;
     }
 
     /// <summary>
-    /// Devuelve el forecast de un lote: GDD acumulado, fecha de cosecha estimada y rendimiento.
+    /// Devuelve el forecast de un lote (F-01): el MISMO DTO que consume la UI.
+    /// asOfDate simula la fecha de cálculo (sin datos futuros). Persiste un
+    /// snapshot idempotente (una consulta repetida no duplica predicciones).
     /// </summary>
     [HttpGet]
     [AllowAnonymous]
     [TypeFilter(typeof(ApiKeyOrSessionFilter))]
-    public async Task<ActionResult<ForecastingResponse>> GetForecast(
+    public async Task<ActionResult<ForecastResult>> GetForecast(
         [FromQuery] int lotId,
+        [FromQuery] DateOnly? asOfDate = null,
         CancellationToken ct = default)
     {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var result = await _forecastService.GetForecastAsync(lotId, asOfDate, persistSnapshot: true, ct);
 
-        var lot = await context.Lots
-            .Include(l => l.CropType)
-            .Include(l => l.Status)
-            .FirstOrDefaultAsync(l => l.Id == lotId, ct);
-
-        if (lot is null)
+        if (result is null)
             return NotFound($"Lote '{lotId}' no encontrado.");
 
-        var dailyGdd = await _gddService.GetDailyGddByDateAsync(lot, ct: ct);
-        var accumulated = dailyGdd.Values.Sum();
-        var futureProjection = await _gddService.GetFutureGddProjectionAsync(lot, ct: ct);
-        var harvestDate = _gddService.EstimateHarvestDateAsync(lot, accumulated, futureProjection);
-        var daysRemaining = harvestDate is not null
-            ? (harvestDate.Value.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow.Date).Days
-            : 0;
-
-        var yield = await _yieldService.EstimateAsync(lot, accumulated, ct);
-
-        // Persistir la predicción generada para historial
-        context.Predictions.Add(new Models.Prediction
-        {
-            LotId = lot.Id,
-            GeneratedAt = DateTime.UtcNow,
-            EstimatedHarvestDate = harvestDate,
-            AccumulatedGdd = accumulated,
-            EstimatedYield = yield.Base,
-            ModelVersion = "gdd-v1"
-        });
-        await context.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "Forecast lote {LotId}: GDD {Gdd}/{Target}, cosecha {Harvest}, rendimiento {Yield} kg",
-            lot.Id, accumulated, lot.CropType?.GddTarget, harvestDate, yield.Base);
-
-        var history = dailyGdd
-            .OrderBy(kv => kv.Key)
-            .Select(kv => new DailyGddPoint(kv.Key, kv.Value))
-            .ToList();
-
-        var avgDaily = futureProjection.Count > 0
-            ? futureProjection.Average(p => p.Gdd)
-            : 0m;
-
-        // Precisión del modelo: comparar predicciones vs cosechas reales de ciclos cerrados
-        var accuracy = await GetModelAccuracyAsync(ct);
-
-        return Ok(new ForecastingResponse(
-            LotId: lot.Id,
-            CropType: lot.CropType?.Name ?? "Desconocido",
-            Status: lot.Status?.Name,
-            SowingDate: lot.SowingDate,
-            AreaM2: lot.PlantedAreaM2,
-            GddAccumulated: Math.Round(accumulated, 2),
-            GddTarget: lot.CropType?.GddTarget ?? 0m,
-            GddDailyAverage: Math.Round(avgDaily, 2),
-            EstimatedHarvestDate: harvestDate,
-            DaysRemaining: daysRemaining,
-            YieldConservative: yield.Conservative,
-            YieldBase: yield.Base,
-            YieldOptimistic: yield.Optimistic,
-            ConfidencePercent: yield.ConfidencePercent,
-            AccuracyMape: accuracy.Mape,
-            AccuracyDaysError: accuracy.DaysError,
-            AccuracyCycles: accuracy.Cycles,
-            GddHistory: history
-        ));
+        return Ok(result);
     }
 
     /// <summary>
-    /// Compara la última predicción de cada lote COSECHADO contra su resultado real.
-    /// Retorna MAPE del rendimiento y error promedio en días de la fecha de cosecha.
-    /// </summary>
-    private async Task<(decimal? Mape, decimal? DaysError, int Cycles)> GetModelAccuracyAsync(
-        CancellationToken ct)
-    {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-
-        var closedLots = await context.Lots
-            .Where(l => l.ActualYieldKg.HasValue)
-            .Select(l => new { l.Id, l.ActualYieldKg, l.ActualHarvestDate })
-            .ToListAsync(ct);
-
-        var closedIds = closedLots.Select(c => c.Id).ToList();
-        var predictions = await context.Predictions
-            .Where(p => closedIds.Contains(p.LotId))
-            .OrderByDescending(p => p.GeneratedAt)
-            .ToListAsync(ct);
-
-        if (predictions.Count == 0)
-            return (null, null, 0);
-
-        var mapeValues = new List<decimal>();
-        var dayErrors = new List<decimal>();
-        var cycles = 0;
-
-        foreach (var lot in closedLots)
-        {
-            var pred = predictions.FirstOrDefault(p => p.LotId == lot.Id);
-            if (pred is null) continue;
-            cycles++;
-
-            // MAPE del rendimiento: usa la predicción más reciente (independiente del momento)
-            if (pred.EstimatedYield.HasValue && pred.EstimatedYield > 0)
-            {
-                mapeValues.Add(Math.Abs(pred.EstimatedYield.Value - lot.ActualYieldKg!.Value)
-                               / lot.ActualYieldKg.Value * 100m);
-            }
-
-            // Error de días: solo predicciones generadas antes de la cosecha real
-            if (pred.EstimatedHarvestDate.HasValue && lot.ActualHarvestDate.HasValue
-                && pred.GeneratedAt.Date <= lot.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc))
-            {
-                dayErrors.Add(Math.Abs(
-                    (pred.EstimatedHarvestDate.Value.ToDateTime(TimeOnly.MinValue)
-                     - lot.ActualHarvestDate.Value.ToDateTime(TimeOnly.MinValue)).Days));
-            }
-        }
-
-        var mape = mapeValues.Count > 0 ? Math.Round(mapeValues.Average(), 1) : (decimal?)null;
-        var days = dayErrors.Count > 0 ? Math.Round(dayErrors.Average(), 1) : (decimal?)null;
-
-        return (mape, days, cycles);
-    }
-
-    /// <summary>
-    /// Lista los lotes disponibles para el dropdown de forecasting.
+    /// Lista los lotes para el dropdown operativo (F-04): por defecto EXCLUYE
+    /// cosechados y descartados de la proyección operativa. includeClosed=true
+    /// devuelve todos (histórico).
     /// </summary>
     [HttpGet("lots")]
     [Authorize]
-    public async Task<ActionResult<List<LotSummary>>> GetLots(CancellationToken ct = default)
+    public async Task<ActionResult<List<LotSummary>>> GetLots(
+        [FromQuery] bool includeClosed = false,
+        CancellationToken ct = default)
     {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-
-        var lots = await context.Lots
-            .Include(l => l.CropType)
-            .Include(l => l.Status)
-            .OrderByDescending(l => l.SowingDate)
-            .Select(l => new LotSummary(
-                l.Id,
-                l.CropType!.Name,
-                l.Status!.Name,
-                l.SowingDate,
-                l.PlantedAreaM2
-            ))
-            .ToListAsync(ct);
-
+        var lots = await _forecastService.GetLotsAsync(includeClosed, ct);
         return Ok(lots);
     }
 
     /// <summary>
-    /// Crea un lote (usado por el script de datos históricos mock).
+    /// Crea un lote (F-04): no asume que el primer invernadero es el correcto.
+    /// Si hay varios invernaderos, greenhouseId es obligatorio; con uno solo se
+    /// usa el existente (compatibilidad con el script mock).
     /// </summary>
     [HttpPost("lots")]
     [TypeFilter(typeof(ApiKeyAuthFilter))]
@@ -198,6 +74,12 @@ public class ForecastingController : ControllerBase
         CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
+
+        if (request.PlantedAreaM2 <= 0)
+            return BadRequest("El área plantada debe ser positiva.");
+
+        if (request.SowingDate > DateOnly.FromDateTime(DateTime.UtcNow).AddDays(1))
+            return BadRequest("La fecha de siembra no puede estar en el futuro.");
 
         var cropType = await context.CropTypes
             .FirstOrDefaultAsync(c => c.Name == request.CropTypeName, ct);
@@ -209,9 +91,22 @@ public class ForecastingController : ControllerBase
         if (status is null)
             return BadRequest($"Estado '{request.Status}' no encontrado.");
 
-        var greenhouse = await context.Greenhouses.FirstOrDefaultAsync(ct);
-        if (greenhouse is null)
-            return BadRequest("No hay invernaderos registrados.");
+        Greenhouse? greenhouse;
+        if (request.GreenhouseId is { } greenhouseId)
+        {
+            greenhouse = await context.Greenhouses.FindAsync([greenhouseId], ct);
+            if (greenhouse is null)
+                return BadRequest($"Invernadero '{greenhouseId}' no encontrado.");
+        }
+        else
+        {
+            var count = await context.Greenhouses.CountAsync(ct);
+            if (count == 0)
+                return BadRequest("No hay invernaderos registrados.");
+            if (count > 1)
+                return BadRequest("Hay varios invernaderos: especificá greenhouseId (no se asume el primero).");
+            greenhouse = await context.Greenhouses.FirstAsync(ct);
+        }
 
         var lot = new Models.Lot
         {
@@ -229,7 +124,7 @@ public class ForecastingController : ControllerBase
         _logger.LogInformation("Lote creado: id={LotId}, cultivo={Crop}, siembra={Sowing}",
             lot.Id, cropType.Name, request.SowingDate);
 
-        return CreatedAtAction(nameof(GetLots), new LotSummary(
+        return CreatedAtAction(nameof(GetLots), new { lotId = lot.Id }, new LotSummary(
             lot.Id,
             cropType.Name,
             status.Name,
@@ -239,8 +134,8 @@ public class ForecastingController : ControllerBase
     }
 
     /// <summary>
-    /// Registra la cosecha real de un lote (rendimiento kg y fecha). Usado por el script mock
-    /// y por el productor al cerrar un ciclo. Marca el lote como COSECHADO.
+    /// Registra la cosecha real de un lote (F-04): IDEMPOTENTE — un lote ya
+    /// cerrado (COSECHADO con fecha) no se vuelve a cerrar ni duplica la fecha.
     /// </summary>
     [HttpPost("lots/{id:int}/harvest")]
     [TypeFilter(typeof(ApiKeyAuthFilter))]
@@ -249,20 +144,44 @@ public class ForecastingController : ControllerBase
         [FromBody] RecordHarvestRequest request,
         CancellationToken ct = default)
     {
+        if (request.ActualYieldKg < 0)
+            return BadRequest("El rendimiento real no puede ser negativo.");
+
+        if (request.ActualHarvestDate is { } harvestDate
+            && harvestDate > DateOnly.FromDateTime(DateTime.UtcNow).AddDays(1))
+        {
+            return BadRequest("La fecha de cosecha no puede estar en el futuro.");
+        }
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
         var lot = await context.Lots
             .Include(l => l.CropType)
+            .Include(l => l.Status)
             .FirstOrDefaultAsync(l => l.Id == id, ct);
 
         if (lot is null)
             return NotFound($"Lote '{id}' no encontrado.");
 
+        // Idempotencia: lote ya cerrado → devolver el estado existente sin cambios.
+        if (lot.Status?.Name == LotStatusNames.Cosechado && lot.ActualHarvestDate.HasValue)
+        {
+            _logger.LogInformation("Cosecha repetida ignorada (idempotente) para lote {LotId}.", lot.Id);
+            return Ok(new
+            {
+                lotId = lot.Id,
+                lot.ActualYieldKg,
+                lot.ActualHarvestDate,
+                status = LotStatusNames.Cosechado,
+                repeated = true
+            });
+        }
+
         lot.ActualYieldKg = request.ActualYieldKg;
         lot.ActualHarvestDate = request.ActualHarvestDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
 
         var harvestedStatus = await context.LotStatuses
-            .FirstOrDefaultAsync(s => s.Name == "COSECHADO", ct);
+            .FirstOrDefaultAsync(s => s.Name == LotStatusNames.Cosechado, ct);
         if (harvestedStatus is not null)
             lot.StatusId = harvestedStatus.Id;
 
@@ -277,27 +196,8 @@ public class ForecastingController : ControllerBase
             lotId = lot.Id,
             lot.ActualYieldKg,
             lot.ActualHarvestDate,
-            status = "COSECHADO"
+            status = LotStatusNames.Cosechado,
+            repeated = false
         });
     }
 }
-
-public record RecordHarvestRequest(
-    decimal ActualYieldKg,
-    DateOnly? ActualHarvestDate
-);
-
-public record CreateLotRequest(
-    string CropTypeName,
-    string Status,
-    DateOnly SowingDate,
-    decimal PlantedAreaM2
-);
-
-public record LotSummary(
-    int Id,
-    string CropType,
-    string Status,
-    DateOnly SowingDate,
-    decimal AreaM2
-);

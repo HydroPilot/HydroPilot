@@ -1,6 +1,7 @@
 using HydroPilotWeb.Components;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -22,12 +23,14 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<GddService>();
 builder.Services.AddScoped<YieldService>();
 builder.Services.AddScoped<SettingsService>();
+builder.Services.AddScoped<ForecastService>();
 builder.Services.AddScoped<TelemetryValidationService>();
 builder.Services.AddScoped<TelemetryIngestionService>();
 builder.Services.AddScoped<NodeLotAssignmentService>();
 builder.Services.AddOptions<TelemetryOptions>().BindConfiguration(TelemetryOptions.SectionName);
 builder.Services.AddHostedService<NodeConnectionMonitorHostedService>();
-builder.Services.AddHttpClient<WeatherService>();
+builder.Services.AddHttpClient<WeatherService>(client =>
+    client.Timeout = TimeSpan.FromSeconds(25)); // F-03: timeout explícito para OpenWeather
 builder.Services.AddHostedService<WeatherFetcherHostedService>();
 
 // --- Dominio de lotes y plantas (plan 09) ---

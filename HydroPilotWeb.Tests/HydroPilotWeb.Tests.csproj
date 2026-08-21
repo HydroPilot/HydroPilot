@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Serializa colecciones SQL: los fixtures crean/bajan bases en paralelo y SQL Server local no lo tolera. -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\HydroPilotWeb\HydroPilotWeb.csproj" />
   </ItemGroup>
 </Project>

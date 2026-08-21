@@ -41,6 +41,7 @@ public static class DbInitializer
                 UserId = admin?.Id,
                 Name = "Invernadero Principal",
                 Location = "UTN FRBA - Campus",
+                TimeZoneId = "America/Argentina/Buenos_Aires",
                 CreatedAt = DateTime.UtcNow
             });
             context.SaveChanges();

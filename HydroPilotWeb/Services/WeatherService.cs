@@ -6,8 +6,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HydroPilotWeb.Services;
 
+/// <summary>
+/// Clima (F-03): separa clima ACTUAL (WeatherRecords, puntual) del PRONÓSTICO
+/// diario (DailyWeatherForecasts, ~7 días). El fetch se serializa con un
+/// semáforo para resolver la carrera entre el guard programado (hosted service)
+/// y el fetch perezoso del forecasting: nunca dos llamadas simultáneas a la API.
+/// Todo fallo de red/API degrada con logging, nunca rompe el forecasting.
+/// </summary>
 public class WeatherService
 {
+    /// <summary>Serializa el fetch de pronóstico (carrera fetch programado vs perezoso).</summary>
+    private static readonly SemaphoreSlim FetchForecastLock = new(1, 1);
+
     private readonly HttpClient _httpClient;
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly IConfiguration _configuration;
@@ -25,7 +35,8 @@ public class WeatherService
         _logger = logger;
     }
 
-    public async Task FetchAndStoreAsync()
+    /// <summary>Clima actual puntual: OpenWeather → WeatherRecords (solo observación).</summary>
+    public async Task FetchAndStoreAsync(CancellationToken ct = default)
     {
         var apiKey = _configuration["Weather:ApiKey"];
         var lat = _configuration["Weather:Lat"];
@@ -38,10 +49,10 @@ public class WeatherService
 
         try
         {
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url, ct);
             response.EnsureSuccessStatusCode();
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<OneCall4CurrentResponse>(json);
 
             if (result?.data is not { Length: > 0 })
@@ -50,7 +61,7 @@ public class WeatherService
             var current = result.data[0];
             var timestamp = DateTimeOffset.FromUnixTimeSeconds(current.dt).UtcDateTime;
 
-            await using var context = _dbFactory.CreateDbContext();
+            await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
             var record = new WeatherRecord
             {
@@ -66,126 +77,160 @@ public class WeatherService
             };
 
             context.WeatherRecords.Add(record);
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.LogInformation("Fetch de clima actual cancelado.");
         }
         catch (Exception ex)
         {
-            // El clima nunca debe romper el resto del sistema: se loguea y se degrada.
             _logger.LogWarning(ex, "Fallo al obtener el clima actual de OpenWeather");
         }
     }
 
-    public async Task<List<WeatherRecord>> GetForecastAsync()
+    /// <summary>Historial de clima actual (observación puntual, descendente).</summary>
+    public async Task<List<WeatherRecord>> GetForecastAsync(CancellationToken ct = default)
     {
-        await using var context = _dbFactory.CreateDbContext();
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
         return await context.WeatherRecords
             .OrderByDescending(w => w.Timestamp)
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
     /// <summary>
-    /// Trae el pronóstico diario (~7 días) de OpenWeather y lo guarda en DailyWeatherForecasts.
-    /// Reemplaza las fechas existentes (upsert por fecha).
+    /// Trae el pronóstico diario (~7 días) de OpenWeather y lo guarda en
+    /// DailyWeatherForecasts (upsert por fecha). Validación F-03: Tmin &gt; Tmax
+    /// se intercambia y se loguea (el dato no se descarta en silencio).
     /// </summary>
-    public async Task FetchAndStoreForecastAsync()
+    public async Task FetchAndStoreForecastAsync(CancellationToken ct = default)
     {
         var (lat, lon, apiKey) = GetWeatherConfig();
-        if (apiKey is null) return;
+        if (apiKey is null)
+        {
+            _logger.LogInformation("Pronóstico climático saltado: sin Weather:ApiKey configurada.");
+            return;
+        }
 
         // One Call 4.0 usa timeline/1day (no existe /onecall/forecast).
-        // Devuelve hasta 10 días con temp.min/temp.max por día.
         var url = $"https://api.openweathermap.org/data/4.0/onecall/timeline/1day?lat={lat}&lon={lon}&units=metric&appid={apiKey}";
 
         try
         {
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url, ct);
             response.EnsureSuccessStatusCode();
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync(ct);
             var result = JsonSerializer.Deserialize<OneCallForecastResponse>(json);
 
-            if (result?.data is not { Length: > 0 }) return;
+            if (result?.data is not { Length: > 0 })
+            {
+                _logger.LogWarning("Pronóstico sin datos en la respuesta de OpenWeather.");
+                return;
+            }
 
-            await using var context = _dbFactory.CreateDbContext();
+            await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
             var fetchedAt = DateTime.UtcNow;
             var inserted = 0;
+            var invalidDays = 0;
 
             foreach (var day in result.data)
             {
                 var date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(day.dt).UtcDateTime);
+
+                var tmin = (decimal)day.temp.min;
+                var tmax = (decimal)day.temp.max;
+                if (tmin > tmax)
+                {
+                    invalidDays++;
+                    _logger.LogWarning("Pronóstico {Date}: Tmin {Tmin} > Tmax {Tmax}; se intercambian.", date, tmin, tmax);
+                    (tmin, tmax) = (tmax, tmin);
+                }
+
                 var existing = await context.DailyWeatherForecasts
-                    .FirstOrDefaultAsync(f => f.Date == date);
+                    .FirstOrDefaultAsync(f => f.Date == date, ct);
 
                 if (existing is null)
                 {
-                    context.DailyWeatherForecasts.Add(new Models.DailyWeatherForecast
+                    context.DailyWeatherForecasts.Add(new DailyWeatherForecast
                     {
                         Date = date,
-                        TempMin = (decimal)day.temp.min,
-                        TempMax = (decimal)day.temp.max,
+                        TempMin = tmin,
+                        TempMax = tmax,
                         FetchedAt = fetchedAt
                     });
                     inserted++;
                 }
                 else
                 {
-                    existing.TempMin = (decimal)day.temp.min;
-                    existing.TempMax = (decimal)day.temp.max;
+                    existing.TempMin = tmin;
+                    existing.TempMax = tmax;
                     existing.FetchedAt = fetchedAt;
                 }
             }
 
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(ct);
 
-            _logger.LogInformation("Forecast climático guardado: {Inserted} fechas nuevas (rango {First}..{Last})",
-                inserted, result.data[0].dt, result.data[^1].dt);
+            _logger.LogInformation("Forecast climático guardado: {Inserted} fechas nuevas ({Invalid} con Tmin/Tmax corregidas), rango {First}..{Last}",
+                inserted, invalidDays, result.data[0].dt, result.data[^1].dt);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.LogInformation("Fetch de pronóstico cancelado.");
         }
         catch (Exception ex)
         {
-            // El clima nunca debe romper el forecasting: se loguea y se degrada al fallback del sensor.
             _logger.LogWarning(ex, "Fallo al obtener el pronóstico de OpenWeather");
         }
     }
 
     /// <summary>
-    /// Fetch perezoso: si faltan fechas del rango [from, to] en la DB, consulta la API una vez
-    /// y guarda toda la ventana devuelta. No respeta el toggle (es bajo demanda del forecasting).
+    /// Fetch perezoso serializado (F-03, carrera resuelta): dentro del semáforo se
+    /// re-verifica la DB — si otra llamada (guard programado u otro lazy) ya trajo
+    /// el rango, no consulta la API de nuevo. El guard de 1 vez/día lo decide el
+    /// llamador (GddService lee el toggle administrativo); aquí solo se serializa.
     /// </summary>
     public async Task FetchForecastForDatesAsync(DateOnly from, DateOnly to, CancellationToken ct = default)
     {
-        await using var checkContext = _dbFactory.CreateDbContext();
+        await FetchForecastLock.WaitAsync(ct);
+        try
+        {
+            await using var checkContext = await _dbFactory.CreateDbContextAsync(ct);
 
-        var existing = await checkContext.DailyWeatherForecasts
-            .Where(f => f.Date >= from && f.Date <= to)
-            .Select(f => f.Date)
-            .ToListAsync(ct);
+            var existing = await checkContext.DailyWeatherForecasts
+                .Where(f => f.Date >= from && f.Date <= to)
+                .Select(f => f.Date)
+                .ToListAsync(ct);
 
-        if (existing.Count >= (to.DayNumber - from.DayNumber + 1))
-            return; // no faltan fechas
+            if (existing.Count >= (to.DayNumber - from.DayNumber + 1))
+                return; // el rango ya está cubierto (lo trajo otra llamada)
 
-        await FetchAndStoreForecastAsync();
+            await FetchAndStoreForecastAsync(ct);
+        }
+        finally
+        {
+            FetchForecastLock.Release();
+        }
     }
 
     /// <summary>
     /// Consulta el pronóstico de un rango de fechas desde la DB (sin tocar la API).
     /// </summary>
-    public async Task<List<Models.DailyWeatherForecast>> GetForecastForDatesAsync(
+    public async Task<List<DailyWeatherForecast>> GetForecastForDatesAsync(
         DateOnly from, DateOnly to, CancellationToken ct = default)
     {
-        await using var context = _dbFactory.CreateDbContext();
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
         return await context.DailyWeatherForecasts
             .Where(f => f.Date >= from && f.Date <= to)
             .OrderBy(f => f.Date)
             .ToListAsync(ct);
     }
 
-    /// <summary>
-    /// Indica si el pronóstico para el día actual ya fue obtenido hoy (para el guard de 1 vez/día).
-    /// </summary>
+    /// <summary>Indica si el pronóstico para hoy ya fue obtenido hoy (guard 1 vez/día).</summary>
     public async Task<bool> WasFetchedTodayAsync(CancellationToken ct = default)
     {
-        await using var context = _dbFactory.CreateDbContext();
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var today = DateTime.UtcNow.Date;
         return await context.DailyWeatherForecasts
             .AnyAsync(f => f.FetchedAt.Date == today, ct);
