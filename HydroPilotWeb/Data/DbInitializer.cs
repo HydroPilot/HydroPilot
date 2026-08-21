@@ -194,6 +194,76 @@ public static class DbInitializer
 
         context.SaveChanges();
 
+        // --- Seed de catálogos de lotes y plantas (plan 09 / LOT-02) ---
+        // Valores de ARRANQUE calibrables, no verdades agronómicas: se ajustan
+        // con datos reales del invernadero.
+        var cultivoLote = context.CropTypes.First();
+
+        if (!context.PhenologicalStages.Any())
+        {
+            context.PhenologicalStages.AddRange(
+                new PhenologicalStage
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Name = "Establecimiento",
+                    Description = "Arranque 0-150 GDD. Valor calibrable.",
+                    Order = 1,
+                    GddMin = 0, GddMax = 150,
+                    EcMin = 0.8m, EcObjective = 1.0m, EcMax = 1.2m
+                },
+                new PhenologicalStage
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Name = "Crecimiento vegetativo",
+                    Description = "Crecimiento 150-450 GDD. Valor calibrable.",
+                    Order = 2,
+                    GddMin = 150, GddMax = 450,
+                    EcMin = 1.2m, EcObjective = 1.5m, EcMax = 1.8m
+                },
+                new PhenologicalStage
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Name = "Formación y madurez",
+                    Description = "Tercera etapa (nombre confirmado en plan 09). 450-750 GDD. Valor calibrable.",
+                    Order = 3,
+                    GddMin = 450, GddMax = 750,
+                    EcMin = 1.5m, EcObjective = 1.7m, EcMax = 1.8m
+                });
+        }
+
+        if (!context.CommercialStages.Any())
+        {
+            context.CommercialStages.AddRange(
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "En desarrollo", Description = "Todavía no es cosechable." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Candidata Baby Leaf", Description = "Score en banda candidata (60-79) o apta sin confirmar obligatorios." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Baby Leaf apta", Description = "Score >= 80 y criterios obligatorios aprobados." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Cosecha convencional", Description = "Ventana convencional con madurez confirmada." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Riesgo / fuera de ventana", Description = "Anomalía, bolting, mal estado visual o sobremadurez." });
+        }
+
+        if (!context.BabyLeafConfigs.Any())
+        {
+            var babyLeafConfig = new BabyLeafConfig
+            {
+                CropTypeId = cultivoLote.Id,
+                Name = "Baby Leaf Butterhead v1",
+                Description = "Ventana GDD 250-450; candidata 60, apta 80. Valores de arranque calibrables.",
+                GddMin = 250, GddMax = 450,
+                ScoreMinCandidate = 60, ScoreMinReady = 80,
+                Version = "1.0"
+            };
+            context.BabyLeafConfigs.Add(babyLeafConfig);
+            context.SaveChanges();
+
+            context.BabyLeafCriteria.AddRange(
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Ventana GDD", DataType = "GDD", Unit = "GDD", ValueMin = 250, ValueMax = 450, Weight = 20, IsMandatory = true },
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Morfología / tamaño", DataType = "MORFOLOGIA", Unit = "score", Weight = 45, IsMandatory = true },
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "GrowthRate", DataType = "CRECIMIENTO", Unit = "%/día", Weight = 20, IsMandatory = false },
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Estado visual", DataType = "VISUAL", Unit = "score", Weight = 15, IsMandatory = true });
+        }
+
+        context.SaveChanges();
+
         // --- Seed de lote demo ---
         if (!context.Lots.Any())
         {
@@ -205,12 +275,139 @@ public static class DbInitializer
                 GreenhouseId = greenhouse.Id,
                 CropTypeId = cropType.Id,
                 StatusId = status.Id,
+                Name = "Lote Demo 01",
                 SowingDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-15)),
                 PlantedAreaM2 = 4.5m,
+                GridRows = 6,
+                GridColumns = 10,
+                CurrentPh = 6.0m,
+                CurrentEc = 1.5m,
+                BabyLeafHarvestTargetPercent = 70m,
                 CreatedAt = DateTime.UtcNow
             });
         }
 
         context.SaveChanges();
+
+        // --- Seed de plantas demo (etiquetadas como demo; no se crean sobre lotes
+        // productivos ni se inventan posiciones para lotes sin grilla configurada) ---
+        var demoLot = context.Lots.FirstOrDefault(l => l.Name == "Lote Demo 01");
+        if (demoLot is not null && !context.Plants.Any(p => p.LotId == demoLot.Id))
+        {
+            SeedDemoPlants(context, demoLot);
+        }
+
+        context.SaveChanges();
+    }
+
+    /// <summary>
+    /// Plantas demo del lote demo (datos NO productivos, etiquetados como "demo").
+    /// El objetivo es mostrar la vista de lote (LOT-08) con estados comerciales
+    /// variados y posiciones vacías, siempre respaldados por evaluaciones
+    /// persistidas (nada se inventa en pantalla). El flujo diario puede volver a
+    /// evaluarlas con reglas reales.
+    /// </summary>
+    private static void SeedDemoPlants(HydroPilotDbContext context, Lot demoLot)
+    {
+        var comm = context.CommercialStages.ToDictionary(s => s.Name);
+        var pheno = context.PhenologicalStages.First(s => s.Name == "Crecimiento vegetativo");
+        var config = context.BabyLeafConfigs.First();
+
+        var now = DateTime.UtcNow;
+        const decimal demoGdd = 320m;
+
+        void AddPlant(
+            int row, int col,
+            string stageName, decimal score, decimal confidence,
+            bool mandatoryMet, string? discardReason = null, bool harvested = false)
+        {
+            var plant = new Plant
+            {
+                LotId = demoLot.Id,
+                Row = row,
+                Column = col,
+                PhenologicalStageId = pheno.Id,
+                CommercialStageId = comm[stageName].Id,
+                OperationalState = harvested ? PlantOperationalState.Cosechada
+                                  : discardReason is not null ? PlantOperationalState.Descartada
+                                  : PlantOperationalState.Activa,
+                HarvestDate = harvested ? DateOnly.FromDateTime(now) : null,
+                DiscardDate = discardReason is not null ? DateOnly.FromDateTime(now) : null,
+                DiscardReason = discardReason,
+                CreatedAtUtc = now
+            };
+            context.Plants.Add(plant);
+            context.SaveChanges();
+
+            context.BabyLeafEvaluations.Add(new BabyLeafEvaluation
+            {
+                PlantId = plant.Id,
+                BabyLeafConfigId = config.Id,
+                EvaluatedAtUtc = now,
+                BabyLeafScore = score,
+                Result = stageName,
+                Confidence = confidence,
+                GddAtEvaluation = demoGdd,
+                MandatoryCriteriaMet = mandatoryMet,
+                FoliarAreaUsed = 120m + score,
+                LeafLengthUsed = 6.5m + score / 40m,
+                GrowthRateUsed = 6m + score / 20m,
+                ModelVersion = "BL-demo-1.0"
+            });
+
+            context.PlantStageHistories.Add(new PlantStageHistory
+            {
+                PlantId = plant.Id,
+                NewCommercialStageId = comm[stageName].Id,
+                NewPhenologicalStageId = pheno.Id,
+                NewOperationalState = plant.OperationalState.ToString(),
+                Source = "seed",
+                Reason = "Dato demo: posición sembrada con evaluación de referencia",
+                ChangedAtUtc = now
+            });
+        }
+
+        // Fila 1: mezcla aptas / candidatas / en desarrollo.
+        for (var col = 1; col <= 6; col++)
+        {
+            var (stage, score) = col switch
+            {
+                1 => ("Baby Leaf apta", 88m),
+                2 => ("Baby Leaf apta", 91m),
+                3 => ("Baby Leaf apta", 85m),
+                4 => ("Candidata Baby Leaf", 72m),
+                5 => ("Candidata Baby Leaf", 66m),
+                _ => ("En desarrollo", 45m)
+            };
+            AddPlant(1, col, stage, score, 0.9m, true);
+        }
+
+        // Fila 2: aptas y candidatas.
+        AddPlant(2, 1, "Baby Leaf apta", 89m, 0.92m, true);
+        AddPlant(2, 2, "Baby Leaf apta", 84m, 0.9m, true);
+        AddPlant(2, 3, "Candidata Baby Leaf", 78m, 0.88m, true);
+        AddPlant(2, 4, "Candidata Baby Leaf", 63m, 0.85m, true);
+        AddPlant(2, 5, "En desarrollo", 52m, 0.8m, true);
+        AddPlant(2, 6, "Riesgo / fuera de ventana", 30m, 0.7m, false, "Demo: bolting detectado");
+
+        // Fila 3: apta sin confirmar obligatorios → candidata (caso documentado).
+        AddPlant(3, 1, "Candidata Baby Leaf", 86m, 0.6m, false);
+        AddPlant(3, 2, "Baby Leaf apta", 90m, 0.93m, true);
+        AddPlant(3, 3, "Candidata Baby Leaf", 70m, 0.87m, true);
+        AddPlant(3, 4, "En desarrollo", 58m, 0.82m, true);
+
+        // Fila 4: cosechada (congelada) y descartada (histórico).
+        AddPlant(4, 1, "Baby Leaf apta", 87m, 0.91m, true, harvested: true);
+        AddPlant(4, 2, "Riesgo / fuera de ventana", 25m, 0.65m, false, "Demo: fuera de ventana por sobremadurez");
+        AddPlant(4, 3, "En desarrollo", 41m, 0.78m, true);
+
+        // Fila 5: en desarrollo y una apta.
+        AddPlant(5, 1, "En desarrollo", 48m, 0.79m, true);
+        AddPlant(5, 2, "Baby Leaf apta", 83m, 0.89m, true);
+
+        // Fila 6: una planta.
+        AddPlant(6, 1, "En desarrollo", 39m, 0.75m, true);
+
+        // El resto de las 60 posiciones quedan vacías (gris claro en el mapa).
     }
 }

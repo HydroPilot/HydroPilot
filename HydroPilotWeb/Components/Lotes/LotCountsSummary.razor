@@ -1,0 +1,42 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+<div class="lot-counts d-flex flex-wrap gap-2">
+    @foreach (var count in Counts)
+    {
+        var style = CommercialStagePalette.ForStage(count.StageName);
+        <span class="lot-counts__chip" title="@count.StageName">
+            <span class="lot-counts__dot" style="background: @style.Background;"></span>
+            <span>@count.StageName</span>
+            <strong>@count.Count</strong>
+        </span>
+    }
+    @if (Counts.Count == 0)
+    {
+        <span class="text-muted small">Sin conteos.</span>
+    }
+</div>
+
+<style>
+    .lot-counts__chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 4px 10px;
+    }
+    .lot-counts__dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 1px solid rgba(0,0,0,0.2);
+    }
+</style>
+
+@code {
+    /// <summary>Conteo de plantas por estado comercial (solo activas), para vistas tipo forecasting.</summary>
+    [Parameter] public IReadOnlyList<StageCountDto> Counts { get; set; } = [];
+}

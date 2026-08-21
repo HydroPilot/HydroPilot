@@ -1,0 +1,74 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+<div class="card lot-summary h-100">
+    <div class="card-body">
+        <h5 class="card-title d-flex align-items-center gap-2">
+            <span>◫</span>
+            <span>@(State.Name ?? $"Lote #{State.LotId}")</span>
+        </h5>
+        <ul class="list-group list-group-flush lot-summary__list">
+            <li class="list-group-item d-flex justify-content-between">
+                <span>Estado</span>
+                <strong>@(State.StatusName ?? "—")</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>Cultivo</span>
+                <strong>@State.CropTypeName</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>GDD acumulado</span>
+                <strong>@State.GddAccumulated</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>Etapa fenológica</span>
+                <strong>@(State.PhenologicalStageName ?? "—")</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>Estado comercial</span>
+                @if (State.IsCommercialStageMixed)
+                {
+                    <strong class="text-warning">Mixto</strong>
+                }
+                else
+                {
+                    <strong>@(State.CommercialStageName ?? "—")</strong>
+                }
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>Superficie</span>
+                <strong>@State.AreaM2 m²</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>Siembra</span>
+                <strong>@State.SowingDate.ToString("dd/MM/yyyy")</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>pH solución</span>
+                <strong>@(State.CurrentPh?.ToString() ?? "—")</strong>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>EC solución</span>
+                <strong>@(State.CurrentEc?.ToString() ?? "—")@(State.EcObjective is not null ? $" (objetivo {State.EcObjective})" : null)</strong>
+            </li>
+        </ul>
+
+        <div class="mt-2 small text-muted">
+            @if (State.GridRows is int rows && State.GridColumns is int cols)
+            {
+                <span>Grilla configurada: @rows × @cols · @State.EmptyPositions posiciones vacías · @State.DiscardedPlants descartadas</span>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .lot-summary .lot-summary__list .list-group-item {
+        padding: 0.4rem 0.25rem;
+        font-size: 13px;
+    }
+</style>
+
+@code {
+    [Parameter] public LotStateDto State { get; set; } = null!;
+}

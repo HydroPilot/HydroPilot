@@ -38,6 +38,194 @@ namespace HydroPilotWeb.Migrations
                     b.ToTable("AppSettings", (string)null);
                 });
 
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafConfig", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("CropTypeId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<decimal>("GddMax")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal>("GddMin")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<decimal>("ScoreMinCandidate")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<decimal>("ScoreMinReady")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CropTypeId");
+
+                    b.ToTable("BabyLeafConfigs", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafCriterion", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("BabyLeafConfigId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DataType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsMandatory")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<decimal?>("ValueMax")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal?>("ValueMin")
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal>("Weight")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BabyLeafConfigId");
+
+                    b.ToTable("BabyLeafCriteria", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafEvaluation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("BabyLeafConfigId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("BabyLeafScore")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<decimal>("Confidence")
+                        .HasColumnType("decimal(6,4)");
+
+                    b.Property<DateTime>("EvaluatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal?>("FoliarAreaUsed")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal>("GddAtEvaluation")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("GrowthRateUsed")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("LeafLengthUsed")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<bool>("MandatoryCriteriaMet")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("PlantId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PlantImageId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Result")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BabyLeafConfigId");
+
+                    b.HasIndex("EvaluatedAtUtc");
+
+                    b.HasIndex("PlantId");
+
+                    b.HasIndex("PlantImageId");
+
+                    b.ToTable("BabyLeafEvaluations", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.CommercialStage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("CropTypeId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CropTypeId", "Name");
+
+                    b.ToTable("CommercialStages", (string)null);
+                });
+
             modelBuilder.Entity("HydroPilotWeb.Models.CropType", b =>
                 {
                     b.Property<int>("Id")
@@ -73,6 +261,9 @@ namespace HydroPilotWeb.Migrations
                         .HasColumnType("decimal(4,2)");
 
                     b.Property<decimal?>("OptimalPhMin")
+                        .HasColumnType("decimal(4,2)");
+
+                    b.Property<decimal?>("OptimalPhTarget")
                         .HasColumnType("decimal(4,2)");
 
                     b.Property<decimal?>("YieldPerM2")
@@ -220,11 +411,20 @@ namespace HydroPilotWeb.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<decimal?>("AccumulatedGdd")
+                        .HasColumnType("decimal(8,2)");
+
                     b.Property<DateOnly?>("ActualHarvestDate")
                         .HasColumnType("date");
 
                     b.Property<decimal?>("ActualYieldKg")
                         .HasColumnType("decimal(10,2)");
+
+                    b.Property<int?>("AppliedPhenologicalStageId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("BabyLeafHarvestTargetPercent")
+                        .HasColumnType("decimal(5,2)");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -234,11 +434,36 @@ namespace HydroPilotWeb.Migrations
                     b.Property<int>("CropTypeId")
                         .HasColumnType("int");
 
+                    b.Property<decimal?>("CurrentEc")
+                        .HasColumnType("decimal(6,2)");
+
+                    b.Property<decimal?>("CurrentPh")
+                        .HasColumnType("decimal(4,2)");
+
                     b.Property<int>("GreenhouseId")
                         .HasColumnType("int");
 
+                    b.Property<int?>("GridColumns")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("GridRows")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsCommercialStageMixed")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
                     b.Property<decimal>("PlantedAreaM2")
                         .HasColumnType("decimal(10,2)");
+
+                    b.Property<int?>("PredominantCommercialStageId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PredominantPhenologicalStageId")
+                        .HasColumnType("int");
 
                     b.Property<DateOnly>("SowingDate")
                         .HasColumnType("date");
@@ -248,9 +473,15 @@ namespace HydroPilotWeb.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AppliedPhenologicalStageId");
+
                     b.HasIndex("CropTypeId");
 
                     b.HasIndex("GreenhouseId");
+
+                    b.HasIndex("PredominantCommercialStageId");
+
+                    b.HasIndex("PredominantPhenologicalStageId");
 
                     b.HasIndex("StatusId");
 
@@ -344,6 +575,276 @@ namespace HydroPilotWeb.Migrations
                         .HasFilter("[ValidUntilUtc] IS NULL");
 
                     b.ToTable("NodeLotAssignments", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PhenologicalStage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("CropTypeId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<decimal>("EcMax")
+                        .HasColumnType("decimal(6,2)");
+
+                    b.Property<decimal>("EcMin")
+                        .HasColumnType("decimal(6,2)");
+
+                    b.Property<decimal>("EcObjective")
+                        .HasColumnType("decimal(6,2)");
+
+                    b.Property<decimal>("GddMax")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal>("GddMin")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CropTypeId", "Order");
+
+                    b.ToTable("PhenologicalStages", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.Plant", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("Column")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("CommercialStageId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("GETUTCDATE()");
+
+                    b.Property<DateOnly?>("DiscardDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("DiscardReason")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<DateOnly?>("HarvestDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("LotId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OperationalState")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<int?>("PhenologicalStageId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Row")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CommercialStageId");
+
+                    b.HasIndex("LotId");
+
+                    b.HasIndex("PhenologicalStageId");
+
+                    b.HasIndex("LotId", "Row", "Column")
+                        .IsUnique();
+
+                    b.ToTable("Plants", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantImage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CapturedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ModelVersion")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("PlantId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Processed")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("ProcessedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CapturedAtUtc");
+
+                    b.HasIndex("PlantId");
+
+                    b.ToTable("PlantImages", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantImageAnalysis", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("AnalyzedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("AverageColor")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<decimal?>("DamagePercent")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("FoliarArea")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal?>("GreennessIndex")
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal?>("GrowthRate")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("ImageQuality")
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal?>("LeafCount")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("LeafLength")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<decimal?>("PlantArea")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal?>("PlantHeight")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<int>("PlantImageId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("PlantWidth")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("RosetteDiameter")
+                        .HasColumnType("decimal(8,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlantImageId")
+                        .IsUnique();
+
+                    b.ToTable("PlantImageAnalyses", (string)null);
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantStageHistory", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("ChangedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("NewCommercialStageId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("NewOperationalState")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<int?>("NewPhenologicalStageId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("PlantId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PreviousCommercialStageId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PreviousOperationalState")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<int?>("PreviousPhenologicalStageId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangedAtUtc");
+
+                    b.HasIndex("PlantId");
+
+                    b.ToTable("PlantStageHistories", (string)null);
                 });
 
             modelBuilder.Entity("HydroPilotWeb.Models.Prediction", b =>
@@ -766,6 +1267,65 @@ namespace HydroPilotWeb.Migrations
                     b.ToTable("WeatherRecords", (string)null);
                 });
 
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafConfig", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.CropType", "CropType")
+                        .WithMany()
+                        .HasForeignKey("CropTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CropType");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafCriterion", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.BabyLeafConfig", "BabyLeafConfig")
+                        .WithMany("Criteria")
+                        .HasForeignKey("BabyLeafConfigId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("BabyLeafConfig");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafEvaluation", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.BabyLeafConfig", "BabyLeafConfig")
+                        .WithMany()
+                        .HasForeignKey("BabyLeafConfigId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("HydroPilotWeb.Models.Plant", "Plant")
+                        .WithMany("Evaluations")
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("HydroPilotWeb.Models.PlantImage", "PlantImage")
+                        .WithMany("Evaluations")
+                        .HasForeignKey("PlantImageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("BabyLeafConfig");
+
+                    b.Navigation("Plant");
+
+                    b.Navigation("PlantImage");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.CommercialStage", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.CropType", "CropType")
+                        .WithMany()
+                        .HasForeignKey("CropTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CropType");
+                });
+
             modelBuilder.Entity("HydroPilotWeb.Models.Greenhouse", b =>
                 {
                     b.HasOne("HydroPilotWeb.Models.User", "User")
@@ -789,6 +1349,11 @@ namespace HydroPilotWeb.Migrations
 
             modelBuilder.Entity("HydroPilotWeb.Models.Lot", b =>
                 {
+                    b.HasOne("HydroPilotWeb.Models.PhenologicalStage", "AppliedPhenologicalStage")
+                        .WithMany()
+                        .HasForeignKey("AppliedPhenologicalStageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("HydroPilotWeb.Models.CropType", "CropType")
                         .WithMany("Lots")
                         .HasForeignKey("CropTypeId")
@@ -801,15 +1366,31 @@ namespace HydroPilotWeb.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("HydroPilotWeb.Models.CommercialStage", "PredominantCommercialStage")
+                        .WithMany()
+                        .HasForeignKey("PredominantCommercialStageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("HydroPilotWeb.Models.PhenologicalStage", "PredominantPhenologicalStage")
+                        .WithMany()
+                        .HasForeignKey("PredominantPhenologicalStageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("HydroPilotWeb.Models.LotStatus", "Status")
                         .WithMany("Lots")
                         .HasForeignKey("StatusId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.Navigation("AppliedPhenologicalStage");
+
                     b.Navigation("CropType");
 
                     b.Navigation("Greenhouse");
+
+                    b.Navigation("PredominantCommercialStage");
+
+                    b.Navigation("PredominantPhenologicalStage");
 
                     b.Navigation("Status");
                 });
@@ -831,6 +1412,75 @@ namespace HydroPilotWeb.Migrations
                     b.Navigation("Lot");
 
                     b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PhenologicalStage", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.CropType", "CropType")
+                        .WithMany()
+                        .HasForeignKey("CropTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CropType");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.Plant", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.CommercialStage", "CommercialStage")
+                        .WithMany()
+                        .HasForeignKey("CommercialStageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("HydroPilotWeb.Models.Lot", "Lot")
+                        .WithMany("Plants")
+                        .HasForeignKey("LotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("HydroPilotWeb.Models.PhenologicalStage", "PhenologicalStage")
+                        .WithMany()
+                        .HasForeignKey("PhenologicalStageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CommercialStage");
+
+                    b.Navigation("Lot");
+
+                    b.Navigation("PhenologicalStage");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantImage", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.Plant", "Plant")
+                        .WithMany("Images")
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plant");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantImageAnalysis", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.PlantImage", "PlantImage")
+                        .WithOne("Analysis")
+                        .HasForeignKey("HydroPilotWeb.Models.PlantImageAnalysis", "PlantImageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PlantImage");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantStageHistory", b =>
+                {
+                    b.HasOne("HydroPilotWeb.Models.Plant", "Plant")
+                        .WithMany("History")
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plant");
                 });
 
             modelBuilder.Entity("HydroPilotWeb.Models.Prediction", b =>
@@ -932,6 +1582,11 @@ namespace HydroPilotWeb.Migrations
                     b.Navigation("Node");
                 });
 
+            modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafConfig", b =>
+                {
+                    b.Navigation("Criteria");
+                });
+
             modelBuilder.Entity("HydroPilotWeb.Models.CropType", b =>
                 {
                     b.Navigation("Lots");
@@ -955,6 +1610,8 @@ namespace HydroPilotWeb.Migrations
 
             modelBuilder.Entity("HydroPilotWeb.Models.Lot", b =>
                 {
+                    b.Navigation("Plants");
+
                     b.Navigation("Predictions");
                 });
 
@@ -968,6 +1625,22 @@ namespace HydroPilotWeb.Migrations
                     b.Navigation("Readings");
 
                     b.Navigation("Sensors");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.Plant", b =>
+                {
+                    b.Navigation("Evaluations");
+
+                    b.Navigation("History");
+
+                    b.Navigation("Images");
+                });
+
+            modelBuilder.Entity("HydroPilotWeb.Models.PlantImage", b =>
+                {
+                    b.Navigation("Analysis");
+
+                    b.Navigation("Evaluations");
                 });
 
             modelBuilder.Entity("HydroPilotWeb.Models.Sensor", b =>

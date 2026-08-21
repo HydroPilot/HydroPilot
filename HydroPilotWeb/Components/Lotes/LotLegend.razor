@@ -1,0 +1,59 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+<div class="lot-legend d-flex flex-wrap gap-2">
+    @foreach (var count in Counts)
+    {
+        var style = CommercialStagePalette.ForStage(count.StageName);
+        <span class="lot-legend__item" title="@count.StageName">
+            <span class="lot-legend__swatch" style="background: @style.Background;"></span>
+            <span>@count.StageName</span>
+            <strong>@count.Count</strong>
+        </span>
+    }
+    @if (ShowSpecial)
+    {
+        var emptyStyle = CommercialStagePalette.Empty;
+        <span class="lot-legend__item" title="Posición configurada sin planta">
+            <span class="lot-legend__swatch" style="background: @emptyStyle.Background;"></span>
+            <span>Posición vacía</span>
+            <strong>@EmptyPositions</strong>
+        </span>
+        var discardedStyle = CommercialStagePalette.Discarded;
+        <span class="lot-legend__item" title="Planta descartada (conserva historial)">
+            <span class="lot-legend__swatch" style="background: @discardedStyle.Background;"></span>
+            <span>Descartada</span>
+            <strong>@DiscardedPlants</strong>
+        </span>
+    }
+    @if (Counts.Count == 0 && !ShowSpecial)
+    {
+        <span class="text-muted small">Sin plantas activas.</span>
+    }
+</div>
+
+<style>
+    .lot-legend__item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        background: #ffffff;
+        border: 1px solid #dde3e9;
+        border-radius: 14px;
+        padding: 3px 10px;
+    }
+    .lot-legend__swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border: 1px solid rgba(0,0,0,0.2);
+    }
+</style>
+
+@code {
+    [Parameter] public IReadOnlyList<StageCountDto> Counts { get; set; } = [];
+    [Parameter] public int EmptyPositions { get; set; }
+    [Parameter] public int DiscardedPlants { get; set; }
+    [Parameter] public bool ShowSpecial { get; set; } = true;
+}

@@ -1,0 +1,83 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+<div class="lot-map-wrap">
+    @if (Rows <= 0 || Columns <= 0)
+    {
+        <div class="alert alert-warning mb-0 small">
+            Grilla no configurada para este lote. Definí filas y columnas para visualizar posiciones.
+        </div>
+    }
+    else
+    {
+        <div class="lot-map" style="grid-template-rows: repeat(@Rows, minmax(0,1fr)); grid-template-columns: repeat(@Columns, minmax(0,1fr));">
+            @foreach (var cell in Cells)
+            {
+                var style = CellStyleFor(cell);
+                var selected = SelectedPosition == (cell.Row, cell.Column);
+                <button type="button"
+                        class="lot-cell @(selected ? "lot-cell--selected" : null)"
+                        style="background: @style.Background; color: @style.Color;"
+                        title="@style.Title (@cell.Row-F@cell.Column)"
+                        @onclick="() => OnCellSelected.InvokeAsync(cell)">
+                    <span class="lot-cell__label">@style.Label</span>
+                </button>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .lot-map {
+        display: grid;
+        gap: 3px;
+        padding: 8px;
+        background: #f3f5f7;
+        border-radius: 8px;
+        border: 1px solid #dde3e9;
+        min-width: 0;
+    }
+    .lot-cell {
+        border: 1px solid rgba(0,0,0,0.15);
+        border-radius: 4px;
+        min-height: 34px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        aspect-ratio: 1 / 1;
+        transition: transform 0.08s, box-shadow 0.08s;
+    }
+    .lot-cell:hover {
+        transform: scale(1.06);
+        z-index: 2;
+    }
+    .lot-cell--selected {
+        outline: 3px solid #1d4ed8;
+        outline-offset: 1px;
+        box-shadow: 0 0 0 2px #ffffff inset;
+    }
+    .lot-cell__label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.25);
+    }
+</style>
+
+@code {
+    /// <summary>Filas configuradas del lote (sin dimensiones hardcodeadas).</summary>
+    [Parameter] public int Rows { get; set; }
+    [Parameter] public int Columns { get; set; }
+    [Parameter] public IReadOnlyList<PlantCellDto> Cells { get; set; } = [];
+    [Parameter] public (int Row, int Column)? SelectedPosition { get; set; }
+    [Parameter] public EventCallback<PlantCellDto> OnCellSelected { get; set; }
+
+    private CommercialStagePalette.CellStyle CellStyleFor(PlantCellDto cell) => cell.CellKind switch
+    {
+        "empty" => CommercialStagePalette.Empty,
+        "discarded" => CommercialStagePalette.Discarded,
+        _ => CommercialStagePalette.ForStage(cell.CommercialStageName)
+    };
+}

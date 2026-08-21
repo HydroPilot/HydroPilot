@@ -1,4 +1,4 @@
 <Solution>
-  <Project Path="HydroPilotWeb/HydroPilotWeb.csproj" />
   <Project Path="HydroPilotWeb.Tests/HydroPilotWeb.Tests.csproj" />
+  <Project Path="HydroPilotWeb/HydroPilotWeb.csproj" />
 </Solution>
