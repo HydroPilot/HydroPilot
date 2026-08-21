@@ -378,7 +378,7 @@ public class ReportQueryService
             else
             {
                 var projection = await _gddService.GetFutureGddProjectionAsync(lot, asOf, ct: ct);
-                estimatedHarvest = _gddService.EstimateHarvestDateAsync(lot, gdd, projection, asOf);
+                estimatedHarvest = _gddService.EstimateHarvestDateAsync(lot, gdd, projection.Points, asOf);
                 harvestSource = "GddService (proyección actual)";
             }
 
