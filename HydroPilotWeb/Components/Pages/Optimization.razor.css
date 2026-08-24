@@ -1,0 +1,207 @@
+/* Estilos del módulo de optimización (plan 16, OPT-05). */
+
+.opt-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    border: 1px solid var(--border, #e2e8f0);
+    border-left: 4px solid #d97706;
+    background: #fffbeb;
+    color: #78350f;
+    border-radius: 0.5rem;
+    padding: 0.65rem 0.9rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+.opt-banner strong {
+    font-weight: 600;
+}
+
+.opt-section-title {
+    margin: 1.4rem 0 0.6rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.metric-row--four {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.opt-solution-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.opt-card {
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 0.6rem;
+    padding: 0.9rem 1rem;
+    background: #fff;
+}
+
+.opt-card--blocked {
+    background: #fef2f2;
+    border-color: #fca5a5;
+}
+
+.opt-card--ok {
+    border-left: 4px solid #16a34a;
+}
+
+.opt-card__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.opt-card__value {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.3rem;
+}
+
+.opt-card__value strong {
+    font-size: 1.5rem;
+}
+
+.opt-explanation {
+    font-size: 0.85rem;
+    color: #475569;
+    margin-bottom: 0.4rem;
+}
+
+.opt-range {
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.opt-commercial {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 0.6rem;
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.opt-commercial div {
+    display: flex;
+    flex-direction: column;
+}
+
+.opt-muted {
+    color: #64748b;
+    font-size: 0.8rem;
+}
+
+.opt-table {
+    font-size: 0.85rem;
+}
+
+.opt-assumptions {
+    font-size: 0.8rem;
+    color: #475569;
+    padding-left: 1.1rem;
+    margin: 0.5rem 0 1rem;
+}
+
+.opt-details {
+    font-size: 0.8rem;
+    color: #475569;
+    padding-left: 1.1rem;
+    margin: 0.4rem 0;
+    list-style: disc;
+}
+
+.opt-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.opt-actions input {
+    flex: 1 1 180px;
+}
+
+.opt-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.1rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.opt-pill--up {
+    background: #ffedd5;
+    color: #9a3412;
+}
+
+.opt-pill--down {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.opt-pill--ok {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.opt-pill--warn {
+    background: #fef9c3;
+    color: #854d0e;
+}
+
+.opt-pill--switch {
+    background: #ede9fe;
+    color: #5b21b6;
+}
+
+.opt-status {
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+}
+
+.opt-status--PENDING {
+    background: #fef9c3;
+    color: #854d0e;
+}
+
+.opt-status--ACCEPTED {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.opt-status--DISCARDED,
+.opt-status--EXPIRED {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.opt-status--BLOCKED {
+    background: #fecaca;
+    color: #991b1b;
+}
+
+.opt-blocked {
+    border-color: #fca5a5;
+    background: #fef2f2;
+}
+
+@media (max-width: 640px) {
+    .opt-solution-grid {
+        grid-template-columns: 1fr;
+    }
+}

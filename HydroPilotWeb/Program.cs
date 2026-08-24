@@ -5,6 +5,7 @@ using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
+using HydroPilotWeb.Services.Optimization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
@@ -65,6 +66,15 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.YieldModel>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
+
+// --- Módulo de optimización (plan 16) ---
+// Hook de anomalías abiertas: lo reemplaza el módulo de anomalies cuando exista
+// (último registro gana en DI). Sink de eventos: lo reemplaza notifications.
+builder.Services.AddSingleton<IOpenAnomalyProvider, NoOpenAnomalyProvider>();
+builder.Services.AddScoped<IOptimizationEventSink, NoopOptimizationEventSink>();
+builder.Services.AddScoped<OptimizationService>();
+builder.Services.AddOptions<OptimizationOptions>()
+    .BindConfiguration(OptimizationOptions.SectionName);
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

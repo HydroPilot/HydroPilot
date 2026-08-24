@@ -372,6 +372,46 @@ public static class DbInitializer
             SeedDemoPlants(context, demoLot);
         }
 
+        // --- Seed de catálogo de costos/precios DEMO (módulo de optimización) ---
+        // Valores etiquetados como "demo": la comparativa económica los muestra
+        // como tales y nunca los presenta como precios reales (plan 16, OPT-03).
+        // Sin precios vigentes la comparación es "No calculable" con el motivo.
+        if (!context.CostPriceCatalogs.Any())
+        {
+            var cropType = context.CropTypes.FirstOrDefault();
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            void AddPriceCost(string destination, string item, decimal value)
+            {
+                context.CostPriceCatalogs.Add(new HydroPilotWeb.Models.Optimization.CostPriceCatalog
+                {
+                    CropTypeId = cropType?.Id,
+                    Destination = destination,
+                    Item = item,
+                    Value = value,
+                    Currency = "ARS",
+                    ValidFrom = today.AddDays(-30),
+                    ValidUntil = today.AddDays(120),
+                    Source = "demo",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+            }
+
+            // Destino Baby Leaf (ciclo corto, mayor densidad, sin trasplante individual).
+            AddPriceCost("baby_leaf", "price_per_kg", 2600m);
+            AddPriceCost("baby_leaf", "seed_cost_m2", 900m);
+            AddPriceCost("baby_leaf", "nutrient_cost_m2", 320m);
+            AddPriceCost("baby_leaf", "energy_cost_m2", 260m);
+            AddPriceCost("baby_leaf", "transplant_cost_m2", 0m);
+
+            // Destino convencional (ciclo más largo, trasplante y mayor consumo de energía).
+            AddPriceCost("conventional", "price_per_kg", 1800m);
+            AddPriceCost("conventional", "seed_cost_m2", 250m);
+            AddPriceCost("conventional", "nutrient_cost_m2", 420m);
+            AddPriceCost("conventional", "energy_cost_m2", 520m);
+            AddPriceCost("conventional", "transplant_cost_m2", 480m);
+        }
+
         context.SaveChanges();
     }
 

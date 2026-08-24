@@ -4,6 +4,7 @@ using HydroPilotWeb.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace HydroPilotWeb.Migrations
 {
     [DbContext(typeof(HydroPilotDbContext))]
-    partial class HydroPilotDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821232843_AddOptimizationRecommendations")]
+    partial class AddOptimizationRecommendations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,183 +24,6 @@ namespace HydroPilotWeb.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("HydroPilotWeb.Models.AnomalyEvent", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime?>("AcknowledgedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("GETUTCDATE()");
-
-                    b.Property<string>("Fingerprint")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<DateTime>("FirstObservedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int?>("GreenhouseId")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("LastObservedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("LotId")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("NodeId")
-                        .HasColumnType("int");
-
-                    b.Property<decimal>("ObservedValue")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<decimal?>("OperationalMax")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<decimal?>("OperationalMin")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<string>("Origin")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<int>("ReadingCount")
-                        .HasColumnType("int");
-
-                    b.Property<string>("ResolutionReason")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime?>("ResolvedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("RuleCode")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("nvarchar(60)");
-
-                    b.Property<string>("RuleDescription")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<int?>("SensorId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Severity")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<decimal?>("TargetValue")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("nvarchar(60)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Fingerprint")
-                        .IsUnique();
-
-                    b.HasIndex("FirstObservedAtUtc");
-
-                    b.HasIndex("LastObservedAtUtc");
-
-                    b.HasIndex("LotId");
-
-                    b.HasIndex("SensorId");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("Type");
-
-                    b.ToTable("AnomalyEvents", (string)null);
-                });
-
-            modelBuilder.Entity("HydroPilotWeb.Models.AnomalyRuleCatalog", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("nvarchar(60)");
-
-                    b.Property<int>("ConsecutiveToOpen")
-                        .HasColumnType("int");
-
-                    b.Property<int>("CooldownMinutes")
-                        .HasColumnType("int");
-
-                    b.Property<int>("CropTypeId")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(300)
-                        .HasColumnType("nvarchar(300)");
-
-                    b.Property<decimal?>("OperationalMax")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<decimal?>("OperationalMin")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<decimal?>("PhysicalMax")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<decimal?>("PhysicalMin")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.Property<string>("SensorTypeName")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<decimal?>("TargetValue")
-                        .HasColumnType("decimal(12,4)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CropTypeId", "Code")
-                        .IsUnique();
-
-                    b.ToTable("AnomalyRuleCatalogs", (string)null);
-                });
 
             modelBuilder.Entity("HydroPilotWeb.Models.AppSetting", b =>
                 {
@@ -1697,28 +1523,6 @@ namespace HydroPilotWeb.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("WeatherRecords", (string)null);
-                });
-
-            modelBuilder.Entity("HydroPilotWeb.Models.AnomalyEvent", b =>
-                {
-                    b.HasOne("HydroPilotWeb.Models.Lot", "Lot")
-                        .WithMany()
-                        .HasForeignKey("LotId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Lot");
-                });
-
-            modelBuilder.Entity("HydroPilotWeb.Models.AnomalyRuleCatalog", b =>
-                {
-                    b.HasOne("HydroPilotWeb.Models.CropType", "CropType")
-                        .WithMany()
-                        .HasForeignKey("CropTypeId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("CropType");
                 });
 
             modelBuilder.Entity("HydroPilotWeb.Models.BabyLeafConfig", b =>
