@@ -347,34 +347,7 @@ public static class DbInitializer
         // --- Seed de lote demo ---
         if (!context.Lots.Any())
         {
-            var cropType = context.CropTypes.First();
-            var status = context.LotStatuses.First(s => s.Name == "ACTIVO");
-
-            context.Lots.Add(new Lot
-            {
-                GreenhouseId = greenhouse.Id,
-                CropTypeId = cropType.Id,
-                StatusId = status.Id,
-                Name = "Lote Demo 01",
-                SowingDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-15)),
-                PlantedAreaM2 = 4.5m,
-                GridRows = 6,
-                GridColumns = 10,
-                CurrentPh = 6.0m,
-                CurrentEc = 1.5m,
-                BabyLeafHarvestTargetPercent = 70m,
-                CreatedAt = DateTime.UtcNow
-            });
-        }
-
-        context.SaveChanges();
-
-        // --- Seed de plantas demo (etiquetadas como demo; no se crean sobre lotes
-        // productivos ni se inventan posiciones para lotes sin grilla configurada) ---
-        var demoLot = context.Lots.FirstOrDefault(l => l.Name == "Lote Demo 01");
-        if (demoLot is not null && !context.Plants.Any(p => p.LotId == demoLot.Id))
-        {
-            SeedDemoPlants(context, demoLot);
+            SeedDemoLot(context);
         }
 
         // --- Seed de catálogo de costos/precios DEMO (módulo de optimización) ---
@@ -418,6 +391,86 @@ public static class DbInitializer
         }
 
         context.SaveChanges();
+    }
+
+    /// <summary>
+    /// Siembra el Lote Demo 01 activo con su grilla de 60 plantas y asignación del nodo.
+    /// </summary>
+    public static void SeedDemoLot(HydroPilotDbContext context)
+    {
+        var greenhouse = context.Greenhouses.FirstOrDefault();
+        if (greenhouse == null) return;
+
+        var cropType = context.CropTypes.FirstOrDefault();
+        if (cropType == null) return;
+
+        var status = context.LotStatuses.FirstOrDefault(s => s.Name == "ACTIVO");
+        if (status == null) return;
+
+        var demoLot = context.Lots.FirstOrDefault(l => l.Name == "Lote Demo 01");
+        if (demoLot == null)
+        {
+            demoLot = new Lot
+            {
+                GreenhouseId = greenhouse.Id,
+                CropTypeId = cropType.Id,
+                StatusId = status.Id,
+                Name = "Lote Demo 01",
+                SowingDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-15)),
+                PlantedAreaM2 = 4.5m,
+                GridRows = 6,
+                GridColumns = 10,
+                CurrentPh = 6.0m,
+                CurrentEc = 1.5m,
+                BabyLeafHarvestTargetPercent = 70m,
+                CreatedAt = DateTime.UtcNow
+            };
+            context.Lots.Add(demoLot);
+            context.SaveChanges();
+        }
+
+        if (!context.BabyLeafConfigs.Any())
+        {
+            var babyLeafConfig = new BabyLeafConfig
+            {
+                CropTypeId = cropType.Id,
+                Name = "Baby Leaf Butterhead v1",
+                Description = "Ventana GDD 250-450; candidata 60, apta 80. Valores de arranque calibrables.",
+                GddMin = 250, GddMax = 450,
+                ScoreMinCandidate = 60, ScoreMinReady = 80,
+                Version = "1.0"
+            };
+            context.BabyLeafConfigs.Add(babyLeafConfig);
+            context.SaveChanges();
+
+            context.BabyLeafCriteria.AddRange(
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Ventana GDD", DataType = "GDD", Unit = "GDD", ValueMin = 250, ValueMax = 450, Weight = 20, IsMandatory = true },
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Morfología / tamaño", DataType = "MORFOLOGIA", Unit = "score", Weight = 45, IsMandatory = true },
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "GrowthRate", DataType = "CRECIMIENTO", Unit = "%/día", Weight = 20, IsMandatory = false },
+                new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Estado visual", DataType = "VISUAL", Unit = "score", Weight = 15, IsMandatory = true });
+            context.SaveChanges();
+        }
+
+        if (!context.Plants.Any(p => p.LotId == demoLot.Id))
+        {
+            SeedDemoPlants(context, demoLot);
+        }
+
+        var node = context.IotNodes.FirstOrDefault(n => n.Identifier == "rpi-inv-01")
+                   ?? context.IotNodes.FirstOrDefault();
+        if (node != null && !context.NodeLotAssignments.Any(a => a.LotId == demoLot.Id && a.NodeId == node.Id))
+        {
+            context.NodeLotAssignments.Add(new NodeLotAssignment
+            {
+                NodeId = node.Id,
+                LotId = demoLot.Id,
+                ValidFromUtc = DateTime.UtcNow.AddDays(-60),
+                ValidUntilUtc = null,
+                Source = "fixture",
+                CreatedAt = DateTime.UtcNow
+            });
+            context.SaveChanges();
+        }
     }
 
     /// <summary>

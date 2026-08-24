@@ -1,0 +1,501 @@
+@page "/admin/mantenimiento"
+@attribute [Authorize(Policy = "RequireAdministrador")]
+@using HydroPilotWeb.Services.Admin
+@inject AdminMaintenanceService MaintenanceService
+
+<PageTitle>Mantenimiento de base de datos - HydroPilot</PageTitle>
+
+<div class="maintenance-page">
+    <div class="page-header">
+        <div class="page-header__content">
+            <h2>Mantenimiento y Base de Datos</h2>
+            <p>Herramientas de depuración, limpieza transaccional y restauración de datos demo</p>
+        </div>
+        <button class="btn btn-secondary" @onclick="LoadSummaryAsync" disabled="@_isLoading">
+            <span>↻</span> Actualizar métricas
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_feedbackMessage))
+    {
+        <div class="alert @(_isSuccess ? "alert-success" : "alert-danger")">
+            <span>@_feedbackMessage</span>
+            <button class="alert-close" @onclick="() => _feedbackMessage = null">✕</button>
+        </div>
+    }
+
+    <!-- Panel de métricas actuales de la base de datos -->
+    <div class="panel">
+        <div class="panel-header">
+            <h3>Estado actual de la base de datos</h3>
+            <span class="badge badge-info">Zona horaria: @(_summary?.GreenhouseTimeZone ?? "Cargando...")</span>
+        </div>
+
+        @if (_isLoading && _summary == null)
+        {
+            <div class="loading-state">
+                <div class="spinner"></div>
+                <p>Consultando métricas de la base de datos...</p>
+            </div>
+        }
+        else if (_summary != null)
+        {
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <span class="metric-card__label">Usuarios</span>
+                    <strong class="metric-card__value">@_summary.UsersCount</strong>
+                    <small class="metric-card__hint">Cuentas y roles registrados</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Invernaderos / Nodos</span>
+                    <strong class="metric-card__value">@_summary.GreenhousesCount / @_summary.NodesCount</strong>
+                    <small class="metric-card__hint">@_summary.SensorsCount sensores activos</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Lotes registrados</span>
+                    <strong class="metric-card__value">@_summary.LotsCount</strong>
+                    <small class="metric-card__hint">@_summary.ActiveLotsCount activos, @_summary.ClosedLotsCount cosechados</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Plantas en grillas</span>
+                    <strong class="metric-card__value">@_summary.PlantsCount</strong>
+                    <small class="metric-card__hint">Posiciones evaluadas en lotes</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Lecturas de telemetría</span>
+                    <strong class="metric-card__value">@_summary.SensorReadingsCount</strong>
+                    <small class="metric-card__hint">En @_summary.TelemetryBatchesCount batches v2</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Predicciones persistidas</span>
+                    <strong class="metric-card__value">@_summary.PredictionsCount</strong>
+                    <small class="metric-card__hint">Snapshots de forecasting</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Episodios de anomalía</span>
+                    <strong class="metric-card__value">@_summary.AnomalyEventsCount</strong>
+                    <small class="metric-card__hint">Eventos detectados por reglas</small>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-card__label">Recomendaciones</span>
+                    <strong class="metric-card__value">@_summary.OptimizationRecommendationsCount</strong>
+                    <small class="metric-card__hint">Sugerencias de optimización</small>
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- Panel de acciones de mantenimiento -->
+    <div class="actions-grid">
+        <div class="action-card action-card--danger">
+            <div class="action-card__body">
+                <div class="action-card__icon">🗑</div>
+                <div>
+                    <h4>Limpiar datos transaccionales (Mock)</h4>
+                    <p>
+                        Elimina todas las lecturas de telemetría, predicciones, lotes de prueba, plantas,
+                        eventos de anomalías y recomendaciones.
+                    </p>
+                    <p class="action-card__warning">
+                        <strong>Preserva intactos:</strong> usuarios, contraseñas, roles, configuraciones,
+                        catálogos de cultivo, invernaderos, nodos y sensores.
+                    </p>
+                </div>
+            </div>
+            <div class="action-card__footer">
+                @if (_showClearConfirm)
+                {
+                    <div class="confirm-box">
+                        <span>¿Confirmar eliminación de todos los datos transaccionales?</span>
+                        <div class="confirm-box__buttons">
+                            <button class="btn btn-danger" @onclick="ExecuteClearDataAsync" disabled="@_isProcessing">
+                                Sí, eliminar datos
+                            </button>
+                            <button class="btn btn-secondary" @onclick="() => _showClearConfirm = false" disabled="@_isProcessing">
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <button class="btn btn-danger" @onclick="() => _showClearConfirm = true" disabled="@_isProcessing">
+                        Limpiar datos de prueba
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="action-card action-card--primary">
+            <div class="action-card__body">
+                <div class="action-card__icon">🌱</div>
+                <div>
+                    <h4>Recrear Lote Demo 01</h4>
+                    <p>
+                        Crea un lote demo activo (<strong>Lote Demo 01</strong>) con grilla de 6x10 posiciones,
+                        etapas comerciales representativas (Baby Leaf aptas, candidatas, en desarrollo y riesgo)
+                        y asignación del nodo <code>rpi-inv-01</code>.
+                    </p>
+                    <p class="action-card__hint">
+                        Si ya existía un Lote Demo 01 previo, se reemplaza limpiamente con datos demo frescos.
+                    </p>
+                </div>
+            </div>
+            <div class="action-card__footer">
+                <button class="btn btn-primary" @onclick="ExecuteRecreateDemoLotAsync" disabled="@_isProcessing">
+                    Recrear Lote Demo 01
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .maintenance-page {
+        padding: 24px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-header h2 {
+        margin: 0 0 6px;
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .page-header p {
+        margin: 0;
+        color: var(--text-muted, #70869a);
+        font-size: 14px;
+    }
+
+    .panel {
+        background: var(--card-bg, #182230);
+        border: 1px solid var(--border-color, #223044);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 24px;
+    }
+
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .panel-header h3 {
+        margin: 0;
+        font-size: 18px;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px;
+    }
+
+    .metric-card {
+        background: var(--card-inner-bg, #1e2b3d);
+        border: 1px solid var(--border-inner, #29384e);
+        border-radius: 10px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .metric-card__label {
+        font-size: 12px;
+        color: var(--text-muted, #8ea1b4);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+    }
+
+    .metric-card__value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text-main, #ffffff);
+        margin-bottom: 4px;
+    }
+
+    .metric-card__hint {
+        font-size: 11px;
+        color: var(--text-muted, #70869a);
+    }
+
+    .actions-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        gap: 20px;
+    }
+
+    .action-card {
+        background: var(--card-bg, #182230);
+        border: 1px solid var(--border-color, #223044);
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+    }
+
+    .action-card--danger {
+        border-left: 4px solid #e05252;
+    }
+
+    .action-card--primary {
+        border-left: 4px solid #2e90fa;
+    }
+
+    .action-card__body {
+        padding: 20px;
+        display: flex;
+        gap: 16px;
+    }
+
+    .action-card__icon {
+        font-size: 28px;
+        line-height: 1;
+    }
+
+    .action-card h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .action-card p {
+        margin: 0 0 8px;
+        font-size: 13px;
+        color: var(--text-muted, #8ea1b4);
+        line-height: 1.4;
+    }
+
+    .action-card__warning {
+        color: #f79009 !important;
+        font-size: 12px !important;
+    }
+
+    .action-card__hint {
+        color: #70869a !important;
+        font-size: 12px !important;
+    }
+
+    .action-card__footer {
+        padding: 16px 20px;
+        background: rgba(0, 0, 0, 0.15);
+        border-top: 1px solid var(--border-color, #223044);
+    }
+
+    .confirm-box {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .confirm-box span {
+        font-size: 13px;
+        color: #f79009;
+        font-weight: 600;
+    }
+
+    .confirm-box__buttons {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 18px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn-primary {
+        background: #2e90fa;
+        color: white;
+    }
+    .btn-primary:hover:not(:disabled) {
+        background: #175cd3;
+    }
+
+    .btn-danger {
+        background: #e05252;
+        color: white;
+    }
+    .btn-danger:hover:not(:disabled) {
+        background: #b42318;
+    }
+
+    .btn-secondary {
+        background: #2c3c52;
+        color: #d0dbe7;
+    }
+    .btn-secondary:hover:not(:disabled) {
+        background: #394d68;
+    }
+
+    .badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .badge-info {
+        background: rgba(46, 144, 250, 0.15);
+        color: #84caff;
+        border: 1px solid rgba(46, 144, 250, 0.3);
+    }
+
+    .alert {
+        padding: 14px 18px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 14px;
+    }
+
+    .alert-success {
+        background: rgba(18, 183, 106, 0.15);
+        border: 1px solid rgba(18, 183, 106, 0.4);
+        color: #6ce9a6;
+    }
+
+    .alert-danger {
+        background: rgba(240, 68, 56, 0.15);
+        border: 1px solid rgba(240, 68, 56, 0.4);
+        color: #fda29b;
+    }
+
+    .alert-close {
+        background: transparent;
+        border: none;
+        color: inherit;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 0 4px;
+    }
+
+    .loading-state {
+        padding: 40px;
+        text-align: center;
+        color: var(--text-muted, #70869a);
+    }
+
+    .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid rgba(255, 255, 255, 0.1);
+        border-top-color: #2e90fa;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin: 0 auto 12px;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+
+@code {
+    private DatabaseSummaryDto? _summary;
+    private bool _isLoading = true;
+    private bool _isProcessing = false;
+    private bool _showClearConfirm = false;
+    private string? _feedbackMessage;
+    private bool _isSuccess = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSummaryAsync();
+    }
+
+    private async Task LoadSummaryAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _summary = await MaintenanceService.GetDatabaseSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"Error al cargar métricas de la base de datos: {ex.Message}";
+            _isSuccess = false;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ExecuteClearDataAsync()
+    {
+        _isProcessing = true;
+        _showClearConfirm = false;
+        try
+        {
+            var result = await MaintenanceService.ClearTransactionalDataAsync();
+            _feedbackMessage = result.Message;
+            _isSuccess = result.Success;
+            await LoadSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"Error al ejecutar limpieza: {ex.Message}";
+            _isSuccess = false;
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private async Task ExecuteRecreateDemoLotAsync()
+    {
+        _isProcessing = true;
+        try
+        {
+            var result = await MaintenanceService.RecreateDemoLotAsync();
+            _feedbackMessage = result.Message;
+            _isSuccess = result.Success;
+            await LoadSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"Error al recrear lote demo: {ex.Message}";
+            _isSuccess = false;
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+}

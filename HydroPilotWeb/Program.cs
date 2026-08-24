@@ -23,6 +23,7 @@ builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
         sqlOptions.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null)));
 
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Admin.AdminMaintenanceService>();
 builder.Services.AddScoped<GddService>();
 builder.Services.AddScoped<YieldService>();
 builder.Services.AddScoped<SettingsService>();
