@@ -2,70 +2,568 @@
 @attribute [Authorize(Policy = "RequireAssigned")]
 
 @using System.Globalization
+@using HydroPilotWeb.Services.Simulation
 
 <PageTitle>Simulación</PageTitle>
 
+<div class="sim-banner" role="status">
+    ⚠ <strong>Entorno simulado</strong> — Los resultados son proyecciones what-if y no modifican lotes, lecturas, predicciones, nodos ni hardware.
+</div>
+
 <section class="simulation-grid">
     <article class="panel">
-        <h3>Parámetros</h3>
-        <div class="slider-list">
-            <div class="slider-item">
-                <div class="slider-item__head"><span>Temperatura ambiente</span><strong>@temp.ToString("0.0") °C</strong></div>
-                <input type="range" min="15" max="32" step="0.1" value="@temp" @oninput="OnTempInput" />
-            </div>
-            <div class="slider-item">
-                <div class="slider-item__head"><span>Radiación PAR</span><strong>@par.ToString("0") μmol</strong></div>
-                <input type="range" min="300" max="1400" step="10" value="@par" @oninput="OnParInput" />
-            </div>
-            <div class="slider-item">
-                <div class="slider-item__head"><span>Conductividad (EC)</span><strong>@ec.ToString("0.0") mS/cm</strong></div>
-                <input type="range" min="0.5" max="3.5" step="0.1" value="@ec" @oninput="OnEcInput" />
-            </div>
-            <div class="slider-item">
-                <div class="slider-item__head"><span>pH del agua</span><strong>@ph.ToString("0.0") pH</strong></div>
-                <input type="range" min="4.5" max="8" step="0.1" value="@ph" @oninput="OnPhInput" />
-            </div>
-        </div>
-    </article>
-
-    <article class="panel panel--simulation">
         <div class="panel__header">
             <div>
-                <h3>Proyección simulada</h3>
-                <p>Resultado estimado con los parámetros actuales</p>
+                <h3>Escenario</h3>
+                <p class="panel__subtitle">Elegí el contexto, el clima y los supuestos del what-if</p>
             </div>
-            <div class="impact-chip @ImpactClass">Impacto: @ImpactText%</div>
         </div>
 
-        <SimpleLineChart Data="SimulationSeries" Height="300" />
+        @if (options is null)
+        {
+            <div class="alert alert-secondary mb-0">Cargando opciones…</div>
+        }
+        else
+        {
+            <div class="sim-form">
+                <label class="sim-label">Contexto</label>
+                <select class="form-select" @bind="selectedLotId" @bind:after="OnLotChanged">
+                    <option value="">— Escenario libre por cultivo —</option>
+                    @foreach (var lot in options.Lots)
+                    {
+                        <option value="@lot.Id">@lot.Name (@lot.CropTypeName — @lot.StatusName)</option>
+                    }
+                </select>
 
-        <div class="mini-grid">
-            <div class="mini-card"><span>Cosecha estimada</span><strong>@EstimatedHarvest kg</strong></div>
-            <div class="mini-card"><span>Días al óptimo</span><strong>@OptimalDays d</strong></div>
-            <div class="mini-card"><span>Costo proyectado</span><strong>$ @ProjectedCost / kg</strong></div>
-        </div>
+                @if (selectedLotId is null)
+                {
+                    <label class="sim-label">Cultivo</label>
+                    <select class="form-select" @bind="selectedCropId">
+                        @foreach (var crop in options.Crops)
+                        {
+                            <option value="@crop.Id">@crop.Name</option>
+                        }
+                    </select>
+
+                    <div class="sim-row">
+                        <div>
+                            <label class="sim-label">Fecha de siembra</label>
+                            <input type="date" class="form-control" @bind="sowingDate" />
+                        </div>
+                        <div>
+                            <label class="sim-label">Superficie (m²)</label>
+                            <input type="number" step="0.1" min="0.1" class="form-control" @bind="areaM2" />
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="small text-muted mt-1 mb-2">
+                        Superficie, siembra, GDD base, etapa y grilla se toman del lote (solo lectura).
+                    </div>
+                }
+
+                <label class="sim-label">Fecha de referencia (AsOfDate)</label>
+                <div class="sim-row">
+                    <input type="date" class="form-control" style="width: auto;" @bind="referenceDate" />
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="ResetReferenceDate">Hoy</button>
+                </div>
+
+                <label class="sim-label">Clima del escenario</label>
+                <div class="sim-mode-row">
+                    <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Manual)" @onchange="() => mode = SimulationClimateMode.Manual" /> Manual</label>
+                    <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Historic)" @onchange="() => mode = SimulationClimateMode.Historic" /> Histórico</label>
+                    <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Forecast)" @onchange="() => mode = SimulationClimateMode.Forecast" /> Pronóstico</label>
+                </div>
+
+                @if (mode == SimulationClimateMode.Manual)
+                {
+                    <div class="sim-row">
+                        <div>
+                            <label class="sim-label">Tmin (°C)</label>
+                            <input type="number" step="0.1" class="form-control" @bind="tmin" />
+                        </div>
+                        <div>
+                            <label class="sim-label">Tmax (°C)</label>
+                            <input type="number" step="0.1" class="form-control" @bind="tmax" />
+                        </div>
+                        <div>
+                            <label class="sim-label">Humedad (%)</label>
+                            <input type="number" step="1" min="0" max="100" class="form-control" @bind="humidity" />
+                        </div>
+                    </div>
+                    <div class="small text-muted">El GDD se calcula con Tmin/Tmax (núcleo de forecasting); la humedad se informa como contexto (no participa de las fórmulas vigentes).</div>
+                }
+                else if (mode == SimulationClimateMode.Historic)
+                {
+                    <div class="small text-muted">Replay histórico: la proyección replica el promedio del GDD observado reciente del lote. Requiere contexto de lote.</div>
+                }
+                else
+                {
+                    <div class="small text-muted">Pronóstico climático persistido (guard diario del forecasting). La simulación lo consulta por corrida, no por movimiento de slider.</div>
+                }
+
+                <label class="sim-label">Solución nutritiva del escenario (informativo)</label>
+                <div class="sim-row">
+                    <div>
+                        <label class="sim-label">pH</label>
+                        <input type="number" step="0.1" min="0" max="14" class="form-control" @bind="phOverride" />
+                    </div>
+                    <div>
+                        <label class="sim-label">EC (mS/cm)</label>
+                        <input type="number" step="0.1" min="0" class="form-control" @bind="ecOverride" />
+                    </div>
+                </div>
+
+                <hr />
+
+                <label class="sim-label">Estrategias de cosecha (SIM-09)</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="blEnabled" @bind="enableBabyLeaf" />
+                    <label class="form-check-label" for="blEnabled">Simular Baby Leaf</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="convEnabled" @bind="enableConvencional" />
+                    <label class="form-check-label" for="convEnabled">Simular convencional</label>
+                </div>
+
+                @if (enableBabyLeaf)
+                {
+                    <label class="sim-label">% de aptas esperado (HIPÓTESIS del usuario)</label>
+                    <input type="number" step="1" min="0" max="100" placeholder="Usar evaluaciones reales del lote" class="form-control" @bind="hypothesisAptaPercent" />
+
+                    <label class="sim-label">Umbral objetivo de aptas (%)</label>
+                    <input type="number" step="1" min="0" max="100" placeholder="Decisión pendiente si queda vacío" class="form-control" @bind="requiredTargetPercent" />
+                    <div class="small text-muted">La simulación nunca inventa evaluaciones visuales: sin hipótesis ni evaluaciones reales, la decisión queda pendiente.</div>
+                }
+
+                <hr />
+
+                <label class="sim-label">Costos (SIM-05)</label>
+                <div class="sim-row">
+                    <div>
+                        <label class="sim-label">Moneda</label>
+                        <input type="text" maxlength="3" class="form-control" style="width: 90px;" @bind="currencyCode" />
+                    </div>
+                </div>
+                <div class="sim-cost-block">
+                    <div class="sim-row">
+                        <div>
+                            <label class="sim-label">Precio semilla</label>
+                            <input type="number" step="0.01" min="0" class="form-control" @bind="seedPrice" />
+                        </div>
+                        <div>
+                            <label class="sim-label">Cantidad de semillas</label>
+                            <input type="number" step="1" min="0" class="form-control" @bind="seedCount" />
+                        </div>
+                    </div>
+                    <div class="sim-row">
+                        <div>
+                            <label class="sim-label">Precio nutrientes ($/L)</label>
+                            <input type="number" step="0.01" min="0" class="form-control" @bind="nutrientPrice" />
+                        </div>
+                        <div>
+                            <label class="sim-label">Litros/día</label>
+                            <input type="number" step="0.1" min="0" class="form-control" @bind="litersPerDay" />
+                        </div>
+                    </div>
+                    <div class="sim-row">
+                        <div>
+                            <label class="sim-label">Precio energía ($/kWh)</label>
+                            <input type="number" step="0.01" min="0" class="form-control" @bind="energyPrice" />
+                        </div>
+                        <div>
+                            <label class="sim-label">kWh/día</label>
+                            <input type="number" step="0.1" min="0" class="form-control" @bind="kwhPerDay" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sim-actions">
+                    <button class="btn btn-primary" @onclick="Simulate" disabled="@running">
+                        @if (running)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Simular
+                    </button>
+                    <button class="btn btn-outline-secondary" disabled title="La persistencia de escenarios (SimulationRun) llega en la próxima entrega (SIM-06).">
+                        Guardar escenario (próxima entrega)
+                    </button>
+                </div>
+            </div>
+        }
     </article>
+
+    <div class="sim-results-col">
+        @if (preview is not null && !preview.IsValid)
+        {
+            <div class="panel">
+                <h3>No se pudo simular</h3>
+                <div class="alert alert-danger mb-0">
+                    <ul class="mb-0">
+                        @foreach (var error in preview.ValidationErrors)
+                        {
+                            <li>@error</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        }
+        else if (result is not null)
+        {
+            <article class="panel panel--simulation">
+                <div class="panel__header">
+                    <div>
+                        <h3>Resultado del escenario</h3>
+                        <p class="panel__subtitle">
+                            Contexto: <strong>@result.Context.CropTypeName</strong> (@result.Context.ContextKind) · Referencia @result.Context.SowingDate?.ToString("d") · Simulación <code>@result.SimulationId</code>
+                        </p>
+                    </div>
+                    <div class="chip-row">
+                        <span class="badge text-bg-info">clima: @result.Gdd.ProviderName</span>
+                        @if (result.Gdd.CoveragePercent is { } coverage)
+                        {
+                            <span class="badge text-bg-light">cobertura @coverage.ToString("0.#", CultureInfo.InvariantCulture)%</span>
+                        }
+                        @if (result.Gdd.UsedFallback)
+                        {
+                            <span class="badge text-bg-warning">fallback</span>
+                        }
+                        @if (result.Gdd.IsExtrapolation)
+                        {
+                            <span class="badge text-bg-warning">extrapolación</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="mini-grid">
+                    <div class="mini-card"><span>GDD acumulado</span><strong>@result.Gdd.Accumulated.ToString("0.#", CultureInfo.InvariantCulture) / @result.Gdd.GddTarget.ToString("0.#", CultureInfo.InvariantCulture)</strong></div>
+                    <div class="mini-card"><span>Cosecha estimada</span><strong>@FormatDate(result.Gdd.EstimatedHarvestDate)</strong></div>
+                    <div class="mini-card"><span>Días restantes</span><strong>@(result.Gdd.DaysRemaining is { } d ? $"{d} d" : "—")</strong></div>
+                </div>
+
+                @if (result.Gdd.Projection.Count > 0)
+                {
+                    <SimpleLineChart Data="ChartData" XLabels="ChartLabels" ShowGrid="true" RotateXLabels="true" TargetValue="(double)result.Gdd.GddTarget" Height="240" />
+                    <div class="chart-legend small text-muted">GDD diario proyectado del escenario (fuente: @result.Gdd.ProviderName).</div>
+                }
+                else
+                {
+                    <div class="alert alert-warning mb-0 small">Sin datos climáticos para proyectar: la fecha por GDD no puede estimarse (no se asume un valor).</div>
+                }
+
+                @if (result.Gdd.ForecastFetchedAtUtc is { } fetched)
+                {
+                    <div class="small text-muted">Pronóstico obtenido el @fetched.ToLocalTime().ToString("yyyy-MM-dd HH:mm") (hora local del servidor).</div>
+                }
+
+                <div class="mini-grid">
+                    <div class="mini-card"><span>Rendimiento conservador</span><strong>@result.Yield.Conservative.ToString("0.##", CultureInfo.InvariantCulture) kg</strong></div>
+                    <div class="mini-card"><span>Rendimiento base</span><strong>@result.Yield.Base.ToString("0.##", CultureInfo.InvariantCulture) kg</strong></div>
+                    <div class="mini-card"><span>Rendimiento optimista</span><strong>@result.Yield.Optimistic.ToString("0.##", CultureInfo.InvariantCulture) kg</strong></div>
+                </div>
+                <div class="small text-muted">Confianza heurística: @result.Yield.ConfidencePercent% @(result.Yield.HistoryCycles == 0 ? "(sin ciclos cerrados del historial)" : $"({result.Yield.HistoryCycles} ciclos cerrados)")</div>
+
+                @if (result.Harvest is { } harvest)
+                {
+                    <hr />
+                    <h4>Decisión de cosecha simulada (regla híbrida)</h4>
+                    <table class="table table-sm sim-table">
+                        <tbody>
+                            <tr><td>GDD en ventana Baby Leaf</td><td>@(harvest.GddInWindow ? "Sí" : harvest.HasBabyLeafConfig ? "No" : "Sin configuración Baby Leaf") @(harvest.WindowMin is { } wMin ? $"({wMin.ToString("0.#", CultureInfo.InvariantCulture)}–{harvest.WindowMax?.ToString("0.#", CultureInfo.InvariantCulture)} GDD)" : "")</td></tr>
+                            <tr><td>% de aptas usado en la regla</td><td>@(harvest.AptaPercentUsed is { } p ? $"{p.ToString("0.#", CultureInfo.InvariantCulture)}% {(harvest.AptaPercentIsHypothesis ? "(hipótesis del usuario)" : "(evaluaciones reales)")}" : "—")</td></tr>
+                            <tr><td>Umbral objetivo</td><td>@(harvest.RequiredPercent is { } r ? $"{r.ToString("0.#", CultureInfo.InvariantCulture)}%" : "pendiente de decisión")</td></tr>
+                            <tr><td>Listo para Baby Leaf</td><td>@(harvest.IsReady is { } ready ? (ready ? "Sí" : "No") : "Decisión pendiente")</td></tr>
+                        </tbody>
+                    </table>
+                    @if (harvest.DecisionReason is { } reason)
+                    {
+                        <div class="alert alert-secondary small mb-2">@reason</div>
+                    }
+                    <div class="small text-muted">
+                        Entrada a ventana Baby Leaf: @FormatDate(harvest.BabyLeafEntryDate) · Entrada convencional (GddTarget): @FormatDate(harvest.ConventionalEntryDate) ·
+                        madurez convencional: @(harvest.ConventionalHasMaturityData ? "con análisis de imagen" : "pendiente (análisis de imagen en fase futura)").
+                        Qué parte es GDD y qué parte es hipótesis de score queda indicado en la fila "% de aptas usado".
+                    </div>
+                }
+
+                <hr />
+                <h4>Comparación de estrategias</h4>
+                <table class="table table-sm sim-table">
+                    <thead>
+                        <tr><th>Estrategia</th><th>Cosecha estimada</th><th>Días</th><th>Estado</th><th>Base de decisión</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var alt in result.Alternatives.Alternatives)
+                        {
+                            <tr>
+                                <td>@alt.Strategy</td>
+                                <td>@FormatDate(alt.HarvestDate)</td>
+                                <td>@(alt.DaysRemaining is { } ad ? $"{ad} d" : "—")</td>
+                                <td>@(alt.IsReady is { } ready ? (ready ? "Listo" : "No listo") : "Pendiente")</td>
+                                <td>@alt.DecisionBasis</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (result.Alternatives.HypothesesUsed.Count > 0)
+                {
+                    <div class="small">
+                        <strong>Supuestos del cálculo:</strong>
+                        <ul class="mb-1">
+                            @foreach (var hypothesis in result.Alternatives.HypothesesUsed)
+                            {
+                                <li>@hypothesis</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                <hr />
+                <h4>Costos del escenario</h4>
+                <table class="table table-sm sim-table">
+                    <thead>
+                        <tr><th>Componente</th><th>Fórmula</th><th>Importe</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var component in result.Costs.Components)
+                        {
+                            <tr>
+                                <td>@component.Name</td>
+                                <td class="small text-muted">@component.Formula</td>
+                                <td>
+                                    @if (component.Amount is { } amount)
+                                    {
+                                        <span>@amount.ToString("0.##", CultureInfo.InvariantCulture) @result.Costs.CurrencyCode</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">No calculable — @component.NotCalculableReason</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        <tr>
+                            <td><strong>Total</strong></td>
+                            <td class="small text-muted">días proyectados: @result.Costs.ProjectedDays</td>
+                            <td>
+                                @if (result.Costs.Total is { } total)
+                                {
+                                    <strong>@total.ToString("0.##", CultureInfo.InvariantCulture) @result.Costs.CurrencyCode</strong>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">No calculable</span>
+                                }
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Costo por kg</strong></td>
+                            <td class="small text-muted">total / rendimiento base</td>
+                            <td>
+                                @if (result.Costs.CostPerKg is { } perKg)
+                                {
+                                    <span>@perKg.ToString("0.##", CultureInfo.InvariantCulture) @result.Costs.CurrencyCode / kg</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">No calculable — falta precio, rendimiento válido o ambos</span>
+                                }
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                @if (result.Lot is { } lot)
+                {
+                    <hr />
+                    <h4>Contexto del lote (solo lectura)</h4>
+                    <div class="mini-grid">
+                        <div class="mini-card"><span>GDD base del lote</span><strong>@lot.GddAccumulated.ToString("0.#", CultureInfo.InvariantCulture)</strong></div>
+                        <div class="mini-card"><span>Etapa fenológica</span><strong>@(lot.PhenologicalStageName ?? "—")</strong></div>
+                        <div class="mini-card"><span>Plantas activas</span><strong>@lot.ActivePlants / @lot.TotalPlants</strong></div>
+                    </div>
+                    <div class="small text-muted mb-1">
+                        Cosechadas: @lot.HarvestedPlants · Descartadas: @lot.DiscardedPlants · Posiciones vacías: @lot.EmptyPositions.
+                        La grilla muestra el estado ACTUAL del lote; la simulación no crea ni modifica plantas.
+                    </div>
+                    @if (lot.GridRows > 0 && lot.GridColumns > 0)
+                    {
+                        <LotMap Rows="@lot.GridRows" Columns="@lot.GridColumns" Cells="@lot.Grid" />
+                    }
+                    else
+                    {
+                        <div class="alert alert-warning small">Grilla no configurada para este lote.</div>
+                    }
+                }
+
+                @if (result.Warnings.Count > 0)
+                {
+                    <hr />
+                    <h4>Advertencias y fuente de los datos</h4>
+                    <div class="alert alert-warning small mb-0">
+                        <ul class="mb-0">
+                            @foreach (var warning in result.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-success small mb-0 mt-3">Datos completos: sin advertencias de cobertura ni fallback.</div>
+                }
+            </article>
+        }
+        else
+        {
+            <article class="panel">
+                <div class="panel__callout">
+                    <h3>Proyección simulada</h3>
+                    <p>Configurá el escenario y presioná <strong>Simular</strong>. La simulación es un entorno what-if: nada de lo que calcula toca la producción ni el hardware.</p>
+                </div>
+            </article>
+        }
+    </div>
 </section>
 
+<style>
+    .sim-banner {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: linear-gradient(135deg, #ffedd5 0%, #fed7aa 100%);
+        border: 1px solid #f59e0b;
+        border-radius: 10px;
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        color: #7c2d12;
+        font-size: 0.88rem;
+        box-shadow: 0 2px 10px rgba(245, 158, 11, 0.25);
+    }
+    .sim-form { display: flex; flex-direction: column; gap: 10px; }
+    .sim-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #5b6b7b; margin-top: 4px; }
+    .sim-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .sim-row > div { display: flex; flex-direction: column; gap: 4px; }
+    .sim-mode-row { display: flex; gap: 14px; }
+    .sim-radio { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; }
+    .sim-cost-block { display: flex; flex-direction: column; gap: 8px; }
+    .sim-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+    .sim-results-col { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+    .sim-table td, .sim-table th { font-size: 0.86rem; }
+    .chart-legend { margin-top: 4px; }
+</style>
+
 @code {
-    private double temp = 22.5;
-    private double par = 850;
-    private double ec = 1.8;
-    private double ph = 6.4;
+    [Inject] private SimulationService SimulationSvc { get; set; } = null!;
 
-    private double factor => (temp / 22.5) * (par / 850) * (1 + (ec - 1.8) * 0.1) * (1 - Math.Abs(ph - 6) * 0.05);
-    private IReadOnlyList<double> SimulationSeries => new[] { 60d, 62d, 65d, 68d, 72d, 76d, 80d, 84d, 89d, 94d, 100d, 106d }.Select(v => Math.Round(v * factor, 1)).ToArray();
-    private string ImpactText => ((factor - 1) * 100).ToString("0.0", CultureInfo.InvariantCulture);
-    private string ImpactClass => factor >= 1 ? "impact-chip--positive" : "impact-chip--negative";
-    private string EstimatedHarvest => Math.Round(218 * factor).ToString(CultureInfo.InvariantCulture);
-    private string OptimalDays => Math.Max(1, Math.Round(14 / factor)).ToString(CultureInfo.InvariantCulture);
-    private string ProjectedCost => Math.Round(412 / factor).ToString(CultureInfo.InvariantCulture);
+    private SimulationContextOptions? options;
+    private SimulationPreview? preview;
+    private SimulationResult? result => preview?.Result;
 
-    private void OnTempInput(ChangeEventArgs args) => temp = Parse(args, temp);
-    private void OnParInput(ChangeEventArgs args) => par = Parse(args, par);
-    private void OnEcInput(ChangeEventArgs args) => ec = Parse(args, ec);
-    private void OnPhInput(ChangeEventArgs args) => ph = Parse(args, ph);
+    private int? selectedLotId;
+    private int? selectedCropId;
+    private DateOnly? sowingDate;
+    private decimal? areaM2;
 
-    private static double Parse(ChangeEventArgs args, double current)
-        => double.TryParse(args.Value?.ToString(), out var parsed) ? parsed : current;
+    private SimulationClimateMode mode = SimulationClimateMode.Manual;
+    private decimal? tmin = 16m;
+    private decimal? tmax = 26m;
+    private int? humidity = 65;
+
+    private bool enableBabyLeaf = true;
+    private bool enableConvencional = true;
+    private decimal? hypothesisAptaPercent;
+    private decimal? requiredTargetPercent;
+
+    private string currencyCode = "ARS";
+    private decimal? seedPrice = 2.5m;
+    private int? seedCount = 600;
+    private decimal? nutrientPrice = 5m;
+    private decimal litersPerDay = 5m;
+    private decimal? energyPrice = 30m;
+    private decimal kwhPerDay = 1.5m;
+
+    private decimal? phOverride;
+    private decimal? ecOverride;
+    private DateOnly referenceDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private bool running;
+
+    private IReadOnlyList<double> ChartData => (result?.Gdd.Projection ?? [])
+        .Select(p => (double)p.Gdd).ToArray();
+    private IReadOnlyList<string> ChartLabels => (result?.Gdd.Projection ?? [])
+        .Select(p => p.Date.ToString("dd/MM")).ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        options = await SimulationSvc.GetContextOptionsAsync();
+        selectedCropId = options.Crops.FirstOrDefault()?.Id;
+        if (options.Lots.Count > 0)
+        {
+            selectedLotId = options.Lots[0].Id;
+            RequiredTargetFromSelectedLot();
+        }
+    }
+
+    private void OnLotChanged()
+    {
+        if (selectedLotId is { } lotId)
+        {
+            var lot = options?.Lots.FirstOrDefault(l => l.Id == lotId);
+            if (lot is { } found)
+            {
+                requiredTargetPercent = found.RequiredTargetPercent ?? requiredTargetPercent;
+                sowingDate = null;
+                areaM2 = null;
+                selectedCropId = null;
+            }
+        }
+    }
+
+    private void RequiredTargetFromSelectedLot()
+    {
+        if (selectedLotId is { } lotId)
+        {
+            requiredTargetPercent = options?.Lots.FirstOrDefault(l => l.Id == lotId)?.RequiredTargetPercent;
+        }
+    }
+
+    private void ResetReferenceDate() => referenceDate = DateOnly.FromDateTime(DateTime.UtcNow);
+
+    private async Task Simulate()
+    {
+        running = true;
+        try
+        {
+            preview = await SimulationSvc.PreviewAsync(BuildRequest());
+        }
+        finally
+        {
+            running = false;
+        }
+    }
+
+    private SimulationRequest BuildRequest()
+    {
+        return new SimulationRequest(
+            LotId: selectedLotId,
+            CropTypeId: selectedLotId is null ? selectedCropId : null,
+            SowingDate: selectedLotId is null ? sowingDate : null,
+            AreaM2: selectedLotId is null ? areaM2 : null,
+            ReferenceDate: referenceDate,
+            Climate: new SimulationClimateInput(mode, tmin, tmax, humidity, ForecastHorizonDays: 7),
+            Agronomic: new SimulationAgronomicInput(phOverride, ecOverride),
+            Costs: new SimulationCostsInput(
+                currencyCode?.Trim().ToUpperInvariant() ?? "ARS",
+                new SimulationSeedCostsInput(seedPrice, seedCount),
+                new SimulationNutrientCostsInput(nutrientPrice, litersPerDay),
+                new SimulationEnergyCostsInput(energyPrice, kwhPerDay)),
+            Harvest: new SimulationHarvestInput(enableBabyLeaf, enableConvencional, hypothesisAptaPercent, requiredTargetPercent),
+            SaveScenario: false);
+    }
+
+    private static string FormatDate(DateOnly? date) =>
+        date is { } d ? d.ToString("dd/MM/yyyy") : "—";
 }

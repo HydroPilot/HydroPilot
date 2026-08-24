@@ -49,6 +49,13 @@ builder.Services.AddOptions<DashboardOptions>().BindConfiguration(DashboardOptio
 // --- Módulo de reportes (plan 13): consultas y exportación bajo demanda ---
 builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 
+// --- Simulación (plan 14): what-if sin escritura productiva; API preview sin persistencia (SIM-06) ---
+// La frontera de hardware (IHardwareGateway) NO se registra: la simulación nunca
+// invoca hardware (SIM-07), y el test de aislamiento lo verifica con un adaptador falso.
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.YieldModel>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
+
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
