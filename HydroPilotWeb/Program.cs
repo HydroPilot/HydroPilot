@@ -1,6 +1,11 @@
 using HydroPilotWeb.Components;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Anomalies;
+using HydroPilotWeb.Services.Dashboard;
+using HydroPilotWeb.Services.Forecasting;
+using HydroPilotWeb.Services.Lotes;
+using HydroPilotWeb.Services.Optimization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
@@ -18,11 +23,59 @@ builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
         sqlOptions.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null)));
 
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Admin.AdminMaintenanceService>();
 builder.Services.AddScoped<GddService>();
 builder.Services.AddScoped<YieldService>();
 builder.Services.AddScoped<SettingsService>();
-builder.Services.AddHttpClient<WeatherService>();
+builder.Services.AddScoped<ForecastService>();
+builder.Services.AddScoped<TelemetryValidationService>();
+builder.Services.AddScoped<TelemetryIngestionService>();
+builder.Services.AddScoped<NodeLotAssignmentService>();
+builder.Services.AddOptions<TelemetryOptions>().BindConfiguration(TelemetryOptions.SectionName);
+builder.Services.AddHostedService<NodeConnectionMonitorHostedService>();
+builder.Services.AddHttpClient<WeatherService>(client =>
+    client.Timeout = TimeSpan.FromSeconds(25)); // F-03: timeout explícito para OpenWeather
 builder.Services.AddHostedService<WeatherFetcherHostedService>();
+
+// --- Dominio de lotes y plantas (plan 09) ---
+// El proveedor de riesgo lo reemplazará el módulo de anomalies registrando su
+// implementación DESPUÉS de esta línea (último registro gana en DI).
+builder.Services.AddSingleton<IPlantRiskProvider, NoPlantRiskProvider>();
+builder.Services.AddScoped<LotAggregateService>();
+builder.Services.AddScoped<PlantEvaluationService>();
+builder.Services.AddScoped<PlantLifecycleService>();
+builder.Services.AddScoped<LotDailyFlowService>();
+
+// --- Módulo de anomalías (plan 15 / ANO-01..09) ---
+// El proveedor de riesgo REAL se registra después del NoPlantRiskProvider: gana el último.
+builder.Services.AddSingleton<IPlantRiskProvider, AnomalyRiskProvider>();
+builder.Services.AddOptions<AnomalyOptions>().BindConfiguration(AnomalyOptions.SectionName);
+builder.Services.AddSingleton<AnomalyLotRiskEvaluator>();
+builder.Services.AddSingleton<AnomalyEventService>();
+builder.Services.AddScoped<AnomalyQueryService>();
+builder.Services.AddHostedService<AnomalySweepHostedService>();
+
+// --- Dashboard (plan 12) ---
+builder.Services.AddScoped<DashboardService>();
+builder.Services.AddOptions<DashboardOptions>().BindConfiguration(DashboardOptions.SectionName);
+// --- Módulo de reportes (plan 13): consultas y exportación bajo demanda ---
+builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
+
+// --- Simulación (plan 14): what-if sin escritura productiva; API preview sin persistencia (SIM-06) ---
+// La frontera de hardware (IHardwareGateway) NO se registra: la simulación nunca
+// invoca hardware (SIM-07), y el test de aislamiento lo verifica con un adaptador falso.
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.YieldModel>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
+
+// --- Módulo de optimización (plan 16) ---
+// Hook de anomalías abiertas: lo reemplaza el módulo de anomalies cuando exista
+// (último registro gana en DI). Sink de eventos: lo reemplaza notifications.
+builder.Services.AddSingleton<IOpenAnomalyProvider, NoOpenAnomalyProvider>();
+builder.Services.AddScoped<IOptimizationEventSink, NoopOptimizationEventSink>();
+builder.Services.AddScoped<OptimizationService>();
+builder.Services.AddOptions<OptimizationOptions>()
+    .BindConfiguration(OptimizationOptions.SectionName);
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

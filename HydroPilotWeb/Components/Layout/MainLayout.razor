@@ -1,6 +1,8 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@using HydroPilotWeb.Services.Dashboard
 @inject NavigationManager Navigation
 @inject IJSRuntime JsRuntime
+@inject DashboardService Dashboard
 
 <div class="shell">
     <aside class="shell-sidebar">
@@ -11,11 +13,11 @@
         <header class="shell-topbar">
             <div class="shell-topbar__titles">
                 <h1>@CurrentPage.Title</h1>
-                <p>@CurrentPage.Subtitle</p>
+                <p>@_subtitle</p>
             </div>
 
             <div class="shell-topbar__actions">
-                <div class="status-pill"><span></span> Sistemas estables</div>
+                <div class="status-pill @_statusCss" title="Estado global derivado de los nodos del invernadero (frescura de la última telemetría aceptada)."><span></span> @_statusText</div>
 
                 <NavLink class="topbar-action" href="settings/notifications" aria-label="Notificaciones">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -25,9 +27,16 @@
                 </NavLink>
 
                 <NavLink class="topbar-action" href="settings/profile" aria-label="Configuración">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <circle cx="12" cy="12" r="3.2" />
-                        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 0 1-1.4 3.4 2.7 2.7 0 0 1-1-.2l-.2-.1a1.7 1.7 0 0 0-1.6.2l-.1.1a2 2 0 0 1-3.2-.8l0-.2a1.7 1.7 0 0 0-1.2-1.2l-.2 0a2 2 0 0 1-.8-3.2l.1-.1a1.7 1.7 0 0 0 .2-1.6l-.1-.2a2 2 0 0 1 .8-3.2h.2a1.7 1.7 0 0 0 1.2-1.2l0-.2a2 2 0 0 1 3.2-.8l.1.1c.4.4 1 .6 1.6.2l.2-.1a2 2 0 0 1 2.9 1.9 2.7 2.7 0 0 1-.2 1l-.1.2a1.7 1.7 0 0 0 .2 1.6l.1.1a2 2 0 0 1-.8 3.2l-.2 0a1.7 1.7 0 0 0-1.2 1.2z" />
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true">
+                        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2.4a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.24.61.83 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
                     </svg>
                 </NavLink>
 
@@ -63,7 +72,48 @@
 </div>
 
 @code {
+    private string _subtitle = "Cargando contexto...";
+    private string _statusText = "Consultando estado...";
+    private string _statusCss = "status-pill--muted";
+
+    // Título específico de cada página (el contexto de invernadero/cultivo se
+    // resuelve desde datos, ya no es un texto fijo "Invernadero Alpha-01").
     private PageHeader CurrentPage => ResolvePage(Navigation.ToBaseRelativePath(Navigation.Uri));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Dashboard.DataChanged += OnDashboardChanged;
+        await RefreshHeaderAsync();
+    }
+
+    public void Dispose()
+    {
+        Dashboard.DataChanged -= OnDashboardChanged;
+    }
+
+    private async Task RefreshHeaderAsync()
+    {
+        try
+        {
+            var status = await Dashboard.GetHeaderStatusAsync();
+            _subtitle = status.Subtitle;
+            _statusText = status.StatusText;
+            _statusCss = status.StatusCss;
+        }
+        catch (Exception)
+        {
+            _subtitle = "Contexto no disponible";
+            _statusText = "Sin estado";
+            _statusCss = "status-pill--muted";
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnDashboardChanged()
+    {
+        // El dashboard se refrescó: actualizá la barra superior con el estado real.
+        _ = RefreshHeaderAsync();
+    }
 
     private static PageHeader ResolvePage(string relativePath)
     {
@@ -71,7 +121,7 @@
 
         return path switch
         {
-            "" => new PageHeader("Vista General del Sistema", "Invernadero Alpha-01 · Lechuga hidropónica NFT"),
+            "" => new PageHeader("Vista General del Sistema", "Resumen operativo del invernadero"),
             "reports" => new PageHeader("Informes", "Histórico de producción, consumo y reportes exportables."),
             "forecasting" => new PageHeader("Módulo de Forecasting", "Predicción de variables clave del cultivo para los próximos 14 días."),
             "simulation" => new PageHeader("Módulo de Simulación", "Probá escenarios what-if y observá el impacto estimado en la cosecha."),
@@ -79,7 +129,8 @@
             "anomalies" => new PageHeader("Módulo de Anomalías", "Detección automática de eventos fuera de rango y desvíos de comportamiento."),
             "settings/profile" => new PageHeader("Configuración de usuario", "Datos personales, idioma y seguridad de tu cuenta."),
             "settings/notifications" => new PageHeader("Configuración de notificaciones", "Definí cómo y cuándo querés recibir avisos del sistema."),
-            "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Verificá el acceso al motor y el estado de los sensores de prueba."),
+            "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Herramienta interna de diagnóstico."),
+            "test-clima" => new PageHeader("Test de clima", "Herramienta interna de diagnóstico."),
             "counter" => new PageHeader("Counter", "Demo de interacción."),
             "weather" => new PageHeader("Weather", "Demo de datos de ejemplo."),
             _ => new PageHeader("HydroPilot", "Vista operativa"),

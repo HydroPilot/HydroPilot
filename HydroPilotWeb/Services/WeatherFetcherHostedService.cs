@@ -58,8 +58,8 @@ public class WeatherFetcherHostedService : BackgroundService
             return;
         }
 
-        await weather.FetchAndStoreAsync();
-        await weather.FetchAndStoreForecastAsync();
+        await weather.FetchAndStoreAsync(ct);
+        await weather.FetchAndStoreForecastAsync(ct);
         _logger.LogInformation("Datos climáticos obtenidos a las {Time}", DateTimeOffset.UtcNow);
     }
 

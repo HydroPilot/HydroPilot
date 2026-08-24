@@ -1,0 +1,349 @@
+@page "/lotes"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using HydroPilotWeb.Controllers
+@using HydroPilotWeb.Components.Lotes
+@using HydroPilotWeb.Services.Lotes
+@inject IDbContextFactory<HydroPilotDbContext> DbFactory
+@inject LotAggregateService LotAggregate
+@inject LotDailyFlowService DailyFlow
+@inject PlantLifecycleService PlantLifecycle
+
+<PageTitle>Estado de lote</PageTitle>
+
+@if (error is not null)
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<h1 class="h4 mb-3">Estado de lote</h1>
+
+<div class="mb-3 d-flex gap-2 align-items-center flex-wrap">
+    <label class="form-label mb-0">Lote:</label>
+    <select class="form-select form-select-sm" style="width: auto;" @bind="selectedLotId" @bind:after="LoadLot">
+        @foreach (var lot in lots)
+        {
+            <option value="@lot.Id">#@lot.Id — @(lot.CropType) (@(lot.Status), siembra @lot.SowingDate.ToString("dd/MM/yyyy"))</option>
+        }
+    </select>
+
+    <label class="form-label mb-0 ms-2">Simular fecha:</label>
+    <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="simDate" @bind:after="LoadLot" />
+    <button class="btn btn-outline-secondary btn-sm" @onclick="ResetSimDate">Hoy</button>
+
+    <AuthorizeView>
+        <Authorized>
+            @if (context.User.IsInRole("Administrador"))
+            {
+                <button class="btn btn-outline-primary btn-sm ms-auto" @onclick="RunDailyFlow" disabled="@runningFlow">
+                    @(runningFlow ? "Evaluando..." : "Ejecutar flujo diario (demo)")
+                </button>
+            }
+        </Authorized>
+    </AuthorizeView>
+</div>
+
+@if (state is null && loading)
+{
+    <div class="d-flex justify-content-center my-5">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Cargando...</span>
+        </div>
+    </div>
+}
+else if (state is null)
+{
+    <div class="alert alert-info">
+        No hay lotes registrados. Creá uno desde <a href="forecasting">Forecasting</a> o ejecutá el seed de datos demo.
+    </div>
+}
+else
+{
+    @foreach (var warning in state.Warnings)
+    {
+        <div class="alert alert-warning py-1 px-2 small">@warning</div>
+    }
+
+    @if (state.HarvestReadiness is { } readiness)
+    {
+        @if (readiness.IsReady == true)
+        {
+            <div class="alert alert-success py-1 px-2 small">
+                ✅ Lote listo para cosecha Baby Leaf: GDD en ventana y @readiness.AptaPercent% de aptas sobre @readiness.TotalActivePlants activas
+                (objetivo @readiness.TargetPercent%).
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-info py-1 px-2 small">
+                Cosecha Baby Leaf: @readiness.AptaPlantCount/@readiness.TotalActivePlants aptas (@readiness.AptaPercent%).
+                @foreach (var w in readiness.Warnings)
+                {
+                    <div>⚠ @w</div>
+                }
+            </div>
+        }
+    }
+
+    <div class="row g-3">
+        <div class="col-md-3">
+            <LotSummaryCard State="state" />
+            <div class="mt-3">
+                <h6 class="small text-uppercase text-muted">Conteos por estado</h6>
+                <LotCountsSummary Counts="state.CommercialCounts" />
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h6 class="card-title">Forecast de cosecha</h6>
+                    <ul class="list-group list-group-flush small">
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Fecha estimada</span>
+                            <strong>—</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span>Rendimiento estimado</span>
+                            <strong>—</strong>
+                        </li>
+                    </ul>
+                    <p class="text-muted small mb-0 mt-2">
+                        El módulo de forecasting todavía no está integrado en esta rama:
+                        no se muestran valores estimados. El resultado híbrido disponible
+                        (ventana GDD + porcentaje de aptas) se muestra en el aviso de cosecha.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <LotMap Rows="state.GridRows ?? 0"
+                    Columns="state.GridColumns ?? 0"
+                    Cells="state.Cells"
+                    SelectedPosition="selectedPosition"
+                    OnCellSelected="SelectCell" />
+            <div class="mt-2">
+                <LotLegend Counts="state.CommercialCounts"
+                           EmptyPositions="state.EmptyPositions"
+                           DiscardedPlants="state.DiscardedPlants" />
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <PlantDetailCard Detail="detail"
+                             OnHarvest="HarvestSelected"
+                             OnDiscard="AskDiscardReason" />
+
+            @if (selectedCell?.PlantId is { } plantId && detail?.OperationalState == PlantOperationalState.Activa)
+            {
+                <div class="card mt-2">
+                    <div class="card-body py-2">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-success" @onclick="HarvestSelected" disabled="@operating">
+                                Cosechar F@(selectedCell.Row)-C@(selectedCell.Column)
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => showDiscardInput = !showDiscardInput">
+                                Descartar
+                            </button>
+                        </div>
+                        @if (showDiscardInput)
+                        {
+                            <div class="input-group input-group-sm mt-2">
+                                <input class="form-control" placeholder="Motivo de descarte (opcional)" @bind="discardReason" />
+                                <button class="btn btn-danger" @onclick="() => DiscardSelected(discardReason)" disabled="@operating">
+                                    Confirmar
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<LotSummary> lots = [];
+    private int? selectedLotId;
+    private DateOnly? simDate;
+    private LotStateDto? state;
+    private PlantDetailDto? detail;
+    private PlantCellDto? selectedCell;
+    private (int Row, int Column)? selectedPosition;
+    private string? error;
+    private bool loading = true;
+    private bool runningFlow;
+    private bool operating;
+    private bool showDiscardInput;
+    private string? discardReason;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLotsAsync();
+    }
+
+    private async Task LoadLotsAsync()
+    {
+        try
+        {
+            await using var context = await DbFactory.CreateDbContextAsync();
+            lots = await context.Lots
+                .Include(l => l.CropType)
+                .Include(l => l.Status)
+                .OrderByDescending(l => l.SowingDate)
+                .Select(l => new LotSummary(l.Id, l.CropType!.Name, l.Status!.Name, l.SowingDate, l.PlantedAreaM2))
+                .ToListAsync();
+
+            if (lots.Count > 0)
+            {
+                selectedLotId ??= lots[0].Id;
+                await LoadLot();
+            }
+            else
+            {
+                loading = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo cargar la lista de lotes: {ex.Message}";
+            loading = false;
+        }
+    }
+
+    private async Task LoadLot()
+    {
+        if (selectedLotId is null)
+            return;
+
+        loading = true;
+        error = null;
+        try
+        {
+            state = await LotAggregate.GetLotStateAsync(selectedLotId.Value, simDate);
+            detail = null;
+            selectedCell = null;
+            selectedPosition = null;
+            loading = false;
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo cargar el estado del lote: {ex.Message}";
+            loading = false;
+        }
+    }
+
+    private async Task SelectCell(PlantCellDto cell)
+    {
+        selectedCell = cell;
+        selectedPosition = (cell.Row, cell.Column);
+
+        if (cell.PlantId is { } plantId)
+        {
+            detail = await LotAggregate.GetPlantDetailAsync(
+                plantId,
+                state?.GddAccumulated ?? 0m,
+                state?.CurrentPh,
+                state?.CurrentEc);
+        }
+        else
+        {
+            detail = new PlantDetailDto(
+                0, cell.Row, cell.Column, null, null, default,
+                null, null, null, state?.GddAccumulated ?? 0m,
+                state?.CurrentPh, state?.CurrentEc, null, null, null, null, null,
+                false, null, null, [], ["Posición vacía: no hay planta en esta posición."]);
+        }
+    }
+
+    private async Task RunDailyFlow()
+    {
+        if (selectedLotId is null)
+            return;
+
+        runningFlow = true;
+        error = null;
+        try
+        {
+            var result = await DailyFlow.RunDailyAsync(selectedLotId.Value, simDate);
+            if (result is null)
+                error = "Lote no encontrado.";
+            await LoadLot();
+        }
+        catch (Exception ex)
+        {
+            error = $"Fallo al ejecutar el flujo diario: {ex.Message}";
+        }
+        finally
+        {
+            runningFlow = false;
+        }
+    }
+
+    private async Task HarvestSelected()
+    {
+        if (selectedCell?.PlantId is not { } plantId)
+            return;
+        operating = true;
+        try
+        {
+            await PlantLifecycle.HarvestPlantAsync(plantId);
+            await ReloadAfterOperation();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo cosechar: {ex.Message}";
+        }
+        finally
+        {
+            operating = false;
+        }
+    }
+
+    private void AskDiscardReason() => showDiscardInput = !showDiscardInput;
+
+    private async Task DiscardSelected(string? reason)
+    {
+        if (selectedCell?.PlantId is not { } plantId)
+            return;
+        operating = true;
+        try
+        {
+            await PlantLifecycle.DiscardPlantAsync(plantId, string.IsNullOrWhiteSpace(reason) ? null : reason);
+            showDiscardInput = false;
+            discardReason = null;
+            await ReloadAfterOperation();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo descartar: {ex.Message}";
+        }
+        finally
+        {
+            operating = false;
+        }
+    }
+
+    private async Task ReloadAfterOperation()
+    {
+        await LoadLot();
+        if (selectedPosition is { } pos && selectedCell?.PlantId is { } plantId)
+        {
+            selectedCell = state?.Cells.FirstOrDefault(c => c.Row == pos.Row && c.Column == pos.Column);
+            if (selectedCell?.PlantId is { } newPlantId)
+            {
+                detail = await LotAggregate.GetPlantDetailAsync(
+                    newPlantId,
+                    state?.GddAccumulated ?? 0m,
+                    state?.CurrentPh,
+                    state?.CurrentEc);
+            }
+        }
+    }
+
+    private void ResetSimDate()
+    {
+        simDate = null;
+        _ = LoadLot();
+    }
+}

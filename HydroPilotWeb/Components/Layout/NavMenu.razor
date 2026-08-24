@@ -1,4 +1,4 @@
-﻿@using System.Security.Claims
+@using System.Security.Claims
 
 <div class="brand-block">
     <a class="brand" href="/">
@@ -17,6 +17,11 @@
         <NavLink class="sidebar-nav__item" href="" Match="NavLinkMatch.All">
             <span>⌂</span>
             <span>Dashboard</span>
+        </NavLink>
+
+        <NavLink class="sidebar-nav__item" href="lotes">
+            <span>◫</span>
+            <span>Lotes</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="reports">
@@ -58,16 +63,6 @@
             <span>Notificaciones</span>
         </NavLink>
 
-        <NavLink class="sidebar-nav__item" href="test-clima">
-            <span>☀</span>
-            <span>Test Clima</span>
-        </NavLink>
-
-        <NavLink class="sidebar-nav__item" href="db-test">
-            <span>◈</span>
-            <span>DB Test</span>
-        </NavLink>
-
         <AuthorizeView>
             <Authorized>
                 @if (context.User.IsInRole("Administrador"))
@@ -75,6 +70,10 @@
                     <NavLink class="sidebar-nav__item" href="admin/users">
                         <span>▣</span>
                         <span>Usuarios</span>
+                    </NavLink>
+                    <NavLink class="sidebar-nav__item" href="admin/mantenimiento">
+                        <span>⚙</span>
+                        <span>Mantenimiento</span>
                     </NavLink>
                 }
             </Authorized>

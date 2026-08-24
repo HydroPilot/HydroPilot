@@ -19,6 +19,14 @@ public class Sensor
     [MaxLength(100)]
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Identificador técnico estable del sensor dentro del nodo (ej: "ph-solucion").
+    /// Es la clave de resolución del contrato v2; Name queda como nombre visible.
+    /// </summary>
+    [Required]
+    [MaxLength(100)]
+    public string TechnicalKey { get; set; } = string.Empty;
+
     public bool IsActive { get; set; } = true;
 
     public DateTime? LastCalibrationDate { get; set; }
