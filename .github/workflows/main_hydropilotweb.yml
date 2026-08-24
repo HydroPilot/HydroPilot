@@ -52,4 +52,5 @@ jobs:
           app-name: 'HydroPilotWeb'
           slot-name: 'Production'
           package: .
+          clean: true
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_2342A069F85C43E7B3A3851D283636FB }}
