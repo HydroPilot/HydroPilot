@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Services;
 
 namespace HydroPilotWeb.Data;
 
@@ -261,6 +262,79 @@ public static class DbInitializer
                 new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Morfología / tamaño", DataType = "MORFOLOGIA", Unit = "score", Weight = 45, IsMandatory = true },
                 new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "GrowthRate", DataType = "CRECIMIENTO", Unit = "%/día", Weight = 20, IsMandatory = false },
                 new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Estado visual", DataType = "VISUAL", Unit = "score", Weight = 15, IsMandatory = true });
+        }
+
+        context.SaveChanges();
+
+        // --- Seed de catálogos de reglas de anomalías (plan 15 / ANO-01) ---
+        // pH y CE: políticas activas; sus bandas operativas se RESUELVEN en evaluación
+        // desde CropType/etapa fenológica (no se duplican valores acá).
+        // Temperatura y humedad: NO tienen umbral agronómico aprobado → pendientes
+        // (IsActive=false, nunca disparan). Física tomada del catálogo de IoT.
+        if (!context.AnomalyRuleCatalogs.Any(c => c.CropTypeId == cultivoLote.Id))
+        {
+            var phPhysical = TelemetryValidationService.FindBand(AnomalyContract.SensorTypePh);
+            var ecPhysical = TelemetryValidationService.FindBand(AnomalyContract.SensorTypeCe);
+            var tempPhysical = TelemetryValidationService.FindBand(AnomalyContract.SensorTypeTemperatura);
+            var humPhysical = TelemetryValidationService.FindBand(AnomalyContract.SensorTypeHumedad);
+
+            context.AnomalyRuleCatalogs.AddRange(
+                new AnomalyRuleCatalog
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Code = AnomalyContract.TypePhFueraDeBanda,
+                    Name = "pH fuera de banda operativa",
+                    SensorTypeName = AnomalyContract.SensorTypePh,
+                    ConsecutiveToOpen = 2,
+                    CooldownMinutes = 30,
+                    IsActive = true,
+                    Source = "crop-config",
+                    Notes = "Banda operativa resuelta desde CropType.OptimalPh* (arranque 5,5–6,5; objetivo 6,0).",
+                    PhysicalMin = phPhysical?.PhysicalMin,
+                    PhysicalMax = phPhysical?.PhysicalMax
+                },
+                new AnomalyRuleCatalog
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Code = AnomalyContract.TypeCeFueraDeBanda,
+                    Name = "CE fuera de banda operativa",
+                    SensorTypeName = AnomalyContract.SensorTypeCe,
+                    ConsecutiveToOpen = 2,
+                    CooldownMinutes = 30,
+                    IsActive = true,
+                    Source = "stage-config",
+                    Notes = "Banda operativa resuelta desde la etapa fenológica aplicada del lote (EcMin–EcMax, objetivo EcObjective).",
+                    PhysicalMin = ecPhysical?.PhysicalMin,
+                    PhysicalMax = ecPhysical?.PhysicalMax
+                },
+                new AnomalyRuleCatalog
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Code = AnomalyContract.TypeTemperaturaFueraDeBanda,
+                    Name = "Temperatura ambiente fuera de banda",
+                    SensorTypeName = AnomalyContract.SensorTypeTemperatura,
+                    ConsecutiveToOpen = 2,
+                    CooldownMinutes = 30,
+                    IsActive = false,
+                    Source = "pendiente",
+                    Notes = "Sin umbral agronómico aprobado: pendiente de definición con el equipo; no se evalúa.",
+                    PhysicalMin = tempPhysical?.PhysicalMin,
+                    PhysicalMax = tempPhysical?.PhysicalMax
+                },
+                new AnomalyRuleCatalog
+                {
+                    CropTypeId = cultivoLote.Id,
+                    Code = AnomalyContract.TypeHumedadFueraDeBanda,
+                    Name = "Humedad ambiente fuera de banda",
+                    SensorTypeName = AnomalyContract.SensorTypeHumedad,
+                    ConsecutiveToOpen = 2,
+                    CooldownMinutes = 30,
+                    IsActive = false,
+                    Source = "pendiente",
+                    Notes = "Sin umbral agronómico aprobado: pendiente de definición con el equipo; no se evalúa.",
+                    PhysicalMin = humPhysical?.PhysicalMin,
+                    PhysicalMax = humPhysical?.PhysicalMax
+                });
         }
 
         context.SaveChanges();

@@ -1,60 +1,527 @@
 @page "/anomalies"
 @attribute [Authorize(Policy = "RequireAssigned")]
+@rendermode InteractiveServer
+@using HydroPilotWeb.Services.Anomalies
+@using HydroPilotWeb.Models
+@inject AnomalyQueryService Query
+@inject AnomalyEventService Events
 
 <PageTitle>Anomalías</PageTitle>
 
-<section class="metric-row metric-row--four">
-    <article class="metric-card"><p>Eventos abiertos</p><strong>2</strong><span class="danger">Críticas</span></article>
-    <article class="metric-card"><p>En revisión</p><strong>1</strong><span>Seguimiento activo</span></article>
-    <article class="metric-card"><p>Resueltos (7d)</p><strong>14</strong><span>Buen MTTR</span></article>
-    <article class="metric-card"><p>MTTR promedio</p><strong>42 min</strong><span>Tiempo de respuesta</span></article>
-</section>
+<h1 class="h4 mb-2">Anomalías de telemetría</h1>
+<p class="text-muted small mb-3">
+    Episodios detectados por reglas explicables sobre lecturas operativamente usables (VALIDA/SOSPECHOSA/OBSOLETA).
+    Una lectura físicamente inválida nunca abre una anomalía agronómica; la falta de datos se muestra como "sin datos",
+    no como normalidad. Visión computacional está documentada como fase futura (pendiente, sin detector).
+</p>
 
-<section class="panel panel-table">
-    <div class="panel__header panel__header--compact panel__header--stacked">
-        <h3>Timeline de eventos</h3>
-        <div class="chip-row">
-            <span class="tag tag--solid">Todos</span>
-            <span class="tag">Críticos</span>
-            <span class="tag">Sensores</span>
-            <span class="tag">Actuadores</span>
+@if (error is not null)
+{
+    <div class="alert alert-danger d-flex justify-content-between align-items-center">
+        <span>@error</span>
+        <button class="btn btn-outline-danger btn-sm" @onclick="LoadAsync">Reintentar</button>
+    </div>
+}
+
+@if (loading)
+{
+    <div class="d-flex justify-content-center my-5">
+        <div class="spinner-border" role="status"><span class="visually-hidden">Cargando...</span></div>
+    </div>
+}
+else
+{
+    @* ---------- Filtros ---------- *@
+    <div class="mb-3 d-flex gap-2 align-items-end flex-wrap">
+        <div>
+            <label class="form-label small mb-1">Lote</label>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="filterLotId">
+                <option value="">Todos</option>
+                @foreach (var lot in lotSummaries)
+                {
+                    <option value="@lot.LotId">#@lot.LotId — @lot.LotName</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label small mb-1">Tipo</label>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="filterType">
+                <option value="">Todos</option>
+                @foreach (var (code, name) in TypeOptions)
+                {
+                    <option value="@(code)">@name</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label small mb-1">Severidad</label>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="filterSeverity">
+                <option value="">Todas</option>
+                @foreach (var sev in SeverityOptions)
+                {
+                    <option value="@sev">@sev</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label small mb-1">Estado</label>
+            <select class="form-select form-select-sm" style="width: auto;" @bind="filterStatus">
+                <option value="">Todos</option>
+                @foreach (var st in StatusOptions)
+                {
+                    <option value="@st">@st</option>
+                }
+            </select>
+        </div>
+        <div>
+            <label class="form-label small mb-1">Desde</label>
+            <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="filterFrom" />
+        </div>
+        <div>
+            <label class="form-label small mb-1">Hasta</label>
+            <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="filterTo" />
+        </div>
+        <button class="btn btn-outline-primary btn-sm" @onclick="LoadAsync" disabled="@loading">Aplicar</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ClearFilters">Limpiar</button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadAsync">Refrescar</button>
+        <div class="form-check form-switch ms-2 mb-1">
+            <input class="form-check-input" type="checkbox" @bind="autoRefresh" id="autoRefresh" />
+            <label class="form-check-label small" for="autoRefresh">Actualización automática</label>
         </div>
     </div>
 
-    <div class="timeline">
-        @foreach (var e in Events)
+    @* ---------- Contadores ---------- *@
+    <section class="metric-row metric-row--four mb-3">
+        <article class="metric-card">
+            <p>Eventos abiertos (críticos)</p>
+            <strong class="@(summary.OpenCritical > 0 ? "danger" : null)">@summary.OpenCritical</strong>
+            <span>@summary.OpenTotal totales abiertos</span>
+        </article>
+        <article class="metric-card">
+            <p>Advertencias / seguimiento</p>
+            <strong>@summary.OpenAdvertencias</strong>
+            <span>@summary.SeguimientoActive en seguimiento</span>
+        </article>
+        <article class="metric-card">
+            <p>Resueltos (7d)</p>
+            <strong>@summary.ResolvedLast7Days</strong>
+            <span>@summary.TotalEvents eventos totales</span>
+        </article>
+        <article class="metric-card">
+            <p>Reglas vigentes</p>
+            <strong>@activeRuleCount</strong>
+            <span>@pendingRuleCount pendientes sin umbral aprobado</span>
+        </article>
+    </section>
+
+    @* ---------- Riesgo por lote (ANO-07/ANO-08) ---------- *@
+    @if (lotSummaries.Count > 0)
+    {
+        <section class="panel panel-table mb-3">
+            <div class="panel__header panel__header--compact">
+                <h3>Riesgo por lote</h3>
+                <span class="text-muted small">Conteo de plantas ACTIVAS en riesgo (señal para la evaluación comercial).
+                    Sin umbral aprobado para generar un evento de lote: solo se muestra el conteo.</span>
+            </div>
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Lote</th>
+                        <th class="text-end">Plantas activas</th>
+                        <th class="text-end">En riesgo</th>
+                        <th class="text-end">Episodios críticos abiertos</th>
+                        <th>Motivo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var lot in lotSummaries)
+                    {
+                        <tr class="@(lot.PlantsAtRisk > 0 ? "table-warning" : null)">
+                            <td>#@lot.LotId — @lot.LotName</td>
+                            <td class="text-end">@lot.ActivePlants</td>
+                            <td class="text-end">
+                                @if (lot.PlantsAtRisk > 0)
+                                {
+                                    <span class="badge text-bg-danger">@lot.PlantsAtRisk</span>
+                                }
+                                else
+                                {
+                                    <span>0</span>
+                                }
+                            </td>
+                            <td class="text-end">@lot.OpenCriticalEpisodes</td>
+                            <td class="small">
+                                @if (lot.OpenCriticalEpisodes > 0)
+                                {
+                                    <span class="text-danger">@lot.RiskReason</span>
+                                }
+                                else if (lot.ActivePlants == 0)
+                                {
+                                    <span class="text-muted">Sin plantas activas</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Sin episodios abiertos</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    @* ---------- Reglas vigentes / pendientes ---------- *@
+    @if (rules.Count > 0)
+    {
+        <section class="panel panel-table mb-3">
+            <div class="panel__header panel__header--compact">
+                <h3>Reglas vigentes @(rulesLotId is not null ? $"— lote #{rulesLotId}" : string.Empty)</h3>
+            </div>
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Regla</th>
+                        <th>Sensor</th>
+                        <th>Banda operativa</th>
+                        <th>Objetivo</th>
+                        <th>Consecutivas para abrir</th>
+                        <th>Cooldown</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var rule in rules)
+                    {
+                        <tr>
+                            <td>@rule.Name</td>
+                            <td>@rule.SensorTypeName</td>
+                            <td class="mono">
+                                @if (rule.OperationalMin.HasValue || rule.OperationalMax.HasValue)
+                                {
+                                    <text>[@Fmt(rule.OperationalMin)–@Fmt(rule.OperationalMax)]</text>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">según dominio / sin banda</span>
+                                }
+                            </td>
+                            <td class="mono">@Fmt(rule.TargetValue)</td>
+                            <td>@rule.ConsecutiveToOpen</td>
+                            <td>@rule.CooldownMinutes min</td>
+                            <td>
+                                @if (rule.Pending)
+                                {
+                                    <span class="badge text-bg-warning">Pendiente: @rule.Notes</span>
+                                }
+                                else if (rule.IsActive)
+                                {
+                                    <span class="badge text-bg-success">Activa</span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-secondary">Inactiva</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div class="panel__footer small text-muted p-2">
+                @VisionNote.Reason
+            </div>
+        </section>
+    }
+
+    @* ---------- Timeline ---------- *@
+    <section class="panel panel-table">
+        <div class="panel__header panel__header--compact">
+            <h3>Timeline de episodios</h3>
+        </div>
+
+        @if (timeline.Count == 0)
         {
-            <article class="timeline-row">
-                <div class="timeline-row__time">
-                    <strong>@e.Time</strong>
-                    <span>@e.Date</span>
-                </div>
-                <div class="timeline-row__dot"></div>
-                <div class="timeline-row__body">
-                    <div class="timeline-row__title">
-                        <h4>@e.Title</h4>
-                        <span class="mono">@e.Sensor</span>
-                    </div>
-                    <p>@e.Description</p>
-                </div>
-                <div class="timeline-row__state">
-                    <span class="sev @e.SeverityClass">@e.Severity</span>
-                    <small>@e.Status</small>
-                </div>
-            </article>
+            <div class="p-4 text-center">
+                @if (!summary.HasOperationalData)
+                {
+                    <p class="mb-1"><strong>Sin datos de telemetría</strong></p>
+                    <p class="text-muted small mb-0">
+                        No hay lecturas operativamente usables en la ventana configurada.
+                        Sin datos no se puede afirmar normalidad: el estado real es desconocido.
+                    </p>
+                }
+                else if (FiltersActive)
+                {
+                    <p class="mb-1"><strong>Ningún episodio coincide con los filtros</strong></p>
+                    <p class="text-muted small mb-0">Probá limpiar o ampliar los filtros.</p>
+                }
+                else
+                {
+                    <p class="mb-1"><strong>Sin episodios</strong></p>
+                    <p class="text-muted small mb-0">
+                        Todas las lecturas recientes están dentro de la banda operativa.
+                        Los datos se siguen evaluando con cada barrido.
+                    </p>
+                }
+            </div>
         }
-    </div>
-</section>
+        else
+        {
+            <div class="timeline p-2 pb-0">
+                @foreach (var ev in timeline)
+                {
+                    <article class="timeline-row">
+                        <div class="timeline-row__time">
+                            <strong>@ev.LastObservedAtUtc.ToLocalTime().ToString("HH:mm")</strong>
+                            <span>@ev.LastObservedAtUtc.ToLocalTime().ToString("dd MMM")</span>
+                        </div>
+                        <div class="timeline-row__dot"></div>
+                        <div class="timeline-row__body">
+                            <div class="timeline-row__title">
+                                <h4>@ev.TypeName</h4>
+                                <span class="mono">@(ev.SensorName ?? ev.NodeName ?? ev.LotName ?? "sin sensor") — lote #@ev.LotId</span>
+                            </div>
+                            <p>
+                                <span class="mono">valor @Fmt(ev.ObservedValue)</span>
+                                @if (ev.TargetValue.HasValue)
+                                {
+                                    <text>(objetivo @Fmt(ev.TargetValue))</text>
+                                }
+                                @if (ev.OperationalMin.HasValue || ev.OperationalMax.HasValue)
+                                {
+                                    <text>banda [@Fmt(ev.OperationalMin)–@Fmt(ev.OperationalMax)]</text>
+                                }
+                                — @ev.ReadingCount lecturas, desde @ev.FirstObservedAtUtc.ToLocalTime().ToString("g")
+                            </p>
+
+                            @if (expandedEventId == ev.Id)
+                            {
+                                <div class="small mb-2">
+                                    <div>Regla: <code>@ev.RuleDescription</code></div>
+                                    <div>Fingerprint: <span class="mono text-muted">@ev.Fingerprint[..16]…</span></div>
+                                    <div>Origen: <span class="text-muted">@ev.Origin</span>
+                                        @if (ev.GreenhouseName is not null)
+                                        {
+                                            <text> — @ev.GreenhouseName</text>
+                                        }
+                                        @if (ev.NodeName is not null)
+                                        {
+                                            <text> / nodo @ev.NodeName</text>
+                                        }
+                                    </div>
+                                    @if (ev.ResolvedAtUtc is { } resolvedAt)
+                                    {
+                                        <div class="text-success">Resuelta @resolvedAt.ToLocalTime().ToString("g") — @ev.ResolutionReason</div>
+                                    }
+                                    @if (ev.AcknowledgedAtUtc is { } ackAt)
+                                    {
+                                        <div class="text-muted">Reconocida @ackAt.ToLocalTime().ToString("g")</div>
+                                    }
+                                </div>
+
+                                <AuthorizeView>
+                                    <Authorized>
+                                        @if (context.User.IsInRole("Administrador"))
+                                        {
+                                            <div class="d-flex gap-2 mb-2">
+                                                @if (ev.Status != AnomalyContract.StatusReconocida && ev.Status != AnomalyContract.StatusResuelta)
+                                                {
+                                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => AcknowledgeAsync(ev.Id)">Reconocer</button>
+                                                }
+                                                @if (ev.Status != AnomalyContract.StatusResuelta)
+                                                {
+                                                    <button class="btn btn-outline-success btn-sm" @onclick="() => ResolveManuallyAsync(ev.Id)">Resolver manualmente</button>
+                                                }
+                                            </div>
+                                        }
+                                    </Authorized>
+                                </AuthorizeView>
+                            }
+
+                            <button class="btn btn-link btn-sm p-0" @onclick="() => ToggleExpand(ev.Id)">
+                                @(expandedEventId == ev.Id ? "Ocultar detalle" : "Ver detalle")
+                            </button>
+                        </div>
+                        <div class="timeline-row__state">
+                            <span class="sev @SeverityClass(ev.Severity)">@ev.Severity</span>
+                            <small>@ev.Status</small>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </section>
+
+    <AuthorizeView>
+        <Authorized>
+            @if (context.User.IsInRole("Administrador"))
+            {
+                <div class="mt-3 d-flex align-items-center gap-2">
+                    <button class="btn btn-outline-primary btn-sm" @onclick="TriggerSweepAsync" disabled="@sweeping">
+                        @(sweeping ? "Barriendo..." : "Ejecutar barrido ahora")
+                    </button>
+                    @if (sweepResult is not null)
+                    {
+                        <span class="text-muted small">
+                            Último barrido: @sweepResult.EventsCreated creados · @sweepResult.EventsUpdated actualizados ·
+                            @sweepResult.EventsUpgraded promovidos · @sweepResult.EventsResolved resueltos · @sweepResult.CooldownSkips en cooldown
+                        </span>
+                    }
+                </div>
+            }
+        </Authorized>
+    </AuthorizeView>
+}
 
 @code {
-    private static readonly IReadOnlyList<EventItem> Events =
-    [
-        new("10:24", "Hoy", "Caída de presión Bomba B2", "PUMP_B02", "Reducción del 18% en presión sostenida durante 4 minutos.", "Crítica", "Abierta", "severity--high"),
-        new("08:12", "Hoy", "Drift de calibración pH-01", "PH_01", "Desviación creciente de 0.2 pH respecto al sensor redundante.", "Media", "En revisión", "severity--medium"),
-        new("22:45", "Ayer", "Pico térmico LED zona 4", "LED_Z04", "Disipador alcanzó 42°C, ventilación incrementada automáticamente.", "Media", "Resuelta", "severity--medium"),
-        new("15:01", "Ayer", "Conductividad fuera de rango", "EC_03", "EC superó 2.4 mS/cm durante 2 minutos. Auto-dilución aplicada.", "Baja", "Resuelta", "severity--low"),
-        new("06:30", "27 may", "Sensor humedad sin lectura", "HUM_02", "Lectura nula 3 ciclos consecutivos. Reinicio remoto exitoso.", "Baja", "Resuelta", "severity--low"),
-    ];
+    private AnomalySummaryDto? summary;
+    private IReadOnlyList<AnomalyEventDto> timeline = [];
+    private IReadOnlyList<LotRiskSummaryDto> lotSummaries = [];
+    private IReadOnlyList<AnomalyRuleDto> rules = [];
+    private string? error;
+    private bool loading = true;
+    private bool autoRefresh = true;
+    private int? expandedEventId;
+    private bool sweeping;
+    private AnomalySweepResult? sweepResult;
 
-    private sealed record EventItem(string Time, string Date, string Title, string Sensor, string Description, string Severity, string Status, string SeverityClass);
+    private int? filterLotId;
+    private string filterType = string.Empty;
+    private string filterSeverity = string.Empty;
+    private string filterStatus = string.Empty;
+    private DateOnly? filterFrom;
+    private DateOnly? filterTo;
+
+    private static readonly IReadOnlyList<(string Code, string Name)> TypeOptions = AnomalyQueryService.GetTypeOptions();
+    private static readonly IReadOnlyList<string> SeverityOptions = AnomalyQueryService.GetSeverityOptions();
+    private static readonly IReadOnlyList<string> StatusOptions = AnomalyQueryService.GetStatusOptions();
+    private static readonly VisionAnomalyAdapterNote VisionNote = AnomalyQueryService.GetVisionAdapterNote();
+
+    private int? rulesLotId;
+    private CancellationTokenSource? _timerCts;
+    private int activeRuleCount => rules.Count(r => r.IsActive);
+    private int pendingRuleCount => rules.Count(r => r.Pending);
+    private bool FiltersActive =>
+        filterLotId.HasValue || filterType != string.Empty || filterSeverity != string.Empty
+        || filterStatus != string.Empty || filterFrom.HasValue || filterTo.HasValue;
+
+    private static string Fmt(decimal? v) => v?.ToString("0.##") ?? "—";
+
+    private static string SeverityClass(string severity) => severity switch
+    {
+        AnomalyContract.SeverityCritica => "severity--high",
+        AnomalyContract.SeverityAdvertencia => "severity--medium",
+        _ => "severity--low",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _timerCts = new CancellationTokenSource();
+        _ = AutoRefreshLoopAsync(_timerCts.Token);
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _timerCts?.Cancel();
+        _timerCts?.Dispose();
+    }
+
+    /// <summary>Bucle único de actualización automática (opcional, toggle en la UI).</summary>
+    private async Task AutoRefreshLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            if (autoRefresh && !loading)
+            {
+                await LoadAsync();
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            var filter = new AnomalyFilter(
+                Severity: string.IsNullOrWhiteSpace(filterSeverity) ? null : filterSeverity,
+                Type: string.IsNullOrWhiteSpace(filterType) ? null : filterType,
+                LotId: filterLotId,
+                Status: string.IsNullOrWhiteSpace(filterStatus) ? null : filterStatus,
+                From: filterFrom,
+                To: filterTo);
+
+            summary = await Query.GetSummaryAsync();
+            lotSummaries = await Query.GetLotRiskSummariesAsync();
+            timeline = await Query.GetTimelineAsync(filter);
+            rulesLotId = filterLotId ?? lotSummaries.FirstOrDefault()?.LotId;
+            rules = rulesLotId is { } lotId ? await Query.GetRulesForLotAsync(lotId) : [];
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo cargar el módulo de anomalías: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task ClearFilters()
+    {
+        filterLotId = null;
+        filterType = string.Empty;
+        filterSeverity = string.Empty;
+        filterStatus = string.Empty;
+        filterFrom = null;
+        filterTo = null;
+        await LoadAsync();
+    }
+
+    private void ToggleExpand(int eventId)
+    {
+        expandedEventId = expandedEventId == eventId ? null : eventId;
+    }
+
+    private async Task AcknowledgeAsync(int eventId)
+    {
+        await Events.AcknowledgeAsync(eventId);
+        await LoadAsync();
+    }
+
+    private async Task ResolveManuallyAsync(int eventId)
+    {
+        await Events.ResolveManuallyAsync(eventId);
+        await LoadAsync();
+    }
+
+    private async Task TriggerSweepAsync()
+    {
+        sweeping = true;
+        try
+        {
+            sweepResult = await Events.SweepAsync(CancellationToken.None);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"Error en el barrido: {ex.Message}";
+        }
+        finally
+        {
+            sweeping = false;
+        }
+    }
 }
