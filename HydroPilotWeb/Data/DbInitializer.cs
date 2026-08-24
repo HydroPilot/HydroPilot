@@ -49,6 +49,11 @@ public static class DbInitializer
         }
 
         var greenhouse = context.Greenhouses.First();
+        if (string.IsNullOrEmpty(greenhouse.TimeZoneId))
+        {
+            greenhouse.TimeZoneId = "America/Argentina/Buenos_Aires";
+            context.SaveChanges();
+        }
 
         if (!context.IotNodes.Any())
         {
