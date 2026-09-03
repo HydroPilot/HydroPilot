@@ -1,0 +1,462 @@
+@page "/notifications"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@using HydroPilotWeb.Models.Notifications
+@using HydroPilotWeb.Services.Notifications
+@using System.Security.Claims
+@inject NotificationService NotificationService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>Bandeja de notificaciones - HydroPilot</PageTitle>
+
+<div class="notifications-page">
+    <div class="page-header">
+        <div class="page-header__content">
+            <h2>Bandeja de Notificaciones</h2>
+            <p>Alertas agronómicas, avisos de cosecha y recomendaciones del sistema</p>
+        </div>
+        <div class="page-header__actions">
+            @if (_notifications.Any(n => !n.IsRead))
+            {
+                <button class="btn btn-secondary" @onclick="MarkAllAsReadAsync" disabled="@_isLoading">
+                    Marcar todas como leídas
+                </button>
+            }
+            <NavLink class="btn btn-outline" href="/settings/notifications">
+                <span>⚙</span> Ajustes
+            </NavLink>
+        </div>
+    </div>
+
+    <!-- Filtros de bandeja -->
+    <div class="filter-bar">
+        <button class="filter-tab @(_filter == FilterMode.All ? "filter-tab--active" : "")"
+                @onclick="() => SetFilter(FilterMode.All)">
+            Todas (@_notifications.Count)
+        </button>
+        <button class="filter-tab @(_filter == FilterMode.Unread ? "filter-tab--active" : "")"
+                @onclick="() => SetFilter(FilterMode.Unread)">
+            No leídas (@_notifications.Count(n => !n.IsRead))
+        </button>
+        <button class="filter-tab @(_filter == FilterMode.Critical ? "filter-tab--active" : "")"
+                @onclick="() => SetFilter(FilterMode.Critical)">
+            Críticas y Altas (@_notifications.Count(n => n.Severity is NotificationSeverities.Critica or NotificationSeverities.Alta))
+        </button>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Cargando notificaciones...</p>
+        </div>
+    }
+    else if (FilteredNotifications.Count == 0)
+    {
+        <div class="empty-state">
+            <span class="empty-state__icon">✓</span>
+            <h3>Sin notificaciones</h3>
+            <p>No tienes alertas pendientes bajo el filtro seleccionado.</p>
+        </div>
+    }
+    else
+    {
+        <div class="notifications-list">
+            @foreach (var item in FilteredNotifications)
+            {
+                <div class="notification-card @(!item.IsRead ? "notification-card--unread" : "")">
+                    <div class="notification-card__left">
+                        <span class="severity-badge severity-badge--@item.Severity.ToLowerInvariant()">
+                            @item.Severity
+                        </span>
+                        @if (!item.IsRead)
+                        {
+                            <span class="unread-dot" title="No leída"></span>
+                        }
+                    </div>
+
+                    <div class="notification-card__body">
+                        <div class="notification-card__header">
+                            <h4 class="notification-card__title">@item.Title</h4>
+                            <span class="notification-card__time">
+                                @item.CreatedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                            </span>
+                        </div>
+
+                        <p class="notification-card__message">@item.Message</p>
+
+                        <div class="notification-card__meta">
+                            @if (!string.IsNullOrWhiteSpace(item.LotName))
+                            {
+                                <span class="meta-tag">
+                                    <span>🌱 Lote:</span>
+                                    <NavLink href="lotes">@item.LotName</NavLink>
+                                </span>
+                            }
+
+                            <span class="meta-tag">
+                                <span>Tipo:</span> @item.Type
+                            </span>
+
+                            @if (item.IsResolved)
+                            {
+                                <span class="meta-tag meta-tag--resolved">
+                                    ✓ Episodio resuelto
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="notification-card__actions">
+                        @if (!item.IsRead)
+                        {
+                            <button class="btn btn-sm btn-subtle" @onclick="() => MarkAsReadAsync(item.Id)" title="Marcar como leída">
+                                Marcar leída
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .notifications-page {
+        padding: 24px;
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-header h2 {
+        margin: 0 0 6px;
+        font-size: 24px;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .page-header p {
+        margin: 0;
+        color: var(--text-muted, #70869a);
+        font-size: 14px;
+    }
+
+    .page-header__actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .filter-bar {
+        display: flex;
+        gap: 8px;
+        border-bottom: 1px solid var(--border-color, #223044);
+        margin-bottom: 20px;
+        padding-bottom: 8px;
+    }
+
+    .filter-tab {
+        background: transparent;
+        border: none;
+        color: var(--text-muted, #8ea1b4);
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.15s;
+    }
+
+    .filter-tab:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .filter-tab--active {
+        background: rgba(46, 144, 250, 0.15);
+        color: #84caff;
+        font-weight: 600;
+    }
+
+    .notifications-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .notification-card {
+        background: var(--card-bg, #182230);
+        border: 1px solid var(--border-color, #223044);
+        border-radius: 10px;
+        padding: 16px 20px;
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        transition: border-color 0.15s;
+    }
+
+    .notification-card:hover {
+        border-color: #2e90fa;
+    }
+
+    .notification-card--unread {
+        background: #19273a;
+        border-left: 4px solid #2e90fa;
+    }
+
+    .notification-card__left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 90px;
+    }
+
+    .unread-dot {
+        width: 8px;
+        height: 8px;
+        background-color: #2e90fa;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .notification-card__body {
+        flex: 1;
+    }
+
+    .notification-card__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 6px;
+        gap: 10px;
+    }
+
+    .notification-card__title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-main, #ffffff);
+    }
+
+    .notification-card__time {
+        font-size: 12px;
+        color: var(--text-muted, #70869a);
+        white-space: nowrap;
+    }
+
+    .notification-card__message {
+        margin: 0 0 10px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #d0dbe7;
+    }
+
+    .notification-card__meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 12px;
+    }
+
+    .meta-tag {
+        color: var(--text-muted, #8ea1b4);
+    }
+
+    .meta-tag a {
+        color: #2e90fa;
+        text-decoration: none;
+    }
+
+    .meta-tag--resolved {
+        color: #6ce9a6;
+        font-weight: 500;
+    }
+
+    .severity-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .severity-badge--critica {
+        background: rgba(240, 68, 56, 0.2);
+        color: #fda29b;
+        border: 1px solid rgba(240, 68, 56, 0.4);
+    }
+
+    .severity-badge--alta {
+        background: rgba(247, 144, 9, 0.2);
+        color: #fec84b;
+        border: 1px solid rgba(247, 144, 9, 0.4);
+    }
+
+    .severity-badge--media {
+        background: rgba(46, 144, 250, 0.2);
+        color: #84caff;
+        border: 1px solid rgba(46, 144, 250, 0.4);
+    }
+
+    .severity-badge--info {
+        background: rgba(142, 161, 180, 0.2);
+        color: #cbd5e1;
+        border: 1px solid rgba(142, 161, 180, 0.3);
+    }
+
+    .btn {
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+    }
+
+    .btn-secondary {
+        background: #2c3c52;
+        color: #d0dbe7;
+    }
+    .btn-secondary:hover {
+        background: #394d68;
+    }
+
+    .btn-outline {
+        background: transparent;
+        border: 1px solid var(--border-color, #223044);
+        color: var(--text-main, #e4ecf6);
+    }
+    .btn-outline:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .btn-subtle {
+        background: transparent;
+        border: 1px solid #33445c;
+        color: #8ea1b4;
+        padding: 4px 10px;
+        font-size: 12px;
+    }
+    .btn-subtle:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: #ffffff;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-muted, #70869a);
+    }
+
+    .empty-state__icon {
+        font-size: 36px;
+        color: #12b76a;
+        margin-bottom: 12px;
+        display: inline-block;
+    }
+
+    .empty-state h3 {
+        margin: 0 0 6px;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .loading-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-muted, #70869a);
+    }
+
+    .spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(255, 255, 255, 0.1);
+        border-top-color: #2e90fa;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin: 0 auto 10px;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+
+@code {
+    private enum FilterMode { All, Unread, Critical }
+
+    private List<NotificationItemDto> _notifications = new();
+    private FilterMode _filter = FilterMode.All;
+    private bool _isLoading = true;
+    private int _userId = 0;
+
+    private List<NotificationItemDto> FilteredNotifications => _filter switch
+    {
+        FilterMode.Unread => _notifications.Where(n => !n.IsRead).ToList(),
+        FilterMode.Critical => _notifications.Where(n => n.Severity is NotificationSeverities.Critica or NotificationSeverities.Alta).ToList(),
+        _ => _notifications
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var userIdClaim = user.FindFirst("user_id")?.Value;
+        if (int.TryParse(userIdClaim, out var uid))
+        {
+            _userId = uid;
+            await LoadNotificationsAsync();
+        }
+        else
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadNotificationsAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _notifications = await NotificationService.GetInternalNotificationsAsync(_userId, unreadOnly: false);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void SetFilter(FilterMode mode)
+    {
+        _filter = mode;
+    }
+
+    private async Task MarkAsReadAsync(int deliveryId)
+    {
+        await NotificationService.MarkAsReadAsync(deliveryId, _userId);
+        var item = _notifications.FirstOrDefault(n => n.Id == deliveryId);
+        if (item != null)
+        {
+            var idx = _notifications.IndexOf(item);
+            _notifications[idx] = item with { IsRead = true };
+        }
+    }
+
+    private async Task MarkAllAsReadAsync()
+    {
+        await NotificationService.MarkAllAsReadAsync(_userId);
+        _notifications = _notifications.Select(n => n with { IsRead = true }).ToList();
+    }
+}

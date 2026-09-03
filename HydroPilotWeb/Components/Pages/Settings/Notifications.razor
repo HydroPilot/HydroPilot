@@ -1,7 +1,12 @@
 @page "/settings/notifications"
 @attribute [Authorize(Policy = "RequireAssigned")]
+@using HydroPilotWeb.Models.Notifications
+@using HydroPilotWeb.Services.Notifications
+@using System.Security.Claims
+@inject NotificationService NotificationService
+@inject AuthenticationStateProvider AuthStateProvider
 
-<PageTitle>Configuración de notificaciones</PageTitle>
+<PageTitle>Configuración de notificaciones - HydroPilot</PageTitle>
 
 <section class="settings-layout">
     <nav class="settings-nav">
@@ -10,71 +15,287 @@
     </nav>
 
     <div class="settings-stack">
-        <article class="panel">
-            <h3>Canales</h3>
-            <p class="panel__subtitle">Activá los medios por los que querés recibir alertas.</p>
-            <div class="settings-list">
-                @foreach (var channel in Channels)
-                {
+        @if (!string.IsNullOrEmpty(_feedbackMessage))
+        {
+            <div class="alert @(_isSuccess ? "alert-success" : "alert-danger")">
+                <span>@_feedbackMessage</span>
+                <button class="alert-close" @onclick="() => _feedbackMessage = null">✕</button>
+            </div>
+        }
+
+        @if (_isLoading)
+        {
+            <div class="panel">
+                <p>Cargando preferencias...</p>
+            </div>
+        }
+        else
+        {
+            <!-- Canales -->
+            <article class="panel">
+                <h3>Canales de entrega</h3>
+                <p class="panel__subtitle">Configura los medios por los cuales recibirás avisos del sistema.</p>
+
+                <div class="settings-list">
                     <div class="settings-list__row">
                         <div>
-                            <strong>@channel.Label</strong>
-                            <p>@channel.Description</p>
+                            <strong>Bandeja web interna</strong>
+                            <p>Alertas visuales en el panel y en la campana de notificaciones.</p>
                         </div>
-                        <button class="switch @(channel.Enabled ? "switch--on" : string.Empty)" type="button" aria-pressed="@channel.Enabled"><span></span></button>
+                        <span class="badge badge-enabled">Siempre activo</span>
                     </div>
-                }
-            </div>
-        </article>
 
-        <article class="panel">
-            <h3>Eventos</h3>
-            <p class="panel__subtitle">Configurá los disparadores y la severidad mínima para cada uno.</p>
-            <div class="settings-list">
-                @foreach (var trigger in Triggers)
-                {
                     <div class="settings-list__row">
                         <div>
-                            <strong>@trigger.Label</strong>
-                            <p>Severidad mínima: <strong>@trigger.Severity</strong></p>
+                            <strong>Correo electrónico (Gmail)</strong>
+                            <p>Envío de alertas críticas y resúmenes a tu dirección de correo electrónico.</p>
+                            <small class="hint-text">Desactivado por defecto para evitar sobrecarga de correos.</small>
                         </div>
-                        <button class="switch switch--on" type="button" aria-pressed="true"><span></span></button>
+                        <button class="switch @(_prefs.EmailEnabled ? "switch--on" : "")"
+                                type="button"
+                                aria-pressed="@_prefs.EmailEnabled"
+                                @onclick="ToggleEmail">
+                            <span></span>
+                        </button>
                     </div>
-                }
-            </div>
-        </article>
 
-        <article class="panel">
-            <h3>Modo no molestar</h3>
-            <p class="panel__subtitle">No recibirás avisos no críticos durante el horario configurado.</p>
-            <div class="quiet-hours">
-                <label class="field-block field-block--time"><span>Desde</span><input type="time" value="22:00" /></label>
-                <label class="field-block field-block--time"><span>Hasta</span><input type="time" value="07:00" /></label>
-                <button class="switch switch--on" type="button" aria-pressed="true"><span></span></button>
+                    <div class="settings-list__row settings-list__row--disabled">
+                        <div>
+                            <strong>Notificaciones Push / Móvil</strong>
+                            <p>Alertas nativas en el navegador y dispositivos móviles.</p>
+                            <small class="hint-text">Próximamente disponible en la fase de evolución.</small>
+                        </div>
+                        <span class="badge badge-pending">Próximamente</span>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Criterios de activación -->
+            <article class="panel">
+                <h3>Filtros y disparadores de correo</h3>
+                <p class="panel__subtitle">Define qué nivel de urgencia debe alcanzar un evento para enviarte un correo.</p>
+
+                <div class="form-group">
+                    <label>Severidad mínima para disparo de email:</label>
+                    <select class="form-control" @bind="_prefs.MinSeverityEmail" disabled="@(!_prefs.EmailEnabled)">
+                        <option value="@NotificationSeverities.Critica">Sólo Crítica (Anomalías confirmadas de pH/CE)</option>
+                        <option value="@NotificationSeverities.Alta">Alta y Crítica (Anomalías y Cosecha inminente)</option>
+                        <option value="@NotificationSeverities.Media">Media o superior (Incluye recomendaciones estratégicas)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-top: 16px;">
+                    <label>Anticipación para alerta de cosecha inminente (días):</label>
+                    <input type="number" min="1" max="14" class="form-control" style="max-width: 120px;"
+                           @bind="_prefs.HarvestAlertDays" />
+                    <small class="hint-text">Se generará una alerta cuando la fecha proyectada de cosecha esté a menos de estos días.</small>
+                </div>
+            </article>
+
+            <!-- Horario de silencio -->
+            <article class="panel">
+                <div class="panel-header-inline">
+                    <div>
+                        <h3>Modo no molestar</h3>
+                        <p class="panel__subtitle">Silencia correos de severidad no crítica durante la noche o descanso.</p>
+                    </div>
+                    <button class="switch @(_prefs.QuietHoursEnabled ? "switch--on" : "")"
+                            type="button"
+                            aria-pressed="@_prefs.QuietHoursEnabled"
+                            @onclick="ToggleQuietHours">
+                        <span></span>
+                    </button>
+                </div>
+
+                @if (_prefs.QuietHoursEnabled)
+                {
+                    <div class="quiet-hours">
+                        <label class="field-block field-block--time">
+                            <span>Desde</span>
+                            <input type="time" value="@(_prefs.QuietHoursStart?.ToString(@"hh\:mm") ?? "22:00")"
+                                   @onchange="e => OnStartTimeChanged(e.Value?.ToString())" />
+                        </label>
+                        <label class="field-block field-block--time">
+                            <span>Hasta</span>
+                            <input type="time" value="@(_prefs.QuietHoursEnd?.ToString(@"hh\:mm") ?? "07:00")"
+                                   @onchange="e => OnEndTimeChanged(e.Value?.ToString())" />
+                        </label>
+                    </div>
+                    <p class="hint-text" style="margin-top: 8px;">Las alertas de severidad Crítica se enviarán igualmente por seguridad biológica del cultivo.</p>
+                }
+            </article>
+
+            <div class="actions-row">
+                <button class="btn btn-primary" @onclick="SavePreferencesAsync" disabled="@_isSaving">
+                    @(_isSaving ? "Guardando..." : "Guardar preferencias")
+                </button>
             </div>
-        </article>
+        }
     </div>
 </section>
 
+<style>
+    .badge-enabled {
+        background: rgba(18, 183, 106, 0.15);
+        color: #6ce9a6;
+        border: 1px solid rgba(18, 183, 106, 0.4);
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .badge-pending {
+        background: rgba(142, 161, 180, 0.15);
+        color: #8ea1b4;
+        border: 1px solid rgba(142, 161, 180, 0.3);
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+    }
+
+    .settings-list__row--disabled {
+        opacity: 0.6;
+    }
+
+    .hint-text {
+        display: block;
+        color: var(--text-muted, #70869a);
+        font-size: 12px;
+        margin-top: 4px;
+    }
+
+    .panel-header-inline {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .form-control {
+        background: #1e2b3d;
+        border: 1px solid #29384e;
+        color: #ffffff;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        width: 100%;
+        max-width: 400px;
+    }
+
+    .form-control:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .actions-row {
+        margin-top: 10px;
+    }
+
+    .alert {
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+    }
+
+    .alert-success {
+        background: rgba(18, 183, 106, 0.15);
+        border: 1px solid rgba(18, 183, 106, 0.4);
+        color: #6ce9a6;
+    }
+
+    .alert-danger {
+        background: rgba(240, 68, 56, 0.15);
+        border: 1px solid rgba(240, 68, 56, 0.4);
+        color: #fda29b;
+    }
+
+    .alert-close {
+        background: transparent;
+        border: none;
+        color: inherit;
+        font-size: 14px;
+        cursor: pointer;
+    }
+</style>
+
 @code {
-    private static readonly ChannelItem[] Channels =
-    [
-        new("Correo electrónico", "Resúmenes y alertas en tu inbox.", true),
-        new("Notificaciones push", "Avisos en tiempo real en el navegador.", true),
-        new("SMS", "Sólo para eventos críticos.", false),
-        new("WhatsApp", "Mensajería rápida vía bot oficial.", true),
-    ];
+    private NotificationPreferenceDto _prefs = new();
 
-    private static readonly TriggerItem[] Triggers =
-    [
-        new("Anomalías detectadas", "Crítica"),
-        new("pH fuera de rango (5.5 – 7.0)", "Alta"),
-        new("Conductividad fuera de rango (1.0 – 2.4 mS/cm)", "Alta"),
-        new("Temperatura > 28°C ó < 18°C", "Media"),
-        new("Cambio significativo en forecasting", "Media"),
-        new("Reporte semanal disponible", "Info"),
-    ];
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private int _userId = 0;
+    private string? _feedbackMessage;
+    private bool _isSuccess = true;
 
-    private sealed record ChannelItem(string Label, string Description, bool Enabled);
-    private sealed record TriggerItem(string Label, string Severity);
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var userIdClaim = user.FindFirst("user_id")?.Value;
+        if (int.TryParse(userIdClaim, out var uid))
+        {
+            _userId = uid;
+            _prefs = await NotificationService.GetUserPreferencesAsync(_userId);
+        }
+        _isLoading = false;
+    }
+
+    private void ToggleEmail()
+    {
+        _prefs.EmailEnabled = !_prefs.EmailEnabled;
+    }
+
+    private void ToggleQuietHours()
+    {
+        _prefs.QuietHoursEnabled = !_prefs.QuietHoursEnabled;
+    }
+
+    private void OnStartTimeChanged(string? val)
+    {
+        if (TimeSpan.TryParse(val, out var ts))
+        {
+            _prefs.QuietHoursStart = ts;
+        }
+    }
+
+    private void OnEndTimeChanged(string? val)
+    {
+        if (TimeSpan.TryParse(val, out var ts))
+        {
+            _prefs.QuietHoursEnd = ts;
+        }
+    }
+
+    private async Task SavePreferencesAsync()
+    {
+        _isSaving = true;
+        _feedbackMessage = null;
+        try
+        {
+            await NotificationService.SaveUserPreferencesAsync(_userId, _prefs);
+            _feedbackMessage = "Preferencias de notificación guardadas con éxito.";
+            _isSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"Error al guardar preferencias: {ex.Message}";
+            _isSuccess = false;
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
 }
