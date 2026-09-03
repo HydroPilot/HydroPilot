@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
+using HydroPilotWeb.Models.Notifications;
 
 namespace HydroPilotWeb.Data;
 
@@ -50,6 +51,12 @@ public class HydroPilotDbContext : DbContext
     public DbSet<RecommendationDetail> RecommendationDetails => Set<RecommendationDetail>();
     public DbSet<RecommendationAction> RecommendationActions => Set<RecommendationAction>();
     public DbSet<CostPriceCatalog> CostPriceCatalogs => Set<CostPriceCatalog>();
+
+    // --- Módulo de notificaciones (plan 17) ---
+    public DbSet<NotificationAlert> NotificationAlerts => Set<NotificationAlert>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<NotificationAttempt> NotificationAttempts => Set<NotificationAttempt>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -766,6 +773,86 @@ public class HydroPilotDbContext : DbContext
                   .HasForeignKey(e => e.LotId)
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // --- Módulo de notificaciones (plan 17) ---
+        modelBuilder.Entity<NotificationAlert>(entity =>
+        {
+            entity.ToTable("NotificationAlerts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Severity).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Message).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.Fingerprint).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.CreatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => e.Fingerprint).IsUnique().HasFilter("[Fingerprint] <> ''");
+            entity.HasIndex(e => new { e.CreatedAtUtc, e.Type, e.Severity });
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<NotificationPreference>(entity =>
+        {
+            entity.ToTable("NotificationPreferences");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.MinSeverityEmail).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.UpdatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => e.UserId).IsUnique();
+
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<NotificationDelivery>(entity =>
+        {
+            entity.ToTable("NotificationDeliveries");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Channel).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Status).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Recipient).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.LastError).HasMaxLength(1000);
+            entity.Property(e => e.CreatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => new { e.Status, e.Channel });
+            entity.HasIndex(e => new { e.UserId, e.IsRead });
+
+            entity.HasOne(e => e.Alert)
+                  .WithMany(a => a.Deliveries)
+                  .HasForeignKey(e => e.AlertId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<NotificationAttempt>(entity =>
+        {
+            entity.ToTable("NotificationAttempts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.ErrorMessage).HasMaxLength(1000);
+            entity.Property(e => e.AttemptedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => e.DeliveryId);
+
+            entity.HasOne(e => e.Delivery)
+                  .WithMany(d => d.AttemptsList)
+                  .HasForeignKey(e => e.DeliveryId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

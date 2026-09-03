@@ -54,6 +54,12 @@ public sealed class AnomalySweepHostedService : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var service = scope.ServiceProvider.GetRequiredService<AnomalyEventService>();
             await service.SweepAsync(ct);
+
+            var notifService = scope.ServiceProvider.GetService<HydroPilotWeb.Services.Notifications.NotificationService>();
+            if (notifService != null)
+            {
+                await notifService.SyncAnomalyAlertsAsync(ct);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
