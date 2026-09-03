@@ -1,8 +1,11 @@
 @inherits LayoutComponentBase
 @using HydroPilotWeb.Services.Dashboard
+@using HydroPilotWeb.Services.Notifications
 @inject NavigationManager Navigation
 @inject IJSRuntime JsRuntime
 @inject DashboardService Dashboard
+@inject NotificationService NotificationService
+@inject AuthenticationStateProvider AuthStateProvider
 
 <div class="shell">
     <aside class="shell-sidebar">
@@ -19,11 +22,15 @@
             <div class="shell-topbar__actions">
                 <div class="status-pill @_statusCss" title="Estado global derivado de los nodos del invernadero (frescura de la última telemetría aceptada)."><span></span> @_statusText</div>
 
-                <NavLink class="topbar-action" href="settings/notifications" aria-label="Notificaciones">
+                <NavLink class="topbar-action topbar-action--relative" href="notifications" aria-label="Notificaciones">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V4a2 2 0 0 0-4 0v1.3A6 6 0 0 0 6 11v3.2c0 .5-.2 1-.6 1.4L4 17h5" />
                         <path d="M9.5 17a2.5 2.5 0 0 0 5 0" />
                     </svg>
+                    @if (_unreadCount > 0)
+                    {
+                        <span class="notification-badge">@(_unreadCount > 99 ? "99+" : _unreadCount.ToString())</span>
+                    }
                 </NavLink>
 
                 <NavLink class="topbar-action" href="settings/profile" aria-label="Configuración">
@@ -75,6 +82,7 @@
     private string _subtitle = "Cargando contexto...";
     private string _statusText = "Consultando estado...";
     private string _statusCss = "status-pill--muted";
+    private int _unreadCount = 0;
 
     // Título específico de cada página (el contexto de invernadero/cultivo se
     // resuelve desde datos, ya no es un texto fijo "Invernadero Alpha-01").
@@ -106,6 +114,21 @@
             _statusText = "Sin estado";
             _statusCss = "status-pill--muted";
         }
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var uidClaim = authState.User.FindFirst("user_id")?.Value;
+            if (int.TryParse(uidClaim, out var uid))
+            {
+                _unreadCount = await NotificationService.GetUnreadCountAsync(uid);
+            }
+        }
+        catch (Exception)
+        {
+            _unreadCount = 0;
+        }
+
         await InvokeAsync(StateHasChanged);
     }
 
@@ -127,6 +150,7 @@
             "simulation" => new PageHeader("Módulo de Simulación", "Probá escenarios what-if y observá el impacto estimado en la cosecha."),
             "optimization" => new PageHeader("Módulo de Optimización", "Recomendaciones basadas en IA para mejorar rendimiento y reducir costos."),
             "anomalies" => new PageHeader("Módulo de Anomalías", "Detección automática de eventos fuera de rango y desvíos de comportamiento."),
+            "notifications" => new PageHeader("Bandeja de Notificaciones", "Alertas y avisos operativos del sistema."),
             "settings/profile" => new PageHeader("Configuración de usuario", "Datos personales, idioma y seguridad de tu cuenta."),
             "settings/notifications" => new PageHeader("Configuración de notificaciones", "Definí cómo y cuándo querés recibir avisos del sistema."),
             "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Herramienta interna de diagnóstico."),
@@ -166,3 +190,25 @@
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+<style>
+    .topbar-action--relative {
+        position: relative;
+    }
+
+    .notification-badge {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        background-color: #f04438;
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 10px;
+        line-height: 1.2;
+        min-width: 14px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+</style>

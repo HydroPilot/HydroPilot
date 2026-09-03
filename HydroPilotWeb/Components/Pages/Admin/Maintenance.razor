@@ -1,7 +1,10 @@
 @page "/admin/mantenimiento"
 @attribute [Authorize(Policy = "RequireAdministrador")]
 @using HydroPilotWeb.Services.Admin
+@using HydroPilotWeb.Services.Notifications
 @inject AdminMaintenanceService MaintenanceService
+@inject NotificationService NotificationService
+@inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Mantenimiento de base de datos - HydroPilot</PageTitle>
 
@@ -147,6 +150,44 @@
                 </button>
             </div>
         </div>
+
+        <div class="action-card action-card--email">
+            <div class="action-card__body">
+                <div class="action-card__icon">✉</div>
+                <div>
+                    <h4>Prueba de despacho de Email (Gmail)</h4>
+                    <p>
+                        Encola un correo de prueba a todos los usuarios registrados con email válido para comprobar
+                        la conectividad con el servidor SMTP de Gmail y el despachador de segundo plano.
+                    </p>
+                    <p class="action-card__hint">
+                        Este envío ignora la configuración de email desactivado por ser una prueba explícita de administración.
+                    </p>
+                </div>
+            </div>
+            <div class="action-card__footer">
+                @if (_showTestEmailConfirm)
+                {
+                    <div class="confirm-box">
+                        <span>¿Enviar email de prueba a todos los usuarios?</span>
+                        <div class="confirm-box__buttons">
+                            <button class="btn btn-primary" @onclick="ExecuteSendTestEmailAsync" disabled="@_isProcessing">
+                                Sí, enviar prueba
+                            </button>
+                            <button class="btn btn-secondary" @onclick="() => _showTestEmailConfirm = false" disabled="@_isProcessing">
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <button class="btn btn-secondary" @onclick="() => _showTestEmailConfirm = true" disabled="@_isProcessing">
+                        Enviar email de prueba
+                    </button>
+                }
+            </div>
+        </div>
     </div>
 </div>
 
@@ -259,6 +300,10 @@
 
     .action-card--primary {
         border-left: 4px solid #2e90fa;
+    }
+
+    .action-card--email {
+        border-left: 4px solid #12b76a;
     }
 
     .action-card__body {
@@ -430,6 +475,7 @@
     private bool _isLoading = true;
     private bool _isProcessing = false;
     private bool _showClearConfirm = false;
+    private bool _showTestEmailConfirm = false;
     private string? _feedbackMessage;
     private bool _isSuccess = true;
 
@@ -491,6 +537,30 @@
         catch (Exception ex)
         {
             _feedbackMessage = $"Error al recrear lote demo: {ex.Message}";
+            _isSuccess = false;
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private async Task ExecuteSendTestEmailAsync()
+    {
+        _isProcessing = true;
+        _showTestEmailConfirm = false;
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var uid = int.TryParse(authState.User.FindFirst("user_id")?.Value, out var id) ? id : 1;
+            var result = await NotificationService.SendTestEmailToAllUsersAsync(uid);
+            _feedbackMessage = result.Message;
+            _isSuccess = result.Success;
+            await LoadSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"Error al encolar emails de prueba: {ex.Message}";
             _isSuccess = false;
         }
         finally

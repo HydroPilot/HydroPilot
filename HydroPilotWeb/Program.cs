@@ -72,10 +72,26 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>(
 // Hook de anomalías abiertas: lo reemplaza el módulo de anomalies cuando exista
 // (último registro gana en DI). Sink de eventos: lo reemplaza notifications.
 builder.Services.AddSingleton<IOpenAnomalyProvider, NoOpenAnomalyProvider>();
-builder.Services.AddScoped<IOptimizationEventSink, NoopOptimizationEventSink>();
+builder.Services.AddScoped<IOptimizationEventSink, HydroPilotWeb.Services.Notifications.OptimizationNotificationSink>();
 builder.Services.AddScoped<OptimizationService>();
 builder.Services.AddOptions<OptimizationOptions>()
     .BindConfiguration(OptimizationOptions.SectionName);
+
+// --- Módulo de notificaciones y correo (plan 17) ---
+builder.Services.Configure<HydroPilotWeb.Services.Notifications.EmailOptions>(
+    builder.Configuration.GetSection(HydroPilotWeb.Services.Notifications.EmailOptions.SectionName));
+var emailProvider = builder.Configuration.GetValue<string>("Email:Provider");
+if (string.Equals(emailProvider, "GmailSmtp", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(emailProvider, "Smtp", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddScoped<HydroPilotWeb.Services.Notifications.IEmailSender, HydroPilotWeb.Services.Notifications.SmtpEmailSender>();
+}
+else
+{
+    builder.Services.AddScoped<HydroPilotWeb.Services.Notifications.IEmailSender, HydroPilotWeb.Services.Notifications.LoggingEmailSender>();
+}
+builder.Services.AddScoped<HydroPilotWeb.Services.Notifications.NotificationService>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.Notifications.NotificationDispatcherHostedService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
