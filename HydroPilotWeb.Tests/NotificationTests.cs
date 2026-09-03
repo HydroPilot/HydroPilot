@@ -22,13 +22,13 @@ public class NotificationTests
     private async Task<User> EnsureTestUserAsync()
     {
         await using var context = _fixture.NewContext();
-        var user = await context.Users.FirstOrDefaultAsync(u => u.Email == "test@hydropilot.local");
+        var user = await context.Users.FirstOrDefaultAsync(u => u.Email == "test.operador@hydropilot.com");
         if (user == null)
         {
             user = new User
             {
                 GoogleSub = "google-sub-test-123",
-                Email = "test@hydropilot.local",
+                Email = "test.operador@hydropilot.com",
                 GivenName = "Usuario",
                 Surname = "Test",
                 Role = "Operador",
@@ -224,11 +224,12 @@ public class NotificationTests
         var service = new NotificationService(_fixture.Factory, NullLogger<NotificationService>.Instance);
 
         await using var context = _fixture.NewContext();
-        var userCountWithEmail = await context.Users.CountAsync(u => !string.IsNullOrWhiteSpace(u.Email));
+        var allUsers = await context.Users.ToListAsync();
+        var deliverableCount = allUsers.Count(u => NotificationService.IsDeliverableEmail(u.Email));
 
         var result = await service.SendTestEmailToAllUsersAsync(1);
         Assert.True(result.Success);
-        Assert.Equal(userCountWithEmail, result.UsersQueued);
+        Assert.Equal(deliverableCount, result.UsersQueued);
 
         // Verificar que existan las entregas pendientes en NotificationDeliveries
         var testAlert = await context.NotificationAlerts
@@ -241,8 +242,53 @@ public class NotificationTests
             .Where(d => d.AlertId == testAlert.Id && d.Channel == NotificationChannels.Email)
             .ToListAsync();
 
-        Assert.Equal(userCountWithEmail, queuedDeliveries.Count);
+        Assert.Equal(deliverableCount, queuedDeliveries.Count);
         Assert.All(queuedDeliveries, d => Assert.Equal(DeliveryStatuses.Pending, d.Status));
+        Assert.DoesNotContain(queuedDeliveries, d => d.Recipient == "admin@hydropilot.local");
+    }
+
+    [Fact]
+    public async Task AdminEmail_AndMockEmails_AreExcludedFromDeliveries()
+    {
+        await using var context = _fixture.NewContext();
+        var adminUser = await context.Users.FirstOrDefaultAsync(u => u.Email == "admin@hydropilot.local");
+        if (adminUser == null)
+        {
+            adminUser = new User
+            {
+                GoogleSub = "admin-sub",
+                Email = "admin@hydropilot.local",
+                GivenName = "Admin",
+                Surname = "Local",
+                Role = "Administrador",
+                CreatedAt = DateTime.UtcNow,
+                LastLoginAt = DateTime.UtcNow
+            };
+            context.Users.Add(adminUser);
+            await context.SaveChangesAsync();
+        }
+
+        var service = new NotificationService(_fixture.Factory, NullLogger<NotificationService>.Instance);
+        var pref = await service.GetUserPreferencesAsync(adminUser.Id);
+        pref.EmailEnabled = true;
+        await service.SaveUserPreferencesAsync(adminUser.Id, pref);
+
+        // Crear alerta crítica
+        var alert = await service.CreateAlertAsync(new CreateAlertDto(
+            NotificationTypes.DesbalanceQuimico,
+            NotificationSeverities.Critica,
+            "Alerta prueba admin exclusion",
+            "Mensaje",
+            $"admin-excl-{Guid.NewGuid():N}"
+        ));
+
+        // Debe tener entrega interna pero NUNCA entrega de email
+        var deliveries = await context.NotificationDeliveries
+            .Where(d => d.AlertId == alert!.Id && d.UserId == adminUser.Id)
+            .ToListAsync();
+
+        Assert.Contains(deliveries, d => d.Channel == NotificationChannels.Internal);
+        Assert.DoesNotContain(deliveries, d => d.Channel == NotificationChannels.Email);
     }
 
     [Fact]

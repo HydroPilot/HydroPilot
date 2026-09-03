@@ -94,8 +94,8 @@ public class NotificationService
                 CreatedAtUtc = DateTime.UtcNow
             });
 
-            // 2. Entrega por Email (Outbox) si el usuario la tiene habilitada y cumple severidad
-            if (pref.EmailEnabled && ShouldSendEmailForSeverity(dto.Severity, pref.MinSeverityEmail) && !string.IsNullOrWhiteSpace(user.Email))
+            // 2. Entrega por Email (Outbox) si el usuario la tiene habilitada, cumple severidad y no es una dirección mock excluida
+            if (pref.EmailEnabled && ShouldSendEmailForSeverity(dto.Severity, pref.MinSeverityEmail) && IsDeliverableEmail(user.Email))
             {
                 context.NotificationDeliveries.Add(new NotificationDelivery
                 {
@@ -276,9 +276,11 @@ public class NotificationService
             .Where(u => !string.IsNullOrWhiteSpace(u.Email))
             .ToListAsync(ct);
 
-        if (users.Count == 0)
+        var deliverableUsers = users.Where(u => IsDeliverableEmail(u.Email)).ToList();
+
+        if (deliverableUsers.Count == 0)
         {
-            return new SendTestEmailResult(false, "No hay usuarios registrados con dirección de correo.");
+            return new SendTestEmailResult(false, "No hay usuarios con dirección de correo válida para envío (se excluyen cuentas demo/admin locales como admin@hydropilot.local).");
         }
 
         var testAlert = new NotificationAlert
@@ -295,7 +297,7 @@ public class NotificationService
         context.NotificationAlerts.Add(testAlert);
         await context.SaveChangesAsync(ct);
 
-        foreach (var user in users)
+        foreach (var user in deliverableUsers)
         {
             // Se encola explícitamente sin importar que EmailEnabled esté en false
             context.NotificationDeliveries.Add(new NotificationDelivery
@@ -310,9 +312,9 @@ public class NotificationService
         }
 
         await context.SaveChangesAsync(ct);
-        _logger.LogInformation("Encolado email de prueba a {Count} usuarios.", users.Count);
+        _logger.LogInformation("Encolado email de prueba a {Count} usuarios reales (excluyendo cuentas de prueba como admin@hydropilot.local).", deliverableUsers.Count);
 
-        return new SendTestEmailResult(true, $"Se encoló el correo de prueba para {users.Count} usuarios registrados. El despachador lo enviará en los próximos segundos.", users.Count);
+        return new SendTestEmailResult(true, $"Se encoló el correo de prueba para {deliverableUsers.Count} usuario(s) con dirección real. El despachador lo enviará en los próximos segundos.", deliverableUsers.Count);
     }
 
     /// <summary>
@@ -408,5 +410,24 @@ public class NotificationService
         };
 
         return SeverityWeight(alertSeverity) >= SeverityWeight(minSeverity);
+    }
+
+    /// <summary>
+    /// Determina si una dirección de correo es válida para entrega externa real.
+    /// Excluye explícitamente la dirección admin@hydropilot.local y dominios de prueba/internos.
+    /// </summary>
+    public static bool IsDeliverableEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return false;
+        var trimmed = email.Trim().ToLowerInvariant();
+
+        // Excluir email del admin por defecto y direcciones mock de prueba
+        if (trimmed == "admin@hydropilot.local" || trimmed.EndsWith("@hydropilot.local"))
+            return false;
+
+        if (trimmed.EndsWith(".local") || trimmed.EndsWith(".example") || trimmed.EndsWith(".test") || trimmed.EndsWith(".invalid"))
+            return false;
+
+        return trimmed.Contains('@') && trimmed.Contains('.');
     }
 }

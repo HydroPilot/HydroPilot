@@ -88,6 +88,15 @@ public class NotificationDispatcherHostedService : BackgroundService
                 continue;
             }
 
+            if (!NotificationService.IsDeliverableEmail(delivery.Recipient))
+            {
+                delivery.Status = DeliveryStatuses.Failed;
+                delivery.LastError = "Dirección de correo excluida (cuenta demo/admin local no entregable).";
+                _logger.LogInformation("Entrega de email {DeliveryId} omitida: destinatario {Recipient} es de prueba interna.",
+                    delivery.Id, delivery.Recipient);
+                continue;
+            }
+
             delivery.Attempts++;
             var attemptNumber = delivery.Attempts;
 
