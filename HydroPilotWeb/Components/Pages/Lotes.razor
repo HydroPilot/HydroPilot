@@ -1,349 +1,550 @@
 @page "/lotes"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
-@using Microsoft.EntityFrameworkCore
-@using HydroPilotWeb.Controllers
+@using System.Security.Claims
 @using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Services.Lotes
-@inject IDbContextFactory<HydroPilotDbContext> DbFactory
+@inject LotOverviewService LotOverview
 @inject LotAggregateService LotAggregate
-@inject LotDailyFlowService DailyFlow
 @inject PlantLifecycleService PlantLifecycle
+@inject SystemParametersService SystemParameters
+@inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
 
-<PageTitle>Estado de lote</PageTitle>
+<PageTitle>Lotes</PageTitle>
 
 @if (error is not null)
 {
     <div class="alert alert-danger">@error</div>
 }
 
-<h1 class="h4 mb-3">Estado de lote</h1>
-
-<div class="mb-3 d-flex gap-2 align-items-center flex-wrap">
-    <label class="form-label mb-0">Lote:</label>
-    <select class="form-select form-select-sm" style="width: auto;" @bind="selectedLotId" @bind:after="LoadLot">
-        @foreach (var lot in lots)
-        {
-            <option value="@lot.Id">#@lot.Id — @(lot.CropType) (@(lot.Status), siembra @lot.SowingDate.ToString("dd/MM/yyyy"))</option>
-        }
-    </select>
-
-    <label class="form-label mb-0 ms-2">Simular fecha:</label>
-    <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="simDate" @bind:after="LoadLot" />
-    <button class="btn btn-outline-secondary btn-sm" @onclick="ResetSimDate">Hoy</button>
-
-    <AuthorizeView>
-        <Authorized>
-            @if (context.User.IsInRole("Administrador"))
-            {
-                <button class="btn btn-outline-primary btn-sm ms-auto" @onclick="RunDailyFlow" disabled="@runningFlow">
-                    @(runningFlow ? "Evaluando..." : "Ejecutar flujo diario (demo)")
-                </button>
-            }
-        </Authorized>
-    </AuthorizeView>
-</div>
-
-@if (state is null && loading)
+@if (lots is null)
 {
     <div class="d-flex justify-content-center my-5">
-        <div class="spinner-border" role="status">
-            <span class="visually-hidden">Cargando...</span>
-        </div>
+        <div class="spinner-border" role="status"><span class="visually-hidden">Cargando...</span></div>
     </div>
 }
-else if (state is null)
+else if (lots.Count == 0)
 {
     <div class="alert alert-info">
-        No hay lotes registrados. Creá uno desde <a href="forecasting">Forecasting</a> o ejecutá el seed de datos demo.
+        No hay lotes registrados. Creá uno desde <a href="forecasting">Forecasting</a> o cargá los datos demo.
     </div>
 }
 else
 {
-    @foreach (var warning in state.Warnings)
-    {
-        <div class="alert alert-warning py-1 px-2 small">@warning</div>
-    }
+    <div class="lot-view">
+        <div class="lot-toolbar">
+            <label class="visually-hidden" for="lot-select">Lote</label>
+            <select id="lot-select" class="form-select lot-toolbar__select" @bind="selectedLotId" @bind:after="OnLotChangedAsync">
+                @foreach (var lot in lots)
+                {
+                    <option value="@lot.Id">@lot.Name · @StatusLabel(lot.StatusName)</option>
+                }
+            </select>
 
-    @if (state.HarvestReadiness is { } readiness)
-    {
-        @if (readiness.IsReady == true)
-        {
-            <div class="alert alert-success py-1 px-2 small">
-                ✅ Lote listo para cosecha Baby Leaf: GDD en ventana y @readiness.AptaPercent% de aptas sobre @readiness.TotalActivePlants activas
-                (objetivo @readiness.TargetPercent%).
+            @* Sin chip de estado ni área/siembra: el estado ya va en el texto del selector. *@
+            @if (overview is { IsClosed: false } current)
+            {
+                @foreach (var reading in current.Solution)
+                {
+                    <span class="lot-chip lot-chip--@SolutionTone(reading)" title="@SolutionTitle(reading)">@SolutionText(reading)</span>
+                }
+                @if (current.DataAlerts.Count > 0)
+                {
+                    @* Mismo aviso que la sección "Detalles y calidad de los datos" (en rojo): al tocarlo la abre. *@
+                    <button type="button" class="lot-chip lot-chip--danger lot-chip--strong" @onclick="ShowDataDetailsAsync"
+                            title="@($"{string.Join(" · ", current.DataAlerts.Select(a => a.Title))}. Ver detalles y calidad de los datos.")">
+                        ⚠ @(current.NoticeCount == 1 ? "1 aviso" : $"{current.NoticeCount} avisos")
+                    </button>
+                }
+            }
+
+            <div class="lot-toolbar__date">
+                <label for="lot-asof">Ver al</label>
+                <input id="lot-asof" type="date" class="form-control form-control-sm" @bind="simDate" @bind:after="LoadAsync" />
+                @if (simDate is not null)
+                {
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="ResetSimDateAsync">Hoy</button>
+                }
             </div>
+        </div>
+
+        @if (overview is null)
+        {
+            @if (loading)
+            {
+                <div class="d-flex justify-content-center my-5">
+                    <div class="spinner-border" role="status"><span class="visually-hidden">Cargando...</span></div>
+                </div>
+            }
         }
         else
         {
-            <div class="alert alert-info py-1 px-2 small">
-                Cosecha Baby Leaf: @readiness.AptaPlantCount/@readiness.TotalActivePlants aptas (@readiness.AptaPercent%).
-                @foreach (var w in readiness.Warnings)
-                {
-                    <div>⚠ @w</div>
-                }
-            </div>
-        }
-    }
-
-    <div class="row g-3">
-        <div class="col-md-3">
-            <LotSummaryCard State="state" />
-            <div class="mt-3">
-                <h6 class="small text-uppercase text-muted">Conteos por estado</h6>
-                <LotCountsSummary Counts="state.CommercialCounts" />
-            </div>
-
-            <div class="card mt-3">
-                <div class="card-body">
-                    <h6 class="card-title">Forecast de cosecha</h6>
-                    <ul class="list-group list-group-flush small">
-                        <li class="list-group-item d-flex justify-content-between">
-                            <span>Fecha estimada</span>
-                            <strong>—</strong>
-                        </li>
-                        <li class="list-group-item d-flex justify-content-between">
-                            <span>Rendimiento estimado</span>
-                            <strong>—</strong>
-                        </li>
-                    </ul>
-                    <p class="text-muted small mb-0 mt-2">
-                        El módulo de forecasting todavía no está integrado en esta rama:
-                        no se muestran valores estimados. El resultado híbrido disponible
-                        (ventana GDD + porcentaje de aptas) se muestra en el aviso de cosecha.
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-6">
-            <LotMap Rows="state.GridRows ?? 0"
-                    Columns="state.GridColumns ?? 0"
-                    Cells="state.Cells"
-                    SelectedPosition="selectedPosition"
-                    OnCellSelected="SelectCell" />
-            <div class="mt-2">
-                <LotLegend Counts="state.CommercialCounts"
-                           EmptyPositions="state.EmptyPositions"
-                           DiscardedPlants="state.DiscardedPlants" />
-            </div>
-        </div>
-
-        <div class="col-md-3">
-            <PlantDetailCard Detail="detail"
-                             OnHarvest="HarvestSelected"
-                             OnDiscard="AskDiscardReason" />
-
-            @if (selectedCell?.PlantId is { } plantId && detail?.OperationalState == PlantOperationalState.Activa)
+            @if (simDate is { } viewDate)
             {
-                <div class="card mt-2">
-                    <div class="card-body py-2">
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-sm btn-success" @onclick="HarvestSelected" disabled="@operating">
-                                Cosechar F@(selectedCell.Row)-C@(selectedCell.Column)
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" @onclick="() => showDiscardInput = !showDiscardInput">
-                                Descartar
-                            </button>
-                        </div>
-                        @if (showDiscardInput)
-                        {
-                            <div class="input-group input-group-sm mt-2">
-                                <input class="form-control" placeholder="Motivo de descarte (opcional)" @bind="discardReason" />
-                                <button class="btn btn-danger" @onclick="() => DiscardSelected(discardReason)" disabled="@operating">
-                                    Confirmar
-                                </button>
-                            </div>
-                        }
-                    </div>
+                <div class="alert alert-info py-1 px-2 small mb-0">
+                    Vista al @LotFormat.Day(viewDate): se recalcula con los datos hasta esa fecha. El estado de las plantas es el actual.
                 </div>
             }
-        </div>
+
+            @* Mapa a la izquierda (60%) y las cards de situación apiladas a la derecha (40%).
+               En pantallas angostas se apila todo, con las cards primero. *@
+            <div class="lot-layout">
+                @* Columna izquierda: mapa y, debajo, los detalles técnicos (mismo ancho). *@
+                <div class="lot-layout__main">
+                    <section class="panel">
+                        <div class="lot-panel-head">
+                            <h3 class="lot-panel-title">Mapa del lote</h3>
+                            @* Ojo: los parámetros string van con @ (sin @ Razor pasa el texto literal "highlightKey"). *@
+                            <LotMapFilters Plants="overview.Plants" Selected="@highlightKey" OnSelected="OnFilterChanged" />
+                        </div>
+                        @* El detalle de la planta se abre como popover anclado a la celda (no reserva espacio fijo). *@
+                        <div class="lot-map-stage @(detail is not null ? "lot-map-stage--open" : null)" style="@MapStageStyle">
+                            <LotMap Rows="overview.State.GridRows ?? 0"
+                                    Columns="overview.State.GridColumns ?? 0"
+                                    Cells="overview.State.Cells"
+                                    SelectedPosition="selectedPosition"
+                                    HighlightKey="@highlightKey"
+                                    OnCellSelected="SelectCellAsync" />
+                            @if (detail is not null && Popover is { } popover)
+                            {
+                                <div class="lot-popover @popover.Css" style="@popover.Style" role="dialog"
+                                     aria-label="@($"Detalle de la posición F{detail.Row}-C{detail.Column}")"
+                                     tabindex="-1" @ref="popoverRef" @onkeydown="OnPopoverKeyDown">
+                                    <PlantDetailCard Detail="detail" AllowActions="!overview.IsClosed" Busy="operating"
+                                                     OnHarvest="HarvestSelectedAsync" OnDiscard="DiscardSelectedAsync"
+                                                     OnClose="ClosePopover" />
+                                </div>
+                            }
+                        </div>
+                        @* Estado de todas las plantas del lote, a todo el ancho debajo del mapa. *@
+                        <div class="mt-3">
+                            <LotStatusBar Plants="overview.Plants" />
+                        </div>
+                        <p class="lot-muted">Tocá una planta del mapa para ver su detalle.</p>
+                    </section>
+
+                    <LotTechnicalDetails Overview="overview" />
+                </div>
+
+                <div class="lot-layout__side">
+                    <LotWindowCard Overview="overview" />
+                    <LotBabyLeafCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
+                    <LotLossCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
+                    @if (editingObjectives)
+                    {
+                        @* Metas del ciclo (Baby Leaf y pérdidas): se abre debajo de las cards que las usan. *@
+                        <LotObjectivesEditor Current="overview.Objectives" Saving="savingObjectives" Errors="objectiveErrors"
+                                             OnSave="SaveObjectivesAsync" OnCancel="CloseEditor" />
+                    }
+
+                    @* Umbral de cosecha (% de aptas para cortar el lote): oculto por ahora, en revisión si aporta valor.
+                    <LotThresholdCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
+                    *@
+
+                    <LotYieldCard Overview="overview" CanEdit="canEditParameters" OnEditReference="OpenReferenceEditor" />
+                    @if (editingReference && referenceParameters is not null)
+                    {
+                        @* Atajo a Ajustes > Parámetros: se abre debajo de la card que usa esos valores. *@
+                        <section class="panel" aria-labelledby="lot-reference-title">
+                            <div class="lot-panel-head">
+                                <h3 class="lot-panel-title" id="lot-reference-title">Pesos y precios de referencia</h3>
+                                <a class="lot-link" href="settings/parametros">Ver en Parámetros</a>
+                            </div>
+                            <p class="lot-muted mt-0 mb-3">Son parámetros del sistema: aplican a todos los lotes.</p>
+                            <YieldParametersEditor Current="referenceParameters" Saving="savingReference" Errors="referenceErrors"
+                                                   OnSave="SaveReferenceAsync" OnCancel="CloseReferenceEditor" />
+                        </section>
+                    }
+                </div>
+            </div>
+
+            @if (detail is not null)
+            {
+                @* Capa invisible: un clic fuera del mapa cierra el detalle (las celdas quedan por encima). *@
+                <div class="lot-popover-backdrop" @onclick="ClosePopover"></div>
+            }
+        }
     </div>
 }
 
 @code {
-    private List<LotSummary> lots = [];
+    /// <summary>Lote a abrir desde un enlace (/lotes?lote=ID); si no existe se usa el primero.</summary>
+    [SupplyParameterFromQuery(Name = "lote")]
+    public int? LotFromQuery { get; set; }
+
+    private IReadOnlyList<LotOption>? lots;
     private int? selectedLotId;
     private DateOnly? simDate;
-    private LotStateDto? state;
+    private LotOverviewDto? overview;
     private PlantDetailDto? detail;
-    private PlantCellDto? selectedCell;
     private (int Row, int Column)? selectedPosition;
+    private string? highlightKey;
+    private ElementReference popoverRef;
+    private bool focusPopover;
     private string? error;
-    private bool loading = true;
-    private bool runningFlow;
+    private bool loading;
     private bool operating;
-    private bool showDiscardInput;
-    private string? discardReason;
+
+    private ClaimsPrincipal user = new();
+    private bool canEdit;
+    private bool editingObjectives;
+    private bool savingObjectives;
+    private IReadOnlyList<string> objectiveErrors = [];
+    private bool editingReference;
+    private bool savingReference;
+    private IReadOnlyList<string> referenceErrors = [];
+    private YieldParameters? referenceParameters;
+    private bool canEditParameters;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadLotsAsync();
-    }
-
-    private async Task LoadLotsAsync()
-    {
         try
         {
-            await using var context = await DbFactory.CreateDbContextAsync();
-            lots = await context.Lots
-                .Include(l => l.CropType)
-                .Include(l => l.Status)
-                .OrderByDescending(l => l.SowingDate)
-                .Select(l => new LotSummary(l.Id, l.CropType!.Name, l.Status!.Name, l.SowingDate, l.PlantedAreaM2))
-                .ToListAsync();
+            user = (await AuthState.GetAuthenticationStateAsync()).User;
+            canEdit = LotOverviewService.CanEditObjectives(user);
+            canEditParameters = SystemParametersService.CanEdit(user);
 
-            if (lots.Count > 0)
-            {
-                selectedLotId ??= lots[0].Id;
-                await LoadLot();
-            }
-            else
-            {
-                loading = false;
-            }
+            lots = await LotOverview.GetLotOptionsAsync();
+            selectedLotId = lots.Any(l => l.Id == LotFromQuery) ? LotFromQuery : lots.FirstOrDefault()?.Id;
+            await LoadAsync();
         }
         catch (Exception ex)
         {
             error = $"No se pudo cargar la lista de lotes: {ex.Message}";
-            loading = false;
+            lots ??= [];
         }
     }
 
-    private async Task LoadLot()
+    private async Task OnLotChangedAsync()
     {
-        if (selectedLotId is null)
+        highlightKey = null;
+        editingObjectives = false;
+        editingReference = false;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (selectedLotId is not { } lotId)
             return;
 
         loading = true;
         error = null;
         try
         {
-            state = await LotAggregate.GetLotStateAsync(selectedLotId.Value, simDate);
+            overview = await LotOverview.GetOverviewAsync(lotId, simDate);
             detail = null;
-            selectedCell = null;
             selectedPosition = null;
-            loading = false;
+            if (overview is null)
+                error = "El lote seleccionado ya no existe.";
         }
         catch (Exception ex)
         {
             error = $"No se pudo cargar el estado del lote: {ex.Message}";
+        }
+        finally
+        {
             loading = false;
         }
     }
 
-    private async Task SelectCell(PlantCellDto cell)
+    private async Task ResetSimDateAsync()
     {
-        selectedCell = cell;
+        simDate = null;
+        await LoadAsync();
+    }
+
+    private async Task SelectCellAsync(PlantCellDto cell)
+    {
+        // Tocar la misma planta cierra el detalle; otra planta lo mueve a esa celda.
+        if (detail is not null && selectedPosition == (cell.Row, cell.Column))
+        {
+            ClosePopover();
+            return;
+        }
+
         selectedPosition = (cell.Row, cell.Column);
-
-        if (cell.PlantId is { } plantId)
-        {
-            detail = await LotAggregate.GetPlantDetailAsync(
-                plantId,
-                state?.GddAccumulated ?? 0m,
-                state?.CurrentPh,
-                state?.CurrentEc);
-        }
-        else
-        {
-            detail = new PlantDetailDto(
-                0, cell.Row, cell.Column, null, null, default,
-                null, null, null, state?.GddAccumulated ?? 0m,
-                state?.CurrentPh, state?.CurrentEc, null, null, null, null, null,
-                false, null, null, [], ["Posición vacía: no hay planta en esta posición."]);
-        }
+        detail = await LoadDetailAsync(cell);
+        focusPopover = true;
     }
 
-    private async Task RunDailyFlow()
+    private void ClosePopover()
     {
-        if (selectedLotId is null)
-            return;
-
-        runningFlow = true;
-        error = null;
-        try
-        {
-            var result = await DailyFlow.RunDailyAsync(selectedLotId.Value, simDate);
-            if (result is null)
-                error = "Lote no encontrado.";
-            await LoadLot();
-        }
-        catch (Exception ex)
-        {
-            error = $"Fallo al ejecutar el flujo diario: {ex.Message}";
-        }
-        finally
-        {
-            runningFlow = false;
-        }
+        detail = null;
+        selectedPosition = null;
     }
 
-    private async Task HarvestSelected()
+    private void OnPopoverKeyDown(KeyboardEventArgs e)
     {
-        if (selectedCell?.PlantId is not { } plantId)
-            return;
-        operating = true;
-        try
-        {
-            await PlantLifecycle.HarvestPlantAsync(plantId);
-            await ReloadAfterOperation();
-        }
-        catch (Exception ex)
-        {
-            error = $"No se pudo cosechar: {ex.Message}";
-        }
-        finally
-        {
-            operating = false;
-        }
+        if (e.Key == "Escape")
+            ClosePopover();
     }
 
-    private void AskDiscardReason() => showDiscardInput = !showDiscardInput;
-
-    private async Task DiscardSelected(string? reason)
+    private void OnFilterChanged(string? key)
     {
-        if (selectedCell?.PlantId is not { } plantId)
-            return;
-        operating = true;
-        try
-        {
-            await PlantLifecycle.DiscardPlantAsync(plantId, string.IsNullOrWhiteSpace(reason) ? null : reason);
-            showDiscardInput = false;
-            discardReason = null;
-            await ReloadAfterOperation();
-        }
-        catch (Exception ex)
-        {
-            error = $"No se pudo descartar: {ex.Message}";
-        }
-        finally
-        {
-            operating = false;
-        }
+        highlightKey = key;
+        ClosePopover();
     }
 
-    private async Task ReloadAfterOperation()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        await LoadLot();
-        if (selectedPosition is { } pos && selectedCell?.PlantId is { } plantId)
+        // Foco en el popover recién abierto: Escape lo cierra y los lectores de pantalla lo anuncian.
+        if (focusPopover && detail is not null)
         {
-            selectedCell = state?.Cells.FirstOrDefault(c => c.Row == pos.Row && c.Column == pos.Column);
-            if (selectedCell?.PlantId is { } newPlantId)
+            focusPopover = false;
+            try
             {
-                detail = await LotAggregate.GetPlantDetailAsync(
-                    newPlantId,
-                    state?.GddAccumulated ?? 0m,
-                    state?.CurrentPh,
-                    state?.CurrentEc);
+                await popoverRef.FocusAsync(preventScroll: true);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or JSException)
+            {
+                // El popover ya no está en el DOM (se cerró antes de enfocarlo): no hace falta el foco.
             }
         }
     }
 
-    private void ResetSimDate()
+    /// <summary>Ancho máximo del mapa: celdas de hasta 72 px para que no quede gigante a pantalla completa.</summary>
+    private string MapStageStyle => overview?.State.GridColumns is int cols and > 0
+        ? $"max-width: {cols * 72 + (cols - 1) * 4 + 22}px;"
+        : string.Empty;
+
+    private sealed record PopoverPlacement(string Css, string Style);
+
+    /// <summary>
+    /// Ubicación del popover según la celda: abre hacia abajo en la mitad superior de la grilla y
+    /// hacia arriba en la inferior; se alinea a izquierda/centro/derecha según la columna.
+    /// Las posiciones son % del mapa (descontando su padding), así acompañan el ancho de la pantalla.
+    /// </summary>
+    private PopoverPlacement? Popover
     {
-        simDate = null;
-        _ = LoadLot();
+        get
+        {
+            if (overview is null || selectedPosition is not { } pos)
+                return null;
+            var rows = overview.State.GridRows ?? 0;
+            var cols = overview.State.GridColumns ?? 0;
+            if (rows <= 0 || cols <= 0)
+                return null;
+
+            var fx = (pos.Column - 0.5m) / cols;
+            var below = pos.Row <= Math.Ceiling(rows / 2m);
+            var align = fx < 0.34m ? "start" : fx > 0.66m ? "end" : "center";
+
+            var x = $"left: calc(11px + (100% - 22px) * {Css(fx)})";
+            var y = below
+                ? $"top: calc(11px + (100% - 22px) * {Css((decimal)pos.Row / rows)} + 8px)"
+                : $"bottom: calc(11px + (100% - 22px) * {Css(1m - (decimal)(pos.Row - 1) / rows)} + 8px)";
+
+            return new PopoverPlacement($"lot-popover--{(below ? "below" : "above")} lot-popover--{align}", $"{x}; {y};");
+        }
+    }
+
+    private static string Css(decimal value) => value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+
+    private async Task<PlantDetailDto?> LoadDetailAsync(PlantCellDto cell)
+    {
+        if (overview is null)
+            return null;
+
+        var state = overview.State;
+        if (cell.PlantId is { } plantId)
+            return await LotAggregate.GetPlantDetailAsync(plantId, state.GddAccumulated, state.CurrentPh, state.CurrentEc);
+
+        // Posición vacía: el detalle lo indica sin inventar datos.
+        return new PlantDetailDto(
+            0, cell.Row, cell.Column, null, null, default,
+            null, null, null, state.GddAccumulated,
+            state.CurrentPh, state.CurrentEc, null, null, null, null, null,
+            false, null, null, [], []);
+    }
+
+    // Chip "⚠ N avisos" de la fila del lote: abre la sección de detalles y la lleva a la vista.
+    private async Task ShowDataDetailsAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                "const d = document.getElementById('lot-data-details'); if (d) { d.open = true; d.scrollIntoView({ block: 'center' }); }");
+        }
+        catch (JSException)
+        {
+            // Si el circuito se reconecta justo en ese momento, el chip simplemente no hace nada.
+        }
+    }
+
+    private void OpenEditor()
+    {
+        objectiveErrors = [];
+        editingObjectives = true;
+    }
+
+    private void CloseEditor()
+    {
+        objectiveErrors = [];
+        editingObjectives = false;
+    }
+
+    private async Task SaveObjectivesAsync(LotObjectives input)
+    {
+        if (selectedLotId is not { } lotId)
+            return;
+
+        savingObjectives = true;
+        try
+        {
+            var result = await LotOverview.UpdateObjectivesAsync(lotId, input, user);
+            if (result.Succeeded)
+            {
+                editingObjectives = false;
+                objectiveErrors = [];
+                await LoadAsync();
+            }
+            else
+            {
+                objectiveErrors = result.Errors;
+            }
+        }
+        catch (Exception ex)
+        {
+            objectiveErrors = [$"No se pudieron guardar los objetivos: {ex.Message}"];
+        }
+        finally
+        {
+            savingObjectives = false;
+        }
+    }
+
+    // Atajo desde la card de rendimiento a los parámetros del sistema (los mismos de Ajustes > Parámetros).
+    private async Task OpenReferenceEditor()
+    {
+        referenceErrors = [];
+        try
+        {
+            referenceParameters = await SystemParameters.GetYieldParametersAsync();
+            editingReference = true;
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar los parámetros: {ex.Message}";
+        }
+    }
+
+    private void CloseReferenceEditor()
+    {
+        referenceErrors = [];
+        editingReference = false;
+    }
+
+    private async Task SaveReferenceAsync(YieldReferenceInput input)
+    {
+        savingReference = true;
+        try
+        {
+            var result = await SystemParameters.UpdateYieldParametersAsync(input, user);
+            if (result.Succeeded)
+            {
+                editingReference = false;
+                referenceErrors = [];
+                await LoadAsync();
+            }
+            else
+            {
+                referenceErrors = result.Errors;
+            }
+        }
+        catch (Exception ex)
+        {
+            referenceErrors = [$"No se pudieron guardar los pesos y precios: {ex.Message}"];
+        }
+        finally
+        {
+            savingReference = false;
+        }
+    }
+
+    private async Task HarvestSelectedAsync()
+    {
+        if (detail is not { PlantId: > 0 } plant)
+            return;
+
+        await OperateAsync(() => PlantLifecycle.HarvestPlantAsync(plant.PlantId), "No se pudo cosechar");
+    }
+
+    private async Task DiscardSelectedAsync(string? reason)
+    {
+        if (detail is not { PlantId: > 0 } plant)
+            return;
+
+        await OperateAsync(() => PlantLifecycle.DiscardPlantAsync(plant.PlantId, reason), "No se pudo descartar");
+    }
+
+    /// <summary>Ejecuta una operación sobre la planta seleccionada y recarga manteniendo la selección.</summary>
+    private async Task OperateAsync(Func<Task> operation, string errorPrefix)
+    {
+        operating = true;
+        try
+        {
+            await operation();
+            var position = selectedPosition;
+            await LoadAsync();
+            if (position is { } pos && overview?.State.Cells.FirstOrDefault(c => c.Row == pos.Row && c.Column == pos.Column) is { } cell)
+            {
+                selectedPosition = pos;
+                detail = await LoadDetailAsync(cell);
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"{errorPrefix}: {ex.Message}";
+        }
+        finally
+        {
+            operating = false;
+        }
+    }
+
+    private static string StatusLabel(string? status) => status switch
+    {
+        "ACTIVO" => "Activo",
+        "EN_PAUSA" => "En pausa",
+        "COSECHADO" => "Cosechado",
+        "DESCARTADO" => "Descartado",
+        _ => status ?? "Sin estado"
+    };
+
+    private static string SolutionTone(SolutionReadingDto reading) => reading.InBand switch
+    {
+        true => "success",
+        false => "danger",
+        _ => "info"
+    };
+
+    private static string SolutionText(SolutionReadingDto reading)
+    {
+        if (reading.Value is not { } value)
+            return $"{reading.SensorType} sin datos";
+
+        var number = value.ToString("0.0#", LotFormat.Culture);
+        var unit = reading.SensorType == "CE" ? " mS/cm" : string.Empty;
+        var band = reading.InBand switch
+        {
+            true => " · en rango",
+            false => " · fuera de rango",
+            _ => string.Empty
+        };
+        var source = reading.IsManualValue ? " (manual)" : reading.IsFresh ? string.Empty : " (desactualizado)";
+        return $"{(reading.InBand == false ? "⚠ " : null)}{reading.SensorType} {number}{unit}{band}{source}";
+    }
+
+    private static string SolutionTitle(SolutionReadingDto reading)
+    {
+        var band = reading.BandMin is { } min && reading.BandMax is { } max
+            ? $"Rango {min.ToString("0.0#", LotFormat.Culture)}–{max.ToString("0.0#", LotFormat.Culture)}"
+            : "Sin rango configurado";
+        var origin = reading.ObservedAtUtc is { } observed
+            ? $"última lectura {observed.ToLocalTime():dd/MM HH:mm}"
+            : reading.IsManualValue ? "valor cargado a mano en el lote (sin lecturas del sensor)" : "sin lecturas";
+        return $"{band} · {origin}";
     }
 }

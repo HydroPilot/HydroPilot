@@ -27,6 +27,7 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Admin.AdminMaintenanceService>
 builder.Services.AddScoped<GddService>();
 builder.Services.AddScoped<YieldService>();
 builder.Services.AddScoped<SettingsService>();
+builder.Services.AddScoped<SystemParametersService>();
 builder.Services.AddScoped<ForecastService>();
 builder.Services.AddScoped<TelemetryValidationService>();
 builder.Services.AddScoped<TelemetryIngestionService>();
@@ -45,6 +46,7 @@ builder.Services.AddScoped<LotAggregateService>();
 builder.Services.AddScoped<PlantEvaluationService>();
 builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
+builder.Services.AddScoped<LotOverviewService>();
 
 // --- Módulo de anomalías (plan 15 / ANO-01..09) ---
 // El proveedor de riesgo REAL se registra después del NoPlantRiskProvider: gana el último.

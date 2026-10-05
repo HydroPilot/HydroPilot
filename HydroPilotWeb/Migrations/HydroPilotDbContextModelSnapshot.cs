@@ -604,6 +604,9 @@ namespace HydroPilotWeb.Migrations
                     b.Property<int?>("AppliedPhenologicalStageId")
                         .HasColumnType("int");
 
+                    b.Property<decimal?>("BabyLeafGoalPercent")
+                        .HasColumnType("decimal(5,2)");
+
                     b.Property<decimal?>("BabyLeafHarvestTargetPercent")
                         .HasColumnType("decimal(5,2)");
 
@@ -632,6 +635,9 @@ namespace HydroPilotWeb.Migrations
 
                     b.Property<bool>("IsCommercialStageMixed")
                         .HasColumnType("bit");
+
+                    b.Property<decimal?>("MaxLossPercent")
+                        .HasColumnType("decimal(5,2)");
 
                     b.Property<string>("Name")
                         .HasMaxLength(150)

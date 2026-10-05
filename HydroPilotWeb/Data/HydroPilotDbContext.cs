@@ -331,6 +331,8 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.CurrentPh).HasColumnType("decimal(4,2)");
             entity.Property(e => e.CurrentEc).HasColumnType("decimal(6,2)");
             entity.Property(e => e.BabyLeafHarvestTargetPercent).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.BabyLeafGoalPercent).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.MaxLossPercent).HasColumnType("decimal(5,2)");
 
             entity.HasIndex(e => e.StatusId);
             entity.HasIndex(e => e.CropTypeId);

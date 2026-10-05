@@ -1,0 +1,94 @@
+@page "/settings/parametros"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@using HydroPilotWeb.Services.Lotes
+@inject SystemParametersService ParametersService
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Parámetros del sistema - HydroPilot</PageTitle>
+
+@* Parámetros globales: valen para todo el sistema, no para un lote. Todos los ven; solo
+   Administrador y Productor los editan. *@
+<section class="settings-layout">
+    <div class="settings-stack">
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Rendimiento</span>
+                    <h3>Pesos y precios de referencia</h3>
+                    <p class="panel__subtitle">
+                        Con estos valores se estima el rendimiento de cada lote: plantas × peso promedio × precio por kg.
+                        Aplican a todos los lotes.
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (error is not null)
+            {
+                <div class="alert alert-danger py-2 small">@error</div>
+            }
+            else if (current is null)
+            {
+                <div class="d-flex justify-content-center my-4">
+                    <div class="spinner-border" role="status"><span class="visually-hidden">Cargando...</span></div>
+                </div>
+            }
+            else
+            {
+                <YieldParametersEditor Current="current" ReadOnly="!canEdit" Saving="saving" Errors="errors"
+                                       SavedMessage="@savedMessage" OnSave="SaveAsync" />
+            }
+        </article>
+    </div>
+</section>
+
+@code {
+    private YieldParameters? current;
+    private System.Security.Claims.ClaimsPrincipal user = new();
+    private bool canEdit;
+    private bool saving;
+    private IReadOnlyList<string> errors = [];
+    private string? savedMessage;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            user = (await AuthState.GetAuthenticationStateAsync()).User;
+            canEdit = SystemParametersService.CanEdit(user);
+            current = await ParametersService.GetYieldParametersAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar los parámetros: {ex.Message}";
+        }
+    }
+
+    private async Task SaveAsync(YieldReferenceInput input)
+    {
+        saving = true;
+        savedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateYieldParametersAsync(input, user);
+            errors = result.Errors;
+            if (result.Succeeded)
+            {
+                current = await ParametersService.GetYieldParametersAsync();
+                savedMessage = "Parámetros guardados.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errors = [$"No se pudieron guardar los parámetros: {ex.Message}"];
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

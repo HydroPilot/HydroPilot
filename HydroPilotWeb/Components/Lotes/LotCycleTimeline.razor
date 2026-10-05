@@ -1,0 +1,133 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@if (Timeline is null)
+{
+    <p class="lot-muted mt-0">Sin datos de temperatura suficientes para proyectar las ventanas de cosecha.</p>
+}
+else
+{
+    var t = Timeline!;
+    <div class="lot-timeline" role="img" aria-label="@AriaLabel(t)">
+        @{
+            var todayPos = Pos(t.AsOfDate);
+        }
+        <div class="lot-timeline__today-label @EdgeClass(todayPos)" style="left: @Css(todayPos)%;">
+            @(t.AsOfDate == Today ? "Hoy" : LotFormat.Short(t.AsOfDate)) <span class="lot-timeline__cycle-day">(día @t.CycleDay)</span>
+        </div>
+        @* El tramo de la fase actual va en color pleno; el resto, atenuado. *@
+        <div class="lot-timeline__bar">
+            <div class="lot-timeline__seg lot-timeline__seg--dev @Current(CyclePhase.Desarrollo)" style="width: @Css(Width(t.SowingDate, t.BabyLeafOpens.Date))%;"
+                 title="Desarrollo: de la siembra a la apertura de la ventana Baby Leaf">desarrollo</div>
+            @if (t.BabyLeafOpens.Date is { } opens)
+            {
+                <div class="lot-timeline__seg lot-timeline__seg--bl @Current(CyclePhase.VentanaBabyLeaf)" style="width: @Css(Width(opens, t.BabyLeafCloses.Date))%;"
+                     title="@($"Ventana Baby Leaf: {Range(t.BabyLeafOpens, t.BabyLeafCloses)}")">Baby Leaf</div>
+            }
+            @if (t.BabyLeafCloses.Date is { } closes)
+            {
+                <div class="lot-timeline__seg lot-timeline__seg--conv @Current(CyclePhase.VentanaConvencional)" style="width: @Css(Width(closes, t.Overmaturity.Date))%;"
+                     title="@($"Ventana convencional: {Range(t.BabyLeafCloses, t.Overmaturity)} (requiere confirmar tamaño)")">convencional</div>
+            }
+        </div>
+        <div class="lot-timeline__today" style="left: @Css(Pos(t.AsOfDate))%;"></div>
+        @if (HarvestDate is { } harvest)
+        {
+            <div class="lot-timeline__harvest" style="left: @Css(Pos(harvest))%;" title="Cosecha estimada: @LotFormat.Day(harvest)"></div>
+        }
+        <div class="lot-timeline__labels">
+            <span class="lot-timeline__label--start" style="left: 0%;" title="Siembra">@LotFormat.Short(t.SowingDate)</span>
+            @if (t.BabyLeafOpens.Date is { } o)
+            {
+                <span style="left: @Css(Pos(o))%;" title="@MilestoneTitle("Abre la ventana Baby Leaf", t.BabyLeafOpens)">@Label(t.BabyLeafOpens)</span>
+            }
+            @if (t.BabyLeafCloses.Date is { } c && t.Overmaturity.Date is not null)
+            {
+                <span style="left: @Css(Pos(c))%;" title="@MilestoneTitle("Cierra la ventana Baby Leaf y abre la convencional", t.BabyLeafCloses)">@Label(t.BabyLeafCloses)</span>
+            }
+            <span class="lot-timeline__label--end" style="left: 100%;" title="@EndTitle(t)">@EndLabel(t)</span>
+        </div>
+        @if (HarvestDate is { } h)
+        {
+            @* Leyenda en vez de etiqueta posicionada: la cosecha suele caer cerca de otros hitos y se pisaría. *@
+            <div class="lot-timeline__legend"
+                 title="@(HarvestIsExtrapolated ? "Más allá de los 7 días de pronóstico: extrapolación con el último GDD diario." : null)">
+                <span class="lot-timeline__harvest-icon" aria-hidden="true"></span>
+                Cosecha estimada <strong>@(HarvestIsExtrapolated ? "≈ " : null)@LotFormat.Day(h)</strong>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public CycleTimeline? Timeline { get; set; }
+
+    /// <summary>Fecha estimada de cosecha (forecast): se marca sobre la barra si cae dentro de la escala.</summary>
+    [Parameter] public DateOnly? EstimatedHarvestDate { get; set; }
+
+    /// <summary>La cosecha cae más allá del horizonte del pronóstico: se muestra con "≈", como los demás hitos.</summary>
+    [Parameter] public bool HarvestIsExtrapolated { get; set; }
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    // "Hoy (día N)" es ancho: cerca de los bordes se alinea hacia adentro en vez de centrarse.
+    private static string? EdgeClass(decimal pos) =>
+        pos < 12m ? "lot-timeline__today-label--start" : pos > 88m ? "lot-timeline__today-label--end" : null;
+
+    private string Current(CyclePhase phase) =>
+        Timeline!.Phase == phase ? "lot-timeline__seg--current" : "lot-timeline__seg--dim";
+
+    private DateOnly? HarvestDate =>
+        EstimatedHarvestDate is { } date && Timeline is { } t
+        && t.Phase != CyclePhase.Sobremadurez && date >= t.SowingDate && date <= End
+            ? date
+            : null;
+
+    /// <summary>Fin de la escala: sobremadurez, o el último hito conocido + 7 días.</summary>
+    private DateOnly End
+    {
+        get
+        {
+            var t = Timeline!;
+            if (t.Overmaturity.Date is { } over && over > t.SowingDate)
+                return over;
+            var known = new[] { t.BabyLeafCloses.Date, t.BabyLeafOpens.Date, t.AsOfDate }
+                .Where(d => d is not null).Select(d => d!.Value).Max();
+            return known.AddDays(7);
+        }
+    }
+
+    private decimal Pos(DateOnly date)
+    {
+        var start = Timeline!.SowingDate.DayNumber;
+        var span = Math.Max(1, End.DayNumber - start);
+        return Math.Clamp((date.DayNumber - start) * 100m / span, 0m, 100m);
+    }
+
+    private decimal Width(DateOnly from, DateOnly? to) => Math.Max(0m, Pos(to ?? End) - Pos(from));
+
+    private static string Label(CycleMilestone milestone) =>
+        milestone.Date is { } date ? (milestone.IsExtrapolated ? "≈" : string.Empty) + LotFormat.Short(date) : string.Empty;
+
+    private static string MilestoneTitle(string what, CycleMilestone milestone) =>
+        milestone.IsExtrapolated ? $"{what} (≈ estimado más allá de los 7 días de pronóstico)" : what;
+
+    private static string EndLabel(CycleTimeline t) =>
+        t.Overmaturity.Date is not null ? Label(t.Overmaturity)
+        : t.BabyLeafCloses.Date is not null ? Label(t.BabyLeafCloses)
+        : string.Empty;
+
+    private static string EndTitle(CycleTimeline t) =>
+        t.Overmaturity.Date is not null
+            ? MilestoneTitle("Sobremadurez: fin de la ventana convencional", t.Overmaturity)
+            : MilestoneTitle("Cierra la ventana Baby Leaf", t.BabyLeafCloses);
+
+    private static string Range(CycleMilestone from, CycleMilestone to) =>
+        $"{LotFormat.Milestone(from)} → {LotFormat.Milestone(to)}";
+
+    private static string AriaLabel(CycleTimeline t) =>
+        $"Siembra {LotFormat.Short(t.SowingDate)}; ventana Baby Leaf {Range(t.BabyLeafOpens, t.BabyLeafCloses)}; " +
+        $"ventana convencional {Range(t.BabyLeafCloses, t.Overmaturity)}; día {t.CycleDay} del ciclo.";
+
+    private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+}

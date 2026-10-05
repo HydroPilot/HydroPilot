@@ -63,6 +63,16 @@ public class Lot
     /// </summary>
     public decimal? BabyLeafHarvestTargetPercent { get; set; }
 
+    // --- Metas de producción del ciclo (el umbral de arriba solo decide el corte) ---
+    /// <summary>
+    /// Meta del ciclo (0-100): % de las plantas del lote que se planea cosechar como
+    /// Baby Leaf; el resto queda como convencional. Null = sin meta definida.
+    /// </summary>
+    public decimal? BabyLeafGoalPercent { get; set; }
+
+    /// <summary>Meta del ciclo (0-100): % máximo de plantas descartadas tolerado. Null = sin meta definida.</summary>
+    public decimal? MaxLossPercent { get; set; }
+
     public Greenhouse? Greenhouse { get; set; }
     public CropType? CropType { get; set; }
     public LotStatus? Status { get; set; }

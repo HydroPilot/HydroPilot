@@ -49,4 +49,38 @@ public class SettingsService
         var setting = await context.AppSettings.FindAsync([key], ct);
         return setting is not null && int.TryParse(setting.Value, out var value) ? value : defaultValue;
     }
+
+    /// <summary>Decimal guardado con cultura invariante; null si no está definido.</summary>
+    public async Task<decimal?> GetDecimalAsync(string key, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var setting = await context.AppSettings.FindAsync([key], ct);
+        return setting is not null
+               && decimal.TryParse(setting.Value, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
+    /// <summary>Guarda el decimal con cultura invariante; null borra el setting (queda sin definir).</summary>
+    public async Task SetDecimalAsync(string key, decimal? value, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var setting = await context.AppSettings.FindAsync([key], ct);
+
+        if (value is not { } number)
+        {
+            if (setting is not null)
+                context.AppSettings.Remove(setting);
+        }
+        else if (setting is null)
+        {
+            context.AppSettings.Add(new AppSetting { Key = key, Value = number.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        }
+        else
+        {
+            setting.Value = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        await context.SaveChangesAsync(ct);
+    }
 }

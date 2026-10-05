@@ -1,9 +1,12 @@
 @page "/admin/mantenimiento"
 @attribute [Authorize(Policy = "RequireAdministrador")]
 @using HydroPilotWeb.Services.Admin
+@using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Notifications
 @inject AdminMaintenanceService MaintenanceService
 @inject NotificationService NotificationService
+@inject LotOverviewService LotOverview
+@inject LotDailyFlowService DailyFlow
 @inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Mantenimiento de base de datos - HydroPilot</PageTitle>
@@ -148,6 +151,51 @@
                 <button class="btn btn-primary" @onclick="ExecuteRecreateDemoLotAsync" disabled="@_isProcessing">
                     Recrear Lote Demo 01
                 </button>
+            </div>
+        </div>
+
+        <div class="action-card action-card--flow">
+            <div class="action-card__body">
+                <div class="action-card__icon">🔄</div>
+                <div>
+                    <h4>Ejecutar flujo diario de un lote</h4>
+                    <p>
+                        Reevalúa las plantas activas del lote con los GDD hasta la fecha elegida: etapa fenológica,
+                        estado comercial (apta, candidata, en desarrollo o riesgo) y estado predominante del lote.
+                        Los cambios quedan en el historial de cada planta; las cosechadas y descartadas no se tocan.
+                    </p>
+                    <p class="action-card__warning">
+                        <strong>Escribe en la base:</strong> con una fecha futura las plantas quedan adelantadas a ese día
+                        (sirve para simular el avance del cultivo en la demo).
+                    </p>
+                </div>
+            </div>
+            <div class="action-card__footer">
+                @if (_flowLots.Count == 0)
+                {
+                    <span class="action-card__hint">No hay lotes activos para evaluar.</span>
+                }
+                else
+                {
+                    <div class="flow-form">
+                        <label class="flow-form__field">
+                            <span>Lote</span>
+                            <select @bind="_flowLotId" disabled="@_isProcessing">
+                                @foreach (var lot in _flowLots)
+                                {
+                                    <option value="@lot.Id">@lot.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="flow-form__field">
+                            <span>Evaluar al (vacío = hoy)</span>
+                            <input type="date" @bind="_flowDate" disabled="@_isProcessing" />
+                        </label>
+                        <button class="btn btn-primary" @onclick="ExecuteDailyFlowAsync" disabled="@(_isProcessing || _flowLotId is null)">
+                            Ejecutar flujo diario
+                        </button>
+                    </div>
+                }
             </div>
         </div>
 
@@ -304,6 +352,36 @@
 
     .action-card--email {
         border-left: 4px solid #12b76a;
+    }
+
+    .action-card--flow {
+        border-left: 4px solid #f79009;
+    }
+
+    .flow-form {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 10px;
+    }
+
+    .flow-form__field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--text-muted, #8ea1b4);
+    }
+
+    .flow-form__field select,
+    .flow-form__field input {
+        min-width: 170px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border-inner, #29384e);
+        background: var(--card-inner-bg, #1e2b3d);
+        color: var(--text-main, #e4ecf6);
+        font-size: 14px;
     }
 
     .action-card__body {
@@ -479,6 +557,11 @@
     private string? _feedbackMessage;
     private bool _isSuccess = true;
 
+    // Flujo diario de un lote (antes era un botón en la vista Lotes).
+    private IReadOnlyList<LotOption> _flowLots = [];
+    private int? _flowLotId;
+    private DateOnly? _flowDate;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadSummaryAsync();
@@ -490,6 +573,11 @@
         try
         {
             _summary = await MaintenanceService.GetDatabaseSummaryAsync();
+
+            // Lotes del flujo diario: se recargan con las métricas (limpiar o recrear el demo los cambia).
+            _flowLots = (await LotOverview.GetLotOptionsAsync()).Where(l => l.IsOperational).ToList();
+            if (_flowLotId is null || _flowLots.All(l => l.Id != _flowLotId))
+                _flowLotId = _flowLots.FirstOrDefault()?.Id;
         }
         catch (Exception ex)
         {
@@ -499,6 +587,42 @@
         finally
         {
             _isLoading = false;
+        }
+    }
+
+    private async Task ExecuteDailyFlowAsync()
+    {
+        if (_flowLotId is not { } lotId)
+            return;
+
+        _isProcessing = true;
+        try
+        {
+            var result = await DailyFlow.RunDailyAsync(lotId, _flowDate);
+            if (result is null)
+            {
+                _feedbackMessage = "El lote no existe.";
+                _isSuccess = false;
+            }
+            else
+            {
+                var lotName = _flowLots.FirstOrDefault(l => l.Id == lotId)?.Name ?? $"Lote #{lotId}";
+                var when = _flowDate is { } date ? $" al {date:dd/MM/yyyy}" : string.Empty;
+                _feedbackMessage =
+                    $"Flujo diario de {lotName}{when}: {result.PlantsEvaluated} plantas activas evaluadas, " +
+                    $"{result.PlantsChanged} cambiaron de estado (GDD {result.GddAccumulated:0.#})." +
+                    (result.Warnings.Count > 0 ? " " + string.Join(" ", result.Warnings) : string.Empty);
+                _isSuccess = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"Error al ejecutar el flujo diario: {ex.Message}";
+            _isSuccess = false;
+        }
+        finally
+        {
+            _isProcessing = false;
         }
     }
 
