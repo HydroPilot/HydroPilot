@@ -1,0 +1,194 @@
+@using System.Globalization
+@using HydroPilotWeb.Services.Forecasting
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* GDD acumulado día a día (medido y proyectado) sobre las ventanas de cosecha y los óptimos de
+   corte. Sirve para ver de dónde salen las fechas y los días sin lectura (el acumulado queda plano).
+   El SVG se estira al ancho (preserveAspectRatio none); los textos van en HTML para no deformarse. *@
+<div class="lot-gdd" role="img" aria-label="@AriaLabel">
+    <div class="lot-gdd__frame">
+        <div class="lot-gdd__yaxis" aria-hidden="true">
+            @foreach (var tick in YTicks)
+            {
+                <span style="top: @Css(Y(tick) / 10m)%;">@LotFormat.Num(tick)</span>
+            }
+        </div>
+        <div class="lot-gdd__plot">
+            <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
+                @foreach (var band in Bands)
+                {
+                    <rect class="lot-gdd__band lot-gdd__band--@band.Tone" x="0" width="1000"
+                          y="@Css(Y(band.To))" height="@Css(Y(band.From) - Y(band.To))" />
+                }
+                @foreach (var optimum in Optimums)
+                {
+                    <line class="lot-gdd__optimum lot-gdd__optimum--@optimum.Tone" x1="0" x2="1000"
+                          y1="@Css(Y(optimum.Gdd))" y2="@Css(Y(optimum.Gdd))" />
+                }
+                @if (Curve.AsOfDate >= Curve.SowingDate)
+                {
+                    <line class="lot-gdd__today" x1="@Css(X(Curve.AsOfDate))" x2="@Css(X(Curve.AsOfDate))" y1="0" y2="1000" />
+                }
+                <polyline class="lot-gdd__line" points="@MeasuredPoints" />
+                @if (Curve.Projected.Count > 0)
+                {
+                    <polyline class="lot-gdd__line lot-gdd__line--projected" points="@ProjectedPoints" />
+                }
+                @* Una franja invisible por día: al pasar el mouse muestra el dato de ese día. *@
+                @foreach (var (day, measured) in Curve.Measured.Select(d => (d, true)).Concat(Curve.Projected.Select(d => (d, false))))
+                {
+                    <rect class="lot-gdd__hit" x="@Css(X(day.Date) - DayWidth)" width="@Css(DayWidth)" y="0" height="1000">
+                        <title>@DayTitle(day, measured)</title>
+                    </rect>
+                }
+            </svg>
+            @foreach (var optimum in Optimums)
+            {
+                <span class="lot-gdd__optimum-label lot-gdd__optimum-label--@optimum.Tone" style="top: @Css(Y(optimum.Gdd) / 10m)%;">
+                    óptimo @optimum.Name · @LotFormat.Num(optimum.Gdd)
+                </span>
+            }
+            @foreach (var day in Curve.Measured.Where(d => d.Source is null))
+            {
+                <span class="lot-gdd__gap" style="left: @Css((X(day.Date) - DayWidth) / 10m)%; width: @Css(DayWidth / 10m)%;"
+                      title="@($"{LotFormat.Short(day.Date)}: sin lectura de temperatura (no suma GDD)")"></span>
+            }
+        </div>
+    </div>
+    <div class="lot-gdd__xaxis" aria-hidden="true">
+        <span class="lot-gdd__x--start" style="left: 0%;">@LotFormat.Short(Curve.SowingDate)</span>
+        @{
+            var todayPos = X(Curve.AsOfDate) / 10m;
+        }
+        @if (todayPos is > 12m and < 88m)
+        {
+            <span style="left: @Css(todayPos)%;">@(Curve.AsOfDate == Today ? "Hoy" : LotFormat.Short(Curve.AsOfDate))</span>
+        }
+        @if (Curve.EndDate > Curve.SowingDate)
+        {
+            <span class="lot-gdd__x--end" style="left: 100%;">@(Curve.Projected.Count > 0 ? "≈" : null)@LotFormat.Short(Curve.EndDate)</span>
+        }
+    </div>
+    <div class="lot-gdd__legend">
+        @if (Curve.Measured.Count > 0)
+        {
+            <span><i class="lot-gdd__key lot-gdd__key--line"></i>@MeasuredLabel</span>
+        }
+        @if (Curve.Projected.Count > 0)
+        {
+            <span><i class="lot-gdd__key lot-gdd__key--projected"></i>próximos @Curve.Projected.Count días</span>
+        }
+        @if (MissingCount > 0)
+        {
+            <span><i class="lot-gdd__key lot-gdd__key--gap"></i>@LotFormat.Days(MissingCount) sin lectura</span>
+        }
+        @foreach (var band in Bands)
+        {
+            <span><i class="lot-gdd__key lot-gdd__key--@band.Tone"></i>ventana @(band.Tone == "bl" ? "Baby Leaf" : "convencional")</span>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public GddCurve Curve { get; set; } = null!;
+    [Parameter, EditorRequired] public CycleTimeline Timeline { get; set; } = null!;
+
+    /// <summary>Leyenda de la línea llena ("medido" en Lotes; en Simulación puede ser "clima manual").</summary>
+    [Parameter] public string MeasuredLabel { get; set; } = "medido";
+
+    /// <summary>Origen a mostrar en el tooltip de los días medidos / proyectados; null = el de cada punto.</summary>
+    [Parameter] public string? MeasuredSourceLabel { get; set; }
+    [Parameter] public string? ProjectedSourceLabel { get; set; }
+
+    private sealed record Band(decimal From, decimal To, string Tone);
+    private sealed record Optimum(decimal Gdd, string Name, string Tone);
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    private int TotalDays => Math.Max(1, Curve.EndDate.DayNumber - Curve.SowingDate.DayNumber + 1);
+
+    private decimal DayWidth => 1000m / TotalDays;
+
+    private int MissingCount => Curve.Measured.Count(d => d.Source is null);
+
+    /// <summary>
+    /// Tope del eje: el próximo umbral por encima de la curva (apertura, cierre o sobremadurez),
+    /// para que se vea hacia dónde va sin aplastar la curva al principio del ciclo.
+    /// </summary>
+    private decimal YMax
+    {
+        get
+        {
+            var max = Curve.MaxCumulative;
+            var thresholds = new[] { Timeline.BabyLeafOpens.Gdd, Timeline.BabyLeafCloses.Gdd, Timeline.Overmaturity.Gdd };
+            var next = thresholds.Where(t => t > max).DefaultIfEmpty(max).Min();
+            return Math.Max(50m, Math.Max(next, max) * 1.08m);
+        }
+    }
+
+    // Fin del día: el acumulado de un día se dibuja a su cierre; la curva arranca en 0 el día de siembra.
+    private decimal X(DateOnly date) => (date.DayNumber - Curve.SowingDate.DayNumber + 1) * 1000m / TotalDays;
+
+    private decimal Y(decimal gdd) => 1000m - Math.Clamp(gdd, 0m, YMax) / YMax * 1000m;
+
+    private IEnumerable<decimal> YTicks =>
+        new[] { 0m, Timeline.BabyLeafOpens.Gdd, Timeline.BabyLeafCloses.Gdd, Timeline.Overmaturity.Gdd }.Where(t => t <= YMax);
+
+    private IEnumerable<Band> Bands
+    {
+        get
+        {
+            var top = YMax;
+            if (Timeline.BabyLeafOpens.Gdd < top)
+                yield return new Band(Timeline.BabyLeafOpens.Gdd, Math.Min(Timeline.BabyLeafCloses.Gdd, top), "bl");
+            if (Timeline.BabyLeafCloses.Gdd < top)
+                yield return new Band(Timeline.BabyLeafCloses.Gdd, Math.Min(Timeline.Overmaturity.Gdd, top), "conv");
+        }
+    }
+
+    private IEnumerable<Optimum> Optimums =>
+        new[]
+        {
+            new Optimum(Timeline.BabyLeafOptimum.Gdd, "Baby Leaf", "bl"),
+            new Optimum(Timeline.ConventionalOptimum.Gdd, "convencional", "conv"),
+        }.Where(o => o.Gdd < YMax);
+
+    private string MeasuredPoints =>
+        string.Join(" ", new[] { $"0,{Css(Y(0m))}" }.Concat(Curve.Measured.Select(Point)));
+
+    private string ProjectedPoints
+    {
+        get
+        {
+            var last = Curve.Measured.LastOrDefault();
+            var start = last is null ? $"0,{Css(Y(0m))}" : Point(last);
+            return string.Join(" ", new[] { start }.Concat(Curve.Projected.Select(Point)));
+        }
+    }
+
+    private string Point(GddCurveDay day) => $"{Css(X(day.Date))},{Css(Y(day.Cumulative))}";
+
+    private string DayTitle(GddCurveDay day, bool measured)
+    {
+        var date = LotFormat.Short(day.Date);
+        if (day.Source is null || day.DailyGdd is not { } gdd)
+            return $"{date}: sin lectura de temperatura (no suma) · {LotFormat.Num(day.Cumulative)} acumulados";
+
+        var source = (measured ? MeasuredSourceLabel : ProjectedSourceLabel) ?? day.Source switch
+        {
+            GddPointSource.Observed => "sensor",
+            GddPointSource.Forecast => "pronóstico del clima",
+            _ when gdd == 0m => "sin dato (se toma 0)",
+            _ => "promedio de los últimos días medidos"
+        };
+        return $"{date}: +{LotFormat.Num(gdd)} GDD ({source}) · {LotFormat.Num(day.Cumulative)} acumulados";
+    }
+
+    private string AriaLabel =>
+        $"GDD acumulado: {LotFormat.Num(Curve.Measured.LastOrDefault()?.Cumulative ?? 0m)} al {LotFormat.Short(Curve.AsOfDate)}" +
+        (Curve.Projected.Count > 0 ? $", {LotFormat.Num(Curve.MaxCumulative)} proyectados al {LotFormat.Short(Curve.EndDate)}" : string.Empty) +
+        (MissingCount > 0 ? $"; {LotFormat.Days(MissingCount)} sin lectura." : ".");
+
+    private static string Css(decimal value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+}

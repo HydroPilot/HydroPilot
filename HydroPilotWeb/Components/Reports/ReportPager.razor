@@ -6,9 +6,9 @@
         Página <strong>@Page</strong> de <strong>@TotalPages</strong> · @TotalRows fila(s)
     </span>
     <div class="btn-group btn-group-sm">
-        <button type="button" class="btn btn-outline-secondary" disabled="@(Page <= 1)"
+        <button type="button" class="btn hp-btn-secondary" disabled="@(Page <= 1)"
                 @onclick="() => Go(Page - 1)">← Anterior</button>
-        <button type="button" class="btn btn-outline-secondary" disabled="@(Page >= TotalPages)"
+        <button type="button" class="btn hp-btn-secondary" disabled="@(Page >= TotalPages)"
                 @onclick="() => Go(Page + 1)">Siguiente →</button>
     </div>
     @if (TotalPages > 0)

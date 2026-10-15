@@ -1,7 +1,9 @@
 using System.Security.Claims;
+using HydroPilotWeb.Controllers;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Services;
 using HydroPilotWeb.Services.Dashboard;
+using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -29,6 +31,7 @@ public class LotOverviewSqlServerTests
         _fixture.Factory,
         _fixture.Aggregate,
         _fixture.Forecast,
+        _fixture.Gdd,
         Parameters(),
         Options.Create(new DashboardOptions()),
         NullLogger<LotOverviewService>.Instance);
@@ -164,23 +167,172 @@ public class LotOverviewSqlServerTests
     }
 
     [Fact]
-    public async Task Lote_Cerrado_Muestra_El_Resultado_Del_Ciclo_Sin_Linea_De_Tiempo()
+    public async Task Lote_Cerrado_Muestra_La_Linea_De_Tiempo_Hasta_La_Cosecha()
     {
         var lot = await CreateLotWithPlantsAsync();
+        var harvestDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-2);
         await using (var context = _fixture.Factory.CreateDbContext())
         {
-            await ForecastTestData.CloseLotAsync(context, lot.Id, yieldKg: 12.6m, harvestDate: lot.SowingDate.AddDays(26));
+            await ForecastTestData.CloseLotAsync(context, lot.Id, yieldKg: 12.6m, harvestDate: harvestDate);
         }
 
         var overview = await Service().GetOverviewAsync(lot.Id);
 
         Assert.NotNull(overview);
         Assert.True(overview.IsClosed);
-        Assert.Null(overview.Timeline);
         Assert.NotNull(overview.ClosedCycle);
-        Assert.Equal(26, overview.ClosedCycle.CycleDays);
-        Assert.Equal(12.6m, overview.ClosedCycle.ActualYieldKg);
-        Assert.Equal(2.8m, overview.ClosedCycle.YieldPerM2); // 12,6 kg / 4,5 m²
+        Assert.Equal(8, overview.ClosedCycle.CycleDays);
+
+        // Ventanas y curva hasta el día de la cosecha, sin proyección.
+        Assert.NotNull(overview.Timeline);
+        Assert.Equal(harvestDate, overview.Timeline.AsOfDate);
+        Assert.NotNull(overview.Curve);
+        Assert.Equal(harvestDate, overview.Curve.EndDate);
+        Assert.Empty(overview.Curve.Projected);
+
+        // Cerrado sin guardar la referencia: no hay pesos ni precios, así que no se inventan kg ni $.
+        Assert.NotNull(overview.HarvestYield);
+        Assert.Equal(new DestinationYield(1, null, null), overview.HarvestYield.Real.BabyLeaf);
+    }
+
+    /// <summary>Pesos 30 g / 200 g en el sistema y precios propios del lote (3000 / 2000 $/kg).</summary>
+    private async Task<SystemParametersService> SetHarvestReferenceAsync(Lot lot)
+    {
+        var parameters = Parameters();
+        Assert.True((await parameters.UpdateYieldParametersAsync(
+            new YieldReferenceInput(30m, 200m, null, null), UserWithRole("Productor"))).Succeeded);
+        await using var context = _fixture.Factory.CreateDbContext();
+        foreach (var (destination, price) in new[] { ("baby_leaf", 3000m), ("conventional", 2000m) })
+        {
+            context.CostPriceCatalogs.Add(new HydroPilotWeb.Models.Optimization.CostPriceCatalog
+            {
+                LotId = lot.Id,
+                Destination = destination,
+                Item = "price_per_kg",
+                Value = price,
+                Currency = "ARS",
+                ValidFrom = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-6),
+                Source = "manual",
+            });
+        }
+        await context.SaveChangesAsync();
+        return parameters;
+    }
+
+    private async Task DeleteLotPricesAsync(Lot lot)
+    {
+        // Los precios por lote bloquean el borrado de lotes que hacen otros tests de la colección.
+        await using var context = _fixture.Factory.CreateDbContext();
+        await context.CostPriceCatalogs.Where(c => c.LotId == lot.Id).ExecuteDeleteAsync();
+    }
+
+    [Fact]
+    public async Task Sin_Plantas_Activas_El_Lote_Se_Cierra_Solo_Y_Guarda_Pesos_Y_Precios()
+    {
+        var lot = await CreateLotWithPlantsAsync();
+        var parameters = await SetHarvestReferenceAsync(lot);
+        try
+        {
+            // Cosecha masiva: 2 aptas como Baby Leaf; después la candidata y la en desarrollo como convencional.
+            var lifecycle = new PlantLifecycleService(_fixture.Factory, parameters);
+            Assert.Equal(2, await lifecycle.HarvestManyAsync(lot.Id, HarvestDestination.BabyLeaf));
+            Assert.Equal(2, await lifecycle.HarvestManyAsync(lot.Id, HarvestDestination.Convencional));
+
+            // Los parámetros cambian después de la cosecha: el ciclo cerrado sigue con los suyos.
+            Assert.True((await parameters.UpdateYieldParametersAsync(
+                new YieldReferenceInput(99m, 999m, 1m, 1m), UserWithRole("Productor"))).Succeeded);
+
+            var overview = await Service().GetOverviewAsync(lot.Id);
+
+            Assert.NotNull(overview?.HarvestYield);
+            Assert.True(overview.IsClosed);
+            Assert.Equal(LotStatusNames.Cosechado, overview.State.StatusName);
+            Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), overview.ClosedCycle?.HarvestDate);
+            var real = overview.HarvestYield.Real;
+            Assert.Equal(new DestinationYield(3, 0.09m, 270m), real.BabyLeaf);    // 1 previa + 2 aptas × 30 g × $3000/kg
+            Assert.Equal(new DestinationYield(2, 0.4m, 800m), real.Conventional);  // 2 × 200 g × $2000/kg
+            Assert.Equal(1070m, overview.HarvestYield.TotalRevenue);
+        }
+        finally
+        {
+            await DeleteLotPricesAsync(lot);
+        }
+    }
+
+    [Fact]
+    public async Task Cierre_Por_Api_Tambien_Guarda_Pesos_Y_Precios()
+    {
+        var lot = await CreateLotWithPlantsAsync();
+        var parameters = await SetHarvestReferenceAsync(lot);
+        var harvestDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+        try
+        {
+            var controller = new ForecastingController(
+                _fixture.Factory, _fixture.Forecast, parameters, NullLogger<ForecastingController>.Instance);
+            await controller.RecordHarvest(lot.Id, new RecordHarvestRequest(1.5m, harvestDate));
+
+            await using var check = _fixture.Factory.CreateDbContext();
+            var saved = await check.Lots.AsNoTracking().FirstAsync(l => l.Id == lot.Id);
+            Assert.Equal(harvestDate, saved.ActualHarvestDate);
+            Assert.Equal(30m, saved.HarvestBabyLeafGramsPerPlant);
+            Assert.Equal(200m, saved.HarvestConventionalGramsPerPlant);
+            Assert.Equal(3000m, saved.HarvestBabyLeafPricePerKg);
+            Assert.Equal(2000m, saved.HarvestConventionalPricePerKg);
+            Assert.Equal("ARS", saved.HarvestPriceCurrency);
+        }
+        finally
+        {
+            await DeleteLotPricesAsync(lot);
+        }
+    }
+
+    [Fact]
+    public async Task Si_Se_Descartan_Todas_El_Lote_Queda_Descartado()
+    {
+        await using var context = _fixture.Factory.CreateDbContext();
+        var lot = await ForecastTestData.CreateActiveLotAsync(context, DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-5), rows: 1, columns: 2);
+        var plants = new[] { new Plant { LotId = lot.Id, Row = 1, Column = 1 }, new Plant { LotId = lot.Id, Row = 1, Column = 2 } };
+        context.Plants.AddRange(plants);
+        await context.SaveChangesAsync();
+
+        var lifecycle = new PlantLifecycleService(_fixture.Factory, Parameters());
+        await lifecycle.DiscardPlantAsync(plants[0].Id, "test");
+        await using (var middle = _fixture.Factory.CreateDbContext())
+        {
+            // Todavía queda una activa: el lote sigue en curso.
+            Assert.Equal(LotStatusNames.Activo, (await middle.Lots.Include(l => l.Status).FirstAsync(l => l.Id == lot.Id)).Status!.Name);
+        }
+        await lifecycle.DiscardPlantAsync(plants[1].Id, "test");
+
+        await using var check = _fixture.Factory.CreateDbContext();
+        var closed = await check.Lots.Include(l => l.Status).FirstAsync(l => l.Id == lot.Id);
+        Assert.Equal(LotStatusNames.Descartado, closed.Status!.Name);
+        Assert.Null(closed.ActualHarvestDate);
+        Assert.Null(closed.HarvestBabyLeafPricePerKg);
+    }
+
+    [Fact]
+    public async Task Cosecha_Masiva_Convencional_Deja_Afuera_Las_Plantas_En_Riesgo()
+    {
+        var lot = await CreateLotWithPlantsAsync();
+        await using (var context = _fixture.Factory.CreateDbContext())
+        {
+            var risk = await context.CommercialStages.FirstAsync(s => s.Name == CommercialStageNames.RiesgoFueraDeVentana);
+            context.Plants.Add(new Plant { LotId = lot.Id, Row = 2, Column = 2, CommercialStageId = risk.Id });
+            await context.SaveChangesAsync();
+        }
+
+        var harvested = await new PlantLifecycleService(_fixture.Factory, Parameters()).HarvestManyAsync(lot.Id, HarvestDestination.Convencional);
+
+        // Activas: 2 aptas, 1 candidata, 1 en desarrollo y 1 en riesgo: se cosechan 4, como convencional.
+        Assert.Equal(4, harvested);
+        await using var check = _fixture.Factory.CreateDbContext();
+        var plants = await check.Plants.Include(p => p.CommercialStage).Where(p => p.LotId == lot.Id).ToListAsync();
+        var stillActive = Assert.Single(plants, p => p.OperationalState == PlantOperationalState.Activa);
+        Assert.Equal(CommercialStageNames.RiesgoFueraDeVentana, stillActive.CommercialStage!.Name);
+        Assert.Equal(4, plants.Count(p => p.CommercialStage!.Name == CommercialStageNames.CosechaConvencional
+                                          && p.OperationalState == PlantOperationalState.Cosechada));
+        Assert.Equal(4, await check.PlantStageHistories.CountAsync(h => h.Plant!.LotId == lot.Id && h.Source == "harvest-bulk"));
     }
 
     [Fact]

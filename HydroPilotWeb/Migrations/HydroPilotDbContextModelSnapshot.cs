@@ -604,6 +604,9 @@ namespace HydroPilotWeb.Migrations
                     b.Property<int?>("AppliedPhenologicalStageId")
                         .HasColumnType("int");
 
+                    b.Property<int?>("BabyLeafAptAtOptimum")
+                        .HasColumnType("int");
+
                     b.Property<decimal?>("BabyLeafGoalPercent")
                         .HasColumnType("decimal(5,2)");
 
@@ -624,6 +627,12 @@ namespace HydroPilotWeb.Migrations
                     b.Property<decimal?>("CurrentPh")
                         .HasColumnType("decimal(4,2)");
 
+                    b.Property<decimal?>("CycleAverageDailyGdd")
+                        .HasColumnType("decimal(6,2)");
+
+                    b.Property<int?>("EarlyLossPlants")
+                        .HasColumnType("int");
+
                     b.Property<int>("GreenhouseId")
                         .HasColumnType("int");
 
@@ -633,8 +642,27 @@ namespace HydroPilotWeb.Migrations
                     b.Property<int?>("GridRows")
                         .HasColumnType("int");
 
+                    b.Property<decimal?>("HarvestBabyLeafGramsPerPlant")
+                        .HasColumnType("decimal(7,1)");
+
+                    b.Property<decimal?>("HarvestBabyLeafPricePerKg")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal?>("HarvestConventionalGramsPerPlant")
+                        .HasColumnType("decimal(7,1)");
+
+                    b.Property<decimal?>("HarvestConventionalPricePerKg")
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<string>("HarvestPriceCurrency")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
                     b.Property<bool>("IsCommercialStageMixed")
                         .HasColumnType("bit");
+
+                    b.Property<int?>("LateLossPlants")
+                        .HasColumnType("int");
 
                     b.Property<decimal?>("MaxLossPercent")
                         .HasColumnType("decimal(5,2)");
@@ -1659,8 +1687,12 @@ namespace HydroPilotWeb.Migrations
 
                     b.HasIndex("Timestamp");
 
+                    b.HasIndex("LotId", "ObservedAtUtc");
+
                     b.HasIndex("NodeId", "ExternalReadingId")
                         .IsUnique();
+
+                    b.HasIndex("SensorId", "ObservedAtUtc");
 
                     b.ToTable("SensorReadings", (string)null);
                 });

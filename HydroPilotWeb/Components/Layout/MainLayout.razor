@@ -14,7 +14,10 @@
 
     <main class="shell-main">
         <header class="shell-topbar">
-            <h1 class="shell-topbar__title">@CurrentPage.Title</h1>
+            <h1 class="shell-topbar__title">
+                <NavIcon Name="@CurrentPage.Route" Class="shell-topbar__icon" />
+                @CurrentPage.Title
+            </h1>
 
             <div class="shell-topbar__actions">
                 <div class="status-pill @_statusCss" title="Estado global derivado de los nodos del invernadero (frescura de la última telemetría aceptada)."><span></span> @_statusText</div>
@@ -55,11 +58,6 @@
 
                 @* Contexto (invernadero · cultivo) con el mismo aspecto que los botones. *@
                 <span class="topbar-context" title="@_subtitle">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M12 21v-9" />
-                        <path d="M12 12c0-4.4 3.1-7.5 8-7.5 0 4.4-3.1 7.5-8 7.5Z" />
-                        <path d="M12 14.5c0-3.4-2.5-6-7-6 0 3.4 2.5 6 7 6Z" />
-                    </svg>
                     <span>@_subtitle</span>
                 </span>
             </div>
@@ -136,12 +134,11 @@
         // Sin query ni fragmento: "/lotes?lote=1" resuelve igual que "/lotes".
         var path = relativePath.Split('?', '#')[0].Trim('/').ToLowerInvariant();
 
-        return path switch
+        var header = path switch
         {
-            "" => new PageHeader("Vista General del Sistema", "Resumen operativo del invernadero"),
+            "" => new PageHeader("Invernadero", "Resumen operativo del invernadero"),
             "lotes" => new PageHeader("Lotes", "Situación actual, metas del ciclo y mapa de plantas de cada lote."),
             "reports" => new PageHeader("Informes", "Histórico de producción, consumo y reportes exportables."),
-            "forecasting" => new PageHeader("Módulo de Forecasting", "Predicción de variables clave del cultivo para los próximos 14 días."),
             "simulation" => new PageHeader("Módulo de Simulación", "Probá escenarios what-if y observá el impacto estimado en la cosecha."),
             "optimization" => new PageHeader("Módulo de Optimización", "Recomendaciones basadas en IA para mejorar rendimiento y reducir costos."),
             "anomalies" => new PageHeader("Módulo de Anomalías", "Detección automática de eventos fuera de rango y desvíos de comportamiento."),
@@ -149,15 +146,19 @@
             "settings/profile" => new PageHeader("Configuración de usuario", "Datos personales, idioma y seguridad de tu cuenta."),
             "settings/notifications" => new PageHeader("Configuración de notificaciones", "Definí cómo y cuándo querés recibir avisos del sistema."),
             "settings/parametros" => new PageHeader("Parámetros del sistema", "Valores de referencia globales que usan todos los lotes."),
+            "admin/users" => new PageHeader("Usuarios", "Usuarios y roles del sistema."),
+            "admin/mantenimiento" => new PageHeader("Mantenimiento", "Datos, clima y herramientas de administración."),
             "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Herramienta interna de diagnóstico."),
             "test-clima" => new PageHeader("Test de clima", "Herramienta interna de diagnóstico."),
             "counter" => new PageHeader("Counter", "Demo de interacción."),
             "weather" => new PageHeader("Weather", "Demo de datos de ejemplo."),
             _ => new PageHeader("HydroPilot", "Vista operativa"),
         };
+        return header with { Route = path };
     }
 
-    private sealed record PageHeader(string Title, string Subtitle);
+    /// <summary>Route: la ruta de la vista, para mostrar su ícono del menú (<see cref="NavIcon"/>).</summary>
+    private sealed record PageHeader(string Title, string Subtitle, string Route = "-");
 
     private bool _isDark = true;
 

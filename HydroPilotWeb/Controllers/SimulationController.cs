@@ -27,7 +27,7 @@ public class SimulationController : ControllerBase
     /// <summary>
     /// Simula un escenario y devuelve el resultado completo (GDD, fechas,
     /// rendimiento, costos, estrategias). Acepta sesión autenticada o X-Api-Key.
-    /// La validación de negativos/moneda/texto ocurre en el servidor (SIM-05).
+    /// La validación de negativos y rangos ocurre en el servidor (SIM-05).
     /// </summary>
     [HttpPost("preview")]
     [TypeFilter(typeof(ApiKeyOrSessionFilter))]

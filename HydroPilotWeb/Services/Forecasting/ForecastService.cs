@@ -101,7 +101,7 @@ public class ForecastService
         warnings.AddRange(history.Warnings);
 
         // --- Proyección (F-03) ---
-        var projection = await _gddService.GetFutureGddProjectionAsync(lot, asOfDate, ct: ct);
+        var projection = await _gddService.GetFutureGddProjectionAsync(lot, asOfDate, ct: ct, history: history);
         warnings.AddRange(projection.Warnings);
 
         var avgDaily = projection.Points.Count > 0 ? projection.Points.Average(p => p.Gdd) : 0m;
@@ -253,7 +253,8 @@ public class ForecastService
             AccuracyCycles: accuracy.Cycles,
             ActualYieldKg: lot.ActualYieldKg,
             ActualHarvestDate: lot.ActualHarvestDate,
-            Warnings: warnings.Distinct().ToList());
+            Warnings: warnings.Distinct().ToList(),
+            ForecastCorrection: projection.Correction);
     }
 
     /// <summary>

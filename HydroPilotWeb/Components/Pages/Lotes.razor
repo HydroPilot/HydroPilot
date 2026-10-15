@@ -5,9 +5,9 @@
 @using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Services.Lotes
 @inject LotOverviewService LotOverview
+@inject LotCreationService LotCreation
 @inject LotAggregateService LotAggregate
 @inject PlantLifecycleService PlantLifecycle
-@inject SystemParametersService SystemParameters
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
 
@@ -16,6 +16,13 @@
 @if (error is not null)
 {
     <div class="alert alert-danger">@error</div>
+}
+@if (notice is not null)
+{
+    <div class="alert alert-success d-flex justify-content-between align-items-center py-2">
+        <span>@notice</span>
+        <button type="button" class="btn-close" aria-label="Cerrar" @onclick="() => notice = null"></button>
+    </div>
 }
 
 @if (lots is null)
@@ -26,8 +33,17 @@
 }
 else if (lots.Count == 0)
 {
-    <div class="alert alert-info">
-        No hay lotes registrados. Creá uno desde <a href="forecasting">Forecasting</a> o cargá los datos demo.
+    <div class="lot-view">
+        <div class="alert alert-info mb-0 d-flex align-items-center gap-3 flex-wrap">
+            <span>
+                No hay lotes registrados.
+                @(canCreateLot ? null : "Pedile a un Administrador, Productor u Operador que cree uno.")
+            </span>
+            @if (canCreateLot)
+            {
+                <button type="button" class="btn btn-success" @onclick="OpenCreateLotAsync">+ Nuevo lote</button>
+            }
+        </div>
     </div>
 }
 else
@@ -41,6 +57,11 @@ else
                     <option value="@lot.Id">@lot.Name · @StatusLabel(lot.StatusName)</option>
                 }
             </select>
+            @if (canCreateLot)
+            {
+                <button type="button" class="btn btn-success lot-toolbar__new" @onclick="OpenCreateLotAsync"
+                        disabled="@creatingLot">+ Nuevo lote</button>
+            }
 
             @* Sin chip de estado ni área/siembra: el estado ya va en el texto del selector. *@
             @if (overview is { IsClosed: false } current)
@@ -59,6 +80,17 @@ else
                 }
             }
 
+            @if (loading && overview is not null)
+            {
+                @* Al cambiar de lote (o de fecha) los datos tardan: se avisa en vez de dejar la pantalla anterior quieta. *@
+                <span class="lot-loading" role="status">
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Cargando…
+                </span>
+            }
+
+            @* "Ver al" (fecha simulada): oculto por ahora, quizás vuelva. Mezclaba el GDD de esa fecha con el
+               estado de hoy de las plantas y confundía. La lógica sigue (simDate); para volver a mostrarlo,
+               descomentar este bloque.
             <div class="lot-toolbar__date">
                 <label for="lot-asof">Ver al</label>
                 <input id="lot-asof" type="date" class="form-control form-control-sm" @bind="simDate" @bind:after="LoadAsync" />
@@ -67,6 +99,7 @@ else
                     <button class="btn btn-outline-secondary btn-sm" @onclick="ResetSimDateAsync">Hoy</button>
                 }
             </div>
+            *@
         </div>
 
         @if (overview is null)
@@ -89,7 +122,7 @@ else
 
             @* Mapa a la izquierda (60%) y las cards de situación apiladas a la derecha (40%).
                En pantallas angostas se apila todo, con las cards primero. *@
-            <div class="lot-layout">
+            <div class="lot-layout @(loading ? "lot-layout--loading" : null)" aria-busy="@(loading ? "true" : "false")">
                 @* Columna izquierda: mapa y, debajo, los detalles técnicos (mismo ancho). *@
                 <div class="lot-layout__main">
                     <section class="panel">
@@ -121,7 +154,29 @@ else
                         <div class="mt-3">
                             <LotStatusBar Plants="overview.Plants" />
                         </div>
-                        <p class="lot-muted">Tocá una planta del mapa para ver su detalle.</p>
+                        <div class="lot-map-foot">
+                            <p class="lot-muted mb-0">Tocá una planta del mapa para ver su detalle@(overview.IsClosed ? "." : ", cosecharla o descartarla.")</p>
+                            @if (!overview.IsClosed && (BulkCount(HarvestDestination.BabyLeaf) > 0 || BulkCount(HarvestDestination.Convencional) > 0))
+                            {
+                                @* Cosecha masiva: piden confirmación (modal) antes de cambiar el estado de las plantas. *@
+                                <div class="lot-map-foot__actions">
+                                    @if (BulkCount(HarvestDestination.BabyLeaf) is var bl and > 0)
+                                    {
+                                        <button type="button" class="btn btn-success btn-sm" disabled="@operating"
+                                                @onclick="() => AskBulkHarvest(HarvestDestination.BabyLeaf)">
+                                            Cosechar Baby Leafs (@bl)
+                                        </button>
+                                    }
+                                    @if (BulkCount(HarvestDestination.Convencional) is var conv and > 0)
+                                    {
+                                        <button type="button" class="btn btn-sm lot-btn-conv" disabled="@operating"
+                                                @onclick="() => AskBulkHarvest(HarvestDestination.Convencional)">
+                                            Cosechar Lechugas convencionales (@conv)
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
                     </section>
 
                     <LotTechnicalDetails Overview="overview" />
@@ -131,31 +186,13 @@ else
                     <LotWindowCard Overview="overview" />
                     <LotBabyLeafCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
                     <LotLossCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
-                    @if (editingObjectives)
-                    {
-                        @* Metas del ciclo (Baby Leaf y pérdidas): se abre debajo de las cards que las usan. *@
-                        <LotObjectivesEditor Current="overview.Objectives" Saving="savingObjectives" Errors="objectiveErrors"
-                                             OnSave="SaveObjectivesAsync" OnCancel="CloseEditor" />
-                    }
 
                     @* Umbral de cosecha (% de aptas para cortar el lote): oculto por ahora, en revisión si aporta valor.
                     <LotThresholdCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
                     *@
 
-                    <LotYieldCard Overview="overview" CanEdit="canEditParameters" OnEditReference="OpenReferenceEditor" />
-                    @if (editingReference && referenceParameters is not null)
-                    {
-                        @* Atajo a Ajustes > Parámetros: se abre debajo de la card que usa esos valores. *@
-                        <section class="panel" aria-labelledby="lot-reference-title">
-                            <div class="lot-panel-head">
-                                <h3 class="lot-panel-title" id="lot-reference-title">Pesos y precios de referencia</h3>
-                                <a class="lot-link" href="settings/parametros">Ver en Parámetros</a>
-                            </div>
-                            <p class="lot-muted mt-0 mb-3">Son parámetros del sistema: aplican a todos los lotes.</p>
-                            <YieldParametersEditor Current="referenceParameters" Saving="savingReference" Errors="referenceErrors"
-                                                   OnSave="SaveReferenceAsync" OnCancel="CloseReferenceEditor" />
-                        </section>
-                    }
+                    @* Pesos y precios: parámetros del sistema, se cargan en Ajustes > Parámetros. *@
+                    <LotYieldCard Overview="overview" CanEdit="canEditParameters" />
                 </div>
             </div>
 
@@ -166,6 +203,50 @@ else
             }
         }
     </div>
+}
+
+@* Modales: alta de lote (con metas opcionales), metas del ciclo (lápiz de las cards) y cosecha masiva. *@
+@if (creatingLot && newLotOptions is not null)
+{
+    <LotModal Title="Nuevo lote" Busy="savingLot" OnClose="CloseCreateLot">
+        <LotCreateForm Options="newLotOptions" Saving="savingLot" Errors="newLotErrors"
+                       OnSave="CreateLotAsync" OnCancel="CloseCreateLot" />
+    </LotModal>
+}
+@if (bulkHarvest is { } bulk && overview is not null)
+{
+    <LotModal Title="@(bulk == HarvestDestination.BabyLeaf ? "Cosechar Baby Leafs" : "Cosechar Lechugas convencionales")"
+              Busy="operating" OnClose="CloseBulkHarvest">
+        <p class="mt-0">
+            Se van a cosechar <strong>@LotFormat.Plants(BulkCount(bulk))</strong>
+            @(bulk == HarvestDestination.BabyLeaf
+                ? "aptas para Baby Leaf."
+                : "activas que no están en riesgo: quedan registradas como cosecha convencional.")
+            La fecha de cosecha es hoy (@LotFormat.Day(DateOnly.FromDateTime(DateTime.UtcNow))) y no se puede deshacer.
+        </p>
+        @if (BulkCount(bulk) >= overview.Plants.Active)
+        {
+            <p class="lot-muted">No quedan otras plantas activas: el lote se cierra como cosechado.</p>
+        }
+        @if (bulkError is not null)
+        {
+            <div class="alert alert-danger py-2 small mb-0">@bulkError</div>
+        }
+        <div class="lot-editor__actions">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="CloseBulkHarvest" disabled="@operating">Cancelar</button>
+            <button class="btn btn-sm @(bulk == HarvestDestination.BabyLeaf ? "btn-success" : "lot-btn-conv")"
+                    @onclick="ConfirmBulkHarvestAsync" disabled="@operating">
+                @(operating ? "Cosechando…" : $"Cosechar {LotFormat.Plants(BulkCount(bulk))}")
+            </button>
+        </div>
+    </LotModal>
+}
+@if (editingObjectives && overview is not null)
+{
+    <LotModal Title="Metas del ciclo" Busy="savingObjectives" OnClose="CloseEditor">
+        <LotObjectivesEditor Current="overview.Objectives" Saving="savingObjectives" Errors="objectiveErrors"
+                             OnSave="SaveObjectivesAsync" OnCancel="CloseEditor" />
+    </LotModal>
 }
 
 @code {
@@ -184,18 +265,23 @@ else
     private bool focusPopover;
     private string? error;
     private bool loading;
+    private int loadVersion;
     private bool operating;
+    private string? notice;
+    private HarvestDestination? bulkHarvest;
+    private string? bulkError;
 
     private ClaimsPrincipal user = new();
     private bool canEdit;
     private bool editingObjectives;
     private bool savingObjectives;
     private IReadOnlyList<string> objectiveErrors = [];
-    private bool editingReference;
-    private bool savingReference;
-    private IReadOnlyList<string> referenceErrors = [];
-    private YieldParameters? referenceParameters;
     private bool canEditParameters;
+    private bool canCreateLot;
+    private bool creatingLot;
+    private bool savingLot;
+    private NewLotOptions? newLotOptions;
+    private IReadOnlyList<string> newLotErrors = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -204,6 +290,7 @@ else
             user = (await AuthState.GetAuthenticationStateAsync()).User;
             canEdit = LotOverviewService.CanEditObjectives(user);
             canEditParameters = SystemParametersService.CanEdit(user);
+            canCreateLot = LotCreationService.CanCreate(user);
 
             lots = await LotOverview.GetLotOptionsAsync();
             selectedLotId = lots.Any(l => l.Id == LotFromQuery) ? LotFromQuery : lots.FirstOrDefault()?.Id;
@@ -220,7 +307,7 @@ else
     {
         highlightKey = null;
         editingObjectives = false;
-        editingReference = false;
+        notice = null;
         await LoadAsync();
     }
 
@@ -229,11 +316,16 @@ else
         if (selectedLotId is not { } lotId)
             return;
 
+        // Si se cambia de lote antes de que termine la carga anterior, gana la última.
+        var version = ++loadVersion;
         loading = true;
         error = null;
         try
         {
-            overview = await LotOverview.GetOverviewAsync(lotId, simDate);
+            var loaded = await LotOverview.GetOverviewAsync(lotId, simDate);
+            if (version != loadVersion)
+                return;
+            overview = loaded;
             detail = null;
             selectedPosition = null;
             if (overview is null)
@@ -241,11 +333,13 @@ else
         }
         catch (Exception ex)
         {
-            error = $"No se pudo cargar el estado del lote: {ex.Message}";
+            if (version == loadVersion)
+                error = $"No se pudo cargar el estado del lote: {ex.Message}";
         }
         finally
         {
-            loading = false;
+            if (version == loadVersion)
+                loading = false;
         }
     }
 
@@ -373,6 +467,56 @@ else
         }
     }
 
+    private async Task OpenCreateLotAsync()
+    {
+        newLotErrors = [];
+        try
+        {
+            newLotOptions = await LotCreation.GetOptionsAsync();
+            creatingLot = true;
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo abrir el alta de lote: {ex.Message}";
+        }
+    }
+
+    private void CloseCreateLot()
+    {
+        newLotErrors = [];
+        creatingLot = false;
+    }
+
+    private async Task CreateLotAsync(NewLotInput input)
+    {
+        savingLot = true;
+        try
+        {
+            var result = await LotCreation.CreateAsync(input, user);
+            if (!result.Succeeded)
+            {
+                newLotErrors = result.Errors;
+                return;
+            }
+
+            // El lote nuevo queda seleccionado.
+            creatingLot = false;
+            newLotErrors = [];
+            newLotOptions = null;
+            lots = await LotOverview.GetLotOptionsAsync();
+            selectedLotId = result.LotId;
+            await OnLotChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            newLotErrors = [$"No se pudo crear el lote: {ex.Message}"];
+        }
+        finally
+        {
+            savingLot = false;
+        }
+    }
+
     private void OpenEditor()
     {
         objectiveErrors = [];
@@ -415,60 +559,63 @@ else
         }
     }
 
-    // Atajo desde la card de rendimiento a los parámetros del sistema (los mismos de Ajustes > Parámetros).
-    private async Task OpenReferenceEditor()
-    {
-        referenceErrors = [];
-        try
-        {
-            referenceParameters = await SystemParameters.GetYieldParametersAsync();
-            editingReference = true;
-        }
-        catch (Exception ex)
-        {
-            error = $"No se pudieron cargar los parámetros: {ex.Message}";
-        }
-    }
-
-    private void CloseReferenceEditor()
-    {
-        referenceErrors = [];
-        editingReference = false;
-    }
-
-    private async Task SaveReferenceAsync(YieldReferenceInput input)
-    {
-        savingReference = true;
-        try
-        {
-            var result = await SystemParameters.UpdateYieldParametersAsync(input, user);
-            if (result.Succeeded)
-            {
-                editingReference = false;
-                referenceErrors = [];
-                await LoadAsync();
-            }
-            else
-            {
-                referenceErrors = result.Errors;
-            }
-        }
-        catch (Exception ex)
-        {
-            referenceErrors = [$"No se pudieron guardar los pesos y precios: {ex.Message}"];
-        }
-        finally
-        {
-            savingReference = false;
-        }
-    }
-
     private async Task HarvestSelectedAsync()
     {
         if (detail is not { PlantId: > 0 } plant)
             return;
 
         await OperateAsync(() => PlantLifecycle.HarvestPlantAsync(plant.PlantId), "No se pudo cosechar");
+    }
+
+    /// <summary>
+    /// Plantas de la cosecha masiva. Baby Leaf: las aptas. Convencional: desde la ventana convencional,
+    /// todas las activas que no están en riesgo (sin análisis de imagen, la aptitud la da el GDD del lote).
+    /// </summary>
+    private int BulkCount(HarvestDestination destination)
+    {
+        if (overview is not { IsClosed: false } current)
+            return 0;
+        if (destination == HarvestDestination.BabyLeaf)
+            return current.Plants.Apta;
+        return current.Timeline?.Phase is CyclePhase.VentanaConvencional or CyclePhase.Sobremadurez
+            ? Math.Max(0, current.Plants.Active - current.Plants.Risk)
+            : 0;
+    }
+
+    private void AskBulkHarvest(HarvestDestination destination)
+    {
+        ClosePopover();
+        bulkError = null;
+        bulkHarvest = destination;
+    }
+
+    private void CloseBulkHarvest()
+    {
+        bulkError = null;
+        bulkHarvest = null;
+    }
+
+    private async Task ConfirmBulkHarvestAsync()
+    {
+        if (bulkHarvest is not { } destination || selectedLotId is not { } lotId)
+            return;
+
+        operating = true;
+        try
+        {
+            var harvested = await PlantLifecycle.HarvestManyAsync(lotId, destination);
+            bulkHarvest = null;
+            notice = $"Se cosecharon {LotFormat.Plants(harvested)} como {(destination == HarvestDestination.BabyLeaf ? "Baby Leaf" : "convencional")}.";
+            await ReloadAfterPlantChangeAsync();
+        }
+        catch (Exception ex)
+        {
+            bulkError = $"No se pudo cosechar: {ex.Message}";
+        }
+        finally
+        {
+            operating = false;
+        }
     }
 
     private async Task DiscardSelectedAsync(string? reason)
@@ -480,6 +627,22 @@ else
     }
 
     /// <summary>Ejecuta una operación sobre la planta seleccionada y recarga manteniendo la selección.</summary>
+    /// <summary>
+    /// Recarga después de cosechar o descartar. Si ya no quedan plantas activas, el lote se cerró solo
+    /// (PlantLifecycleService): se avisa y se actualiza el estado en el selector.
+    /// </summary>
+    private async Task ReloadAfterPlantChangeAsync()
+    {
+        var wasClosed = overview?.IsClosed ?? false;
+        await LoadAsync();
+        if (!wasClosed && overview is { IsClosed: true } closed)
+        {
+            var status = closed.State.StatusName == "COSECHADO" ? "cosechado" : "descartado";
+            notice = $"{notice} No quedan plantas activas: el lote se cerró como {status}.".Trim();
+            lots = await LotOverview.GetLotOptionsAsync();
+        }
+    }
+
     private async Task OperateAsync(Func<Task> operation, string errorPrefix)
     {
         operating = true;
@@ -487,7 +650,8 @@ else
         {
             await operation();
             var position = selectedPosition;
-            await LoadAsync();
+            notice = null;
+            await ReloadAfterPlantChangeAsync();
             if (position is { } pos && overview?.State.Cells.FirstOrDefault(c => c.Row == pos.Row && c.Column == pos.Column) is { } cell)
             {
                 selectedPosition = pos;

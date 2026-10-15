@@ -290,7 +290,9 @@ public class LotesSqlServerTests
 
         var plant = await AddPlantAsync(context, lot, 1, 1, "Baby Leaf apta", score: 90m);
 
-        var lifecycle = new Services.Lotes.PlantLifecycleService(new TestDbContextFactory(_fixture));
+        var factory = new TestDbContextFactory(_fixture);
+        var lifecycle = new Services.Lotes.PlantLifecycleService(factory, new SystemParametersService(
+            factory, new SettingsService(factory), Microsoft.Extensions.Logging.Abstractions.NullLogger<SystemParametersService>.Instance));
         var harvested = await lifecycle.HarvestPlantAsync(plant.Id);
 
         Assert.Equal(PlantOperationalState.Cosechada, harvested!.OperationalState);

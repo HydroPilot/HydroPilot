@@ -227,6 +227,16 @@ public class WeatherService
             .ToListAsync(ct);
     }
 
+    /// <summary>Hay API key de OpenWeather configurada: sin ella no se descarga clima.</summary>
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(_configuration["Weather:ApiKey"]);
+
+    /// <summary>Momento (UTC) de la última descarga del pronóstico; null si nunca se descargó.</summary>
+    public async Task<DateTime?> GetLastForecastFetchAsync(CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        return await context.DailyWeatherForecasts.MaxAsync(f => (DateTime?)f.FetchedAt, ct);
+    }
+
     /// <summary>Indica si el pronóstico para hoy ya fue obtenido hoy (guard 1 vez/día).</summary>
     public async Task<bool> WasFetchedTodayAsync(CancellationToken ct = default)
     {

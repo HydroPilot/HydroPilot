@@ -1,54 +1,39 @@
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-<section class="panel" aria-labelledby="lot-objectives-title">
-    <div class="lot-panel-head">
-        <h3 class="lot-panel-title" id="lot-objectives-title">Metas del ciclo</h3>
-        <span class="lot-muted mt-0">Dejá un campo vacío para no definirlo.</span>
-    </div>
+@* Metas del ciclo: va dentro del modal "Metas del ciclo" (lápiz de las cards Baby Leaf y Pérdidas). *@
+<p class="lot-muted mt-0 mb-3">Dejá un campo vacío para no definirlo.</p>
 
-    <div class="lot-editor">
-        @* Umbral de cosecha: oculto por ahora (en revisión si aporta valor). Al guardar se conserva el valor vigente.
-        <div class="lot-editor__field">
-            <label class="form-label mb-1" for="obj-threshold">Umbral de cosecha (% de aptas)</label>
-            <input id="obj-threshold" type="number" class="form-control" min="1" max="100" step="1"
-                   @bind="threshold" @bind:event="oninput" />
-            <p class="lot-editor__help">Regla para decidir el corte: el lote completo se cosecha cuando este % de las plantas activas está apto.</p>
-        </div>
-        *@
-        <div class="lot-editor__field">
-            <label class="form-label mb-1" for="obj-goal">Meta Baby Leaf del ciclo (% de plantas)</label>
-            <input id="obj-goal" type="number" class="form-control" min="0" max="100" step="1"
-                   @bind="babyLeafGoal" @bind:event="oninput" />
-            <p class="lot-editor__help">Qué parte del lote planeás cosechar como baby leaf; el resto queda como convencional.</p>
-        </div>
-        <div class="lot-editor__field">
-            <label class="form-label mb-1" for="obj-loss">Pérdidas máximas (% de plantas)</label>
-            <input id="obj-loss" type="number" class="form-control" min="0" max="100" step="1"
-                   @bind="maxLoss" @bind:event="oninput" />
-            <p class="lot-editor__help">Tope de plantas descartadas que tolerás en el ciclo.</p>
-        </div>
+<div class="lot-editor">
+    @* Umbral de cosecha: oculto por ahora (en revisión si aporta valor). Al guardar se conserva el valor vigente.
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="obj-threshold">Umbral de cosecha (% de aptas)</label>
+        <input id="obj-threshold" type="number" class="form-control" min="1" max="100" step="1"
+               @bind="threshold" @bind:event="oninput" />
+        <p class="lot-editor__help">Regla para decidir el corte: el lote completo se cosecha cuando este % de las plantas activas está apto.</p>
     </div>
+    *@
+    <LotGoalFields @bind-BabyLeafGoal="babyLeafGoal" @bind-MaxLoss="maxLoss" />
+</div>
 
-    @if (Errors.Count > 0)
-    {
-        <div class="alert alert-danger py-2 mt-3 mb-0 small">
-            <ul class="mb-0">
-                @foreach (var error in Errors)
-                {
-                    <li>@error</li>
-                }
-            </ul>
-        </div>
-    }
-
-    <div class="lot-editor__actions">
-        <button class="btn btn-outline-secondary btn-sm" @onclick="OnCancel" disabled="@Saving">Cancelar</button>
-        <button class="btn btn-success btn-sm" @onclick="SaveAsync" disabled="@Saving">
-            @(Saving ? "Guardando…" : "Guardar metas")
-        </button>
+@if (Errors.Count > 0)
+{
+    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+        <ul class="mb-0">
+            @foreach (var error in Errors)
+            {
+                <li>@error</li>
+            }
+        </ul>
     </div>
-</section>
+}
+
+<div class="lot-editor__actions">
+    <button class="btn btn-outline-secondary btn-sm" @onclick="OnCancel" disabled="@Saving">Cancelar</button>
+    <button class="btn btn-success btn-sm" @onclick="SaveAsync" disabled="@Saving">
+        @(Saving ? "Guardando…" : "Guardar metas")
+    </button>
+</div>
 
 @code {
     [Parameter, EditorRequired] public LotObjectives Current { get; set; } = null!;

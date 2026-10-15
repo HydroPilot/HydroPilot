@@ -3,7 +3,8 @@
 
 @* Detalle técnico del lote y calidad del dato. Si la temperatura (de la que salen los GDD, la fase y
    las fechas) tiene problemas, la sección se pone en rojo con ⚠ y el motivo se ve sin abrirla.
-   La ficha completa del lote ya no va (repetía datos); el flujo diario está en Admin > Mantenimiento. *@
+   La ficha completa del lote ya no va (repetía datos); el flujo diario está en Admin > Mantenimiento.
+   La curva de GDD (antes en Forecasting) muestra de dónde salen las fechas y los días sin lectura. *@
 <details id="lot-data-details" class="lot-tech @(HasAlerts ? "lot-tech--alert" : null)">
     <summary>
         <span>
@@ -14,7 +15,7 @@
             }
         </span>
         <span>
-            @LotFormat.Num(Overview.State.GddAccumulated) GDD · @(Overview.State.PhenologicalStageName ?? "sin etapa") ·
+            @LotFormat.Num(Gdd) GDD · @(Overview.State.PhenologicalStageName ?? "sin etapa") ·
             @* Con datos poco confiables la cantidad de avisos va en rojo: el motivo está adentro. *@
             <span class="@(HasAlerts ? "lot-tech__alert-text" : null)">
                 @(Overview.NoticeCount == 1 ? "1 aviso" : $"{Overview.NoticeCount} avisos")
@@ -25,7 +26,7 @@
         <div class="lot-tech__facts">
             <div class="lot-stat">
                 <span class="lot-stat__label">GDD acumulado</span>
-                <span class="lot-stat__value">@LotFormat.Num(Overview.State.GddAccumulated)</span>
+                <span class="lot-stat__value">@LotFormat.Num(Gdd)</span>
                 @if (Overview.Timeline is { } window)
                 {
                     <span class="lot-stat__hint">
@@ -64,8 +65,22 @@
                     Fuente del pronóstico: @forecast.DataSourceSummary · modelo @forecast.ModelVersion ·
                     cobertura @(forecast.CoveragePercent is { } c ? LotFormat.Pct(c) : "—")
                 </p>
+                @if (forecast.ForecastCorrection is { } correction)
+                {
+                    <p class="lot-muted">
+                        Pronóstico corregido a la temperatura de adentro: @LotFormat.SignedNum(correction.OffsetPerDay) GDD/día
+                        (diferencia promedio entre el sensor y el pronóstico de los últimos @LotFormat.Days(correction.CalibrationDays)).
+                    </p>
+                }
             }
         </div>
+        @if (Overview.Curve is { } curve && Overview.Timeline is { } timeline)
+        {
+            <div class="lot-tech__chart">
+                <h6 class="small text-uppercase text-muted">GDD acumulado por día</h6>
+                <LotGddChart Curve="curve" Timeline="timeline" />
+            </div>
+        }
     </div>
 </details>
 
@@ -73,4 +88,9 @@
     [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
 
     private bool HasAlerts => Overview.DataAlerts.Count > 0;
+
+    // En un ciclo cerrado, el GDD al cierre (el de hoy sigue sumando si el nodo quedó asignado al lote).
+    private decimal Gdd => Overview.IsClosed && Overview.Timeline is { } closed
+        ? closed.AccumulatedGdd
+        : Overview.State.GddAccumulated;
 }

@@ -8,7 +8,28 @@
 
 <PageTitle>Anomalías</PageTitle>
 
-<h1 class="h4 mb-2">Anomalías de telemetría</h1>
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+    <h1 class="h4 mb-0">Anomalías de telemetría</h1>
+    <AuthorizeView>
+        <Authorized>
+            @if (context.User.IsInRole("Administrador"))
+            {
+                <div class="d-flex flex-column align-items-end gap-1">
+                    <button class="btn btn-success btn-sm" @onclick="TriggerSweepAsync" disabled="@sweeping">
+                        @(sweeping ? "Barriendo..." : "Ejecutar barrido ahora")
+                    </button>
+                    @if (sweepResult is not null)
+                    {
+                        <span class="text-muted small text-end">
+                            Último barrido: @sweepResult.EventsCreated creados · @sweepResult.EventsUpdated actualizados ·
+                            @sweepResult.EventsUpgraded promovidos · @sweepResult.EventsResolved resueltos · @sweepResult.CooldownSkips en cooldown
+                        </span>
+                    }
+                </div>
+            }
+        </Authorized>
+    </AuthorizeView>
+</div>
 <p class="text-muted small mb-3">
     Episodios detectados por reglas explicables sobre lecturas operativamente usables (VALIDA/SOSPECHOSA/OBSOLETA).
     Una lectura físicamente inválida nunca abre una anomalía agronómica; la falta de datos se muestra como "sin datos",
@@ -81,10 +102,10 @@ else
             <label class="form-label small mb-1">Hasta</label>
             <input type="date" class="form-control form-control-sm" style="width: auto;" @bind="filterTo" />
         </div>
-        <button class="btn btn-outline-primary btn-sm" @onclick="LoadAsync" disabled="@loading">Aplicar</button>
-        <button class="btn btn-outline-secondary btn-sm" @onclick="ClearFilters">Limpiar</button>
-        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadAsync">Refrescar</button>
-        <div class="form-check form-switch ms-2 mb-1">
+        <button class="btn btn-success btn-sm" @onclick="LoadAsync" disabled="@loading">Aplicar</button>
+        <button class="btn btn-sm hp-btn-secondary" @onclick="ClearFilters">Limpiar</button>
+        <button class="btn btn-sm hp-btn-secondary" @onclick="LoadAsync">Refrescar</button>
+        <div class="form-check form-switch ms-auto mb-1">
             <input class="form-check-input" type="checkbox" @bind="autoRefresh" id="autoRefresh" />
             <label class="form-check-label small" for="autoRefresh">Actualización automática</label>
         </div>
@@ -123,7 +144,7 @@ else
                 <span class="text-muted small">Conteo de plantas ACTIVAS en riesgo (señal para la evaluación comercial).
                     Sin umbral aprobado para generar un evento de lote: solo se muestra el conteo.</span>
             </div>
-            <table class="table table-sm align-middle mb-0">
+            <div class="table-responsive"><table class="table table-sm hp-table">
                 <thead>
                     <tr>
                         <th>Lote</th>
@@ -136,7 +157,7 @@ else
                 <tbody>
                     @foreach (var lot in lotSummaries)
                     {
-                        <tr class="@(lot.PlantsAtRisk > 0 ? "table-warning" : null)">
+                        <tr class="@(lot.PlantsAtRisk > 0 ? "hp-table__row--warn" : null)">
                             <td>#@lot.LotId — @lot.LotName</td>
                             <td class="text-end">@lot.ActivePlants</td>
                             <td class="text-end">
@@ -167,7 +188,7 @@ else
                         </tr>
                     }
                 </tbody>
-            </table>
+            </table></div>
         </section>
     }
 
@@ -178,7 +199,7 @@ else
             <div class="panel__header panel__header--compact">
                 <h3>Reglas vigentes @(rulesLotId is not null ? $"— lote #{rulesLotId}" : string.Empty)</h3>
             </div>
-            <table class="table table-sm align-middle mb-0">
+            <div class="table-responsive"><table class="table table-sm hp-table">
                 <thead>
                     <tr>
                         <th>Regla</th>
@@ -226,7 +247,7 @@ else
                         </tr>
                     }
                 </tbody>
-            </table>
+            </table></div>
             <div class="panel__footer small text-muted p-2">
                 @VisionNote.Reason
             </div>
@@ -326,11 +347,11 @@ else
                                             <div class="d-flex gap-2 mb-2">
                                                 @if (ev.Status != AnomalyContract.StatusReconocida && ev.Status != AnomalyContract.StatusResuelta)
                                                 {
-                                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => AcknowledgeAsync(ev.Id)">Reconocer</button>
+                                                    <button class="btn btn-sm hp-btn-secondary" @onclick="() => AcknowledgeAsync(ev.Id)">Reconocer</button>
                                                 }
                                                 @if (ev.Status != AnomalyContract.StatusResuelta)
                                                 {
-                                                    <button class="btn btn-outline-success btn-sm" @onclick="() => ResolveManuallyAsync(ev.Id)">Resolver manualmente</button>
+                                                    <button class="btn btn-success btn-sm" @onclick="() => ResolveManuallyAsync(ev.Id)">Resolver manualmente</button>
                                                 }
                                             </div>
                                         }
@@ -352,25 +373,6 @@ else
         }
     </section>
 
-    <AuthorizeView>
-        <Authorized>
-            @if (context.User.IsInRole("Administrador"))
-            {
-                <div class="mt-3 d-flex align-items-center gap-2">
-                    <button class="btn btn-outline-primary btn-sm" @onclick="TriggerSweepAsync" disabled="@sweeping">
-                        @(sweeping ? "Barriendo..." : "Ejecutar barrido ahora")
-                    </button>
-                    @if (sweepResult is not null)
-                    {
-                        <span class="text-muted small">
-                            Último barrido: @sweepResult.EventsCreated creados · @sweepResult.EventsUpdated actualizados ·
-                            @sweepResult.EventsUpgraded promovidos · @sweepResult.EventsResolved resueltos · @sweepResult.CooldownSkips en cooldown
-                        </span>
-                    }
-                </div>
-            }
-        </Authorized>
-    </AuthorizeView>
 }
 
 @code {

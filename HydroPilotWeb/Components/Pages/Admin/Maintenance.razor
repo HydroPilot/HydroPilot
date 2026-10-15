@@ -7,6 +7,8 @@
 @inject NotificationService NotificationService
 @inject LotOverviewService LotOverview
 @inject LotDailyFlowService DailyFlow
+@inject SettingsService Settings
+@inject WeatherService Weather
 @inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Mantenimiento de base de datos - HydroPilot</PageTitle>
@@ -199,6 +201,48 @@
             </div>
         </div>
 
+        <div class="action-card action-card--weather">
+            <div class="action-card__body">
+                <div class="action-card__icon">☁</div>
+                <div>
+                    <h4>Clima (OpenWeather)</h4>
+                    <p>
+                        El pronóstico de 7 días alimenta la proyección de GDD: las fechas de las ventanas y de los
+                        cortes en Lotes. Sin pronóstico, la proyección usa el promedio de los últimos días medidos.
+                    </p>
+                    @if (!Weather.IsConfigured)
+                    {
+                        <p class="action-card__warning">
+                            <strong>Sin API key de OpenWeather</strong> (<code>Weather:ApiKey</code>): no se descarga nada.
+                        </p>
+                    }
+                    <p class="action-card__hint">
+                        @(_lastWeatherFetchUtc is { } fetched
+                            ? $"Último pronóstico cargado: {fetched.ToLocalTime():dd/MM/yyyy HH:mm}"
+                            : "Todavía no hay ningún pronóstico cargado.")
+                    </p>
+                </div>
+            </div>
+            <div class="action-card__footer weather-switches">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="weather-daily" checked="@_weatherFetchEnabled"
+                           @onchange="OnWeatherFetchChangedAsync" disabled="@_isProcessing" />
+                    <label class="form-check-label" for="weather-daily">
+                        Sincronización diaria
+                        <small>Descarga el pronóstico todos los días a las 06:00 UTC. Apagada, solo se pide al abrir un lote al que le faltan días.</small>
+                    </label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="weather-no-limit" checked="@_weatherLimitDisabled"
+                           @onchange="OnWeatherLimitChangedAsync" disabled="@_isProcessing" />
+                    <label class="form-check-label" for="weather-no-limit">
+                        Sin límite diario
+                        <small>Vuelve a consultar la API cada vez que falta pronóstico (gasta más llamadas). Apagado: una vez por día.</small>
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <div class="action-card action-card--email">
             <div class="action-card__body">
                 <div class="action-card__icon">✉</div>
@@ -356,6 +400,29 @@
 
     .action-card--flow {
         border-left: 4px solid #f79009;
+    }
+
+    .action-card--weather {
+        border-left: 4px solid #7a8cff;
+    }
+
+    .weather-switches {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .weather-switches label {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-main, #e4ecf6);
+    }
+
+    .weather-switches small {
+        display: block;
+        font-weight: 400;
+        font-size: 12px;
+        color: var(--text-muted, #8ea1b4);
     }
 
     .flow-form {
@@ -562,6 +629,11 @@
     private int? _flowLotId;
     private DateOnly? _flowDate;
 
+    // Clima: antes eran switches en Forecasting.
+    private bool _weatherFetchEnabled;
+    private bool _weatherLimitDisabled;
+    private DateTime? _lastWeatherFetchUtc;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadSummaryAsync();
@@ -578,6 +650,10 @@
             _flowLots = (await LotOverview.GetLotOptionsAsync()).Where(l => l.IsOperational).ToList();
             if (_flowLotId is null || _flowLots.All(l => l.Id != _flowLotId))
                 _flowLotId = _flowLots.FirstOrDefault()?.Id;
+
+            _weatherFetchEnabled = await Settings.GetBoolAsync(SettingsService.WeatherFetchEnabledKey);
+            _weatherLimitDisabled = await Settings.GetBoolAsync(SettingsService.WeatherDailyLimitDisabledKey);
+            _lastWeatherFetchUtc = await Weather.GetLastForecastFetchAsync();
         }
         catch (Exception ex)
         {
@@ -623,6 +699,35 @@
         finally
         {
             _isProcessing = false;
+        }
+    }
+
+    private async Task OnWeatherFetchChangedAsync(ChangeEventArgs e)
+    {
+        _weatherFetchEnabled = e.Value is true;
+        await SaveWeatherSettingAsync(SettingsService.WeatherFetchEnabledKey, _weatherFetchEnabled,
+            _weatherFetchEnabled ? "Sincronización climática diaria activada." : "Sincronización climática diaria desactivada.");
+    }
+
+    private async Task OnWeatherLimitChangedAsync(ChangeEventArgs e)
+    {
+        _weatherLimitDisabled = e.Value is true;
+        await SaveWeatherSettingAsync(SettingsService.WeatherDailyLimitDisabledKey, _weatherLimitDisabled,
+            _weatherLimitDisabled ? "Límite diario de clima desactivado." : "Límite diario de clima activado (una consulta por día).");
+    }
+
+    private async Task SaveWeatherSettingAsync(string key, bool value, string message)
+    {
+        try
+        {
+            await Settings.SetBoolAsync(key, value);
+            _feedbackMessage = message;
+            _isSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            _feedbackMessage = $"No se pudo guardar la configuración del clima: {ex.Message}";
+            _isSuccess = false;
         }
     }
 

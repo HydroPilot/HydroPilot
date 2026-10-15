@@ -17,63 +17,32 @@
         <span class="sidebar-nav__label">Monitoreo</span>
 
         <NavLink class="sidebar-nav__item" href="" Match="NavLinkMatch.All">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M3 10.5 12 3l9 7.5" />
-                <path d="M5 9v11h5v-6h4v6h5V9" />
-            </svg>
-            <span class="sidebar-nav__text">Dashboard</span>
+            <NavIcon Name="" Class="sidebar-nav__icon" />
+            <span class="sidebar-nav__text">Invernadero</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="lotes">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 21v-9" />
-                <path d="M12 12c0-4.4 3.1-7.5 8-7.5 0 4.4-3.1 7.5-8 7.5Z" />
-                <path d="M12 14.5c0-3.4-2.5-6-7-6 0 3.4 2.5 6 7 6Z" />
-            </svg>
+            <NavIcon Name="lotes" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Lotes</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="reports">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 20h16" />
-                <path d="M7 16v-5" />
-                <path d="M12 16V6" />
-                <path d="M17 16V9" />
-            </svg>
+            <NavIcon Name="reports" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Informes</span>
         </NavLink>
 
-        <NavLink class="sidebar-nav__item" href="forecasting">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m3 17 6-6 4 4 8-8" />
-                <path d="M15 7h6v6" />
-            </svg>
-            <span class="sidebar-nav__text">Forecasting</span>
-        </NavLink>
-
         <NavLink class="sidebar-nav__item" href="simulation">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M9 3h6" />
-                <path d="M10 3v6.5L4.6 18.4A1.7 1.7 0 0 0 6.1 21h11.8a1.7 1.7 0 0 0 1.5-2.6L14 9.5V3" />
-                <path d="M7.5 15h9" />
-            </svg>
+            <NavIcon Name="simulation" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Simulación</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="optimization">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M11 3.5 12.8 8.2 17.5 10l-4.7 1.8L11 16.5l-1.8-4.7L4.5 10l4.7-1.8Z" />
-                <path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.7-.9-2.7-2.6-.9 2.6-.9Z" />
-            </svg>
+            <NavIcon Name="optimization" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Optimización</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="anomalies">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M10.3 4.2 2.7 17.5A2 2 0 0 0 4.4 20.5h15.2a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
-                <path d="M12 9.5v4" />
-                <path d="M12 17h.01" />
-            </svg>
+            <NavIcon Name="anomalies" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Anomalías</span>
         </NavLink>
     </div>
@@ -82,30 +51,17 @@
         <span class="sidebar-nav__label">Ajustes</span>
 
         <NavLink class="sidebar-nav__item" href="settings/profile">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
-            </svg>
+            <NavIcon Name="settings/profile" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Perfil</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="settings/notifications">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M18 15.5V11a6 6 0 1 0-12 0v4.5L4 18h16Z" />
-                <path d="M10 21h4" />
-            </svg>
+            <NavIcon Name="settings/notifications" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Notificaciones</span>
         </NavLink>
 
         <NavLink class="sidebar-nav__item" href="settings/parametros">
-            <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 7h9" />
-                <path d="M17 7h3" />
-                <circle cx="15" cy="7" r="2" />
-                <path d="M4 17h3" />
-                <path d="M11 17h9" />
-                <circle cx="9" cy="17" r="2" />
-            </svg>
+            <NavIcon Name="settings/parametros" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Parámetros</span>
         </NavLink>
 
@@ -114,18 +70,11 @@
                 @if (context.User.IsInRole("Administrador"))
                 {
                     <NavLink class="sidebar-nav__item" href="admin/users">
-                        <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="9" cy="8" r="3.5" />
-                            <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
-                            <path d="M16 4.7a3.5 3.5 0 0 1 0 6.6" />
-                            <path d="M18 14.3a6.5 6.5 0 0 1 3.5 5.7" />
-                        </svg>
+                        <NavIcon Name="admin/users" Class="sidebar-nav__icon" />
                         <span class="sidebar-nav__text">Usuarios</span>
                     </NavLink>
                     <NavLink class="sidebar-nav__item" href="admin/mantenimiento">
-                        <svg class="sidebar-nav__icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M14.5 6.5a4 4 0 0 0-5.3 5.3L3.8 17.2a2 2 0 0 0 2.9 2.9l5.4-5.4a4 4 0 0 0 5.3-5.3l-2.6 2.6-2.6-.4-.4-2.6Z" />
-                        </svg>
+                        <NavIcon Name="admin/mantenimiento" Class="sidebar-nav__icon" />
                         <span class="sidebar-nav__text">Mantenimiento</span>
                     </NavLink>
                 }

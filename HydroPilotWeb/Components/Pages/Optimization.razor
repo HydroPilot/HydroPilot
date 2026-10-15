@@ -16,11 +16,6 @@
 
 <PageTitle>Optimización</PageTitle>
 
-<div class="opt-banner" role="note">
-    <strong>⚠️ @OptimizationContract.InformativeBanner</strong>
-    <span>@OptimizationContract.NoDoseBanner</span>
-</div>
-
 @if (error is not null)
 {
     <div class="alert alert-danger">@error</div>
@@ -50,7 +45,7 @@ else
                 <option value="@lot.Id">#@lot.Id — @lot.CropType (@lot.Status, siembra @lot.SowingDate.ToString("dd/MM/yyyy"))</option>
             }
         </select>
-        <button class="btn btn-outline-primary btn-sm" @onclick="LoadAsync" disabled="@busy">
+        <button class="btn btn-success btn-sm" @onclick="LoadAsync" disabled="@busy">
             @(busy ? "Calculando..." : "Calcular recomendaciones")
         </button>
     </div>
@@ -114,7 +109,7 @@ else
                     </div>
                     <div class="opt-card__value">
                         <strong>@(a.CurrentValue?.ToString("0.0#") ?? "—")</strong>
-                        <span>@(item.SensorType == "pH" ? "pH" : "mS/cm")</span>
+                        <span class="opt-card__unit">@(item.SensorType == "pH" ? "pH" : "mS/cm")</span>
                         <span class="opt-muted">objetivo @(a.TargetValue?.ToString("0.0#") ?? "—")</span>
                     </div>
                     <p class="opt-explanation">@a.Explanation</p>
@@ -170,7 +165,8 @@ else
             }
             else
             {
-                <table class="table table-sm opt-table">
+                <div class="table-responsive hp-table-card">
+                <table class="table table-sm hp-table">
                     <thead>
                         <tr>
                             <th>Concepto (por m²)</th>
@@ -185,12 +181,13 @@ else
                             <tr><td>Precio (kg)</td><td>@Money(bl.PricePerKg)</td><td>@Money(cv.PricePerKg)</td></tr>
                             <tr><td>Ingresos</td><td>@Money(bl.RevenueM2)</td><td>@Money(cv.RevenueM2)</td></tr>
                             <tr><td>Costos (semillas, nutrientes, energía, trasplante)</td><td>@Money(bl.TotalCostM2)</td><td>@Money(cv.TotalCostM2)</td></tr>
-                            <tr><td><strong>Resultado</strong></td><td><strong>@Money(bl.ResultM2)</strong></td><td><strong>@Money(cv.ResultM2)</strong></td></tr>
+                            <tr class="hp-table__total"><td><strong>Resultado</strong></td><td><strong>@Money(bl.ResultM2)</strong></td><td><strong>@Money(cv.ResultM2)</strong></td></tr>
                             <tr><td>Margen</td><td>@(bl.MarginPercent?.ToString("0.#") + "%")</td><td>@(cv.MarginPercent?.ToString("0.#") + "%")</td></tr>
                         }
                     </tbody>
                 </table>
-                <div class="opt-muted small">
+                </div>
+                <div class="opt-muted small mt-2">
                     Diferencia de margen: @(econ.ProfitabilityDifferencePct?.ToString("0.#") ?? "—") pts
                     (umbral @econ.ThresholdPercent.ToString("0.#")%,
                     @(econ.ExceedsThreshold ? "supera el umbral" : "no supera el umbral: no se recomienda cambiar de destino")).
@@ -278,7 +275,7 @@ else
                                             disabled="@busy" @onclick="() => AcceptAsync(rec.Id)">
                                         Aceptar
                                     </button>
-                                    <button class="btn-pill btn-pill--ghost" type="button"
+                                    <button class="btn-pill opt-discard" type="button"
                                             disabled="@busy" @onclick="() => DiscardAsync(rec.Id)">
                                         Descartar
                                     </button>
@@ -298,7 +295,8 @@ else
         <h3 class="opt-section-title">Historial de recomendaciones</h3>
         @if (history is { Count: > 0 })
         {
-            <table class="table table-sm opt-table">
+            <div class="table-responsive hp-table-card">
+            <table class="table table-sm hp-table">
                 <thead>
                     <tr>
                         <th>#</th>
@@ -325,6 +323,7 @@ else
                     }
                 </tbody>
             </table>
+            </div>
         }
         else
         {

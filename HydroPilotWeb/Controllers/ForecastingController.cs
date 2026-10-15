@@ -14,15 +14,18 @@ public class ForecastingController : ControllerBase
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly ForecastService _forecastService;
+    private readonly SystemParametersService _parameters;
     private readonly ILogger<ForecastingController> _logger;
 
     public ForecastingController(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         ForecastService forecastService,
+        SystemParametersService parameters,
         ILogger<ForecastingController> logger)
     {
         _dbFactory = dbFactory;
         _forecastService = forecastService;
+        _parameters = parameters;
         _logger = logger;
     }
 
@@ -179,6 +182,9 @@ public class ForecastingController : ControllerBase
 
         lot.ActualYieldKg = request.ActualYieldKg;
         lot.ActualHarvestDate = request.ActualHarvestDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // Pesos y precios de ese día quedan en el lote: Lotes valoriza el ciclo con ellos.
+        await _parameters.ApplyHarvestReferenceAsync(context, lot, lot.ActualHarvestDate.Value, ct);
 
         var harvestedStatus = await context.LotStatuses
             .FirstOrDefaultAsync(s => s.Name == LotStatusNames.Cosechado, ct);

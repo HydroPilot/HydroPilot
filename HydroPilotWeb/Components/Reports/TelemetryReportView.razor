@@ -66,7 +66,7 @@
     </div>
 
     <div class="d-flex gap-3 align-items-center mb-2 flex-wrap">
-        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+        <button class="btn btn-success btn-sm" @onclick="Generate" disabled="@loading">
             @(loading ? "Generando..." : "Generar")
         </button>
         <label class="form-check small mb-0">
@@ -90,7 +90,7 @@
     {
         <div class="alert alert-danger">
             <strong>No se pudo generar el reporte.</strong> @error
-            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+            <button class="btn btn-sm hp-btn-secondary ms-2" @onclick="Generate">Reintentar</button>
         </div>
     }
     else if (result is not null)
@@ -171,7 +171,7 @@
 
             @if (result.Stats.Count > 0)
             {
-                <button class="btn btn-outline-secondary btn-sm mb-2" @onclick="DownloadStatsCsv">⬇ CSV estadísticas</button>
+                <button class="btn btn-sm hp-btn-secondary mb-2" @onclick="DownloadStatsCsv">⬇ CSV estadísticas</button>
             }
 
             <h5 class="small text-uppercase text-muted mt-3">Detalle de lecturas (@(result.IncludeNonUsable ? "incluye no utilizables" : "solo utilizables"))</h5>
@@ -218,7 +218,7 @@
                 </div>
                 <ReportPager Page="result.Page" TotalRows="result.TotalRows" PageSize="result.PageSize"
                              PageChanged="OnPageChanged" />
-                <button class="btn btn-outline-secondary btn-sm mt-2" @onclick="DownloadRowsCsv">⬇ CSV detalle (página actual)</button>
+                <button class="btn btn-sm hp-btn-secondary mt-2" @onclick="DownloadRowsCsv">⬇ CSV detalle (página actual)</button>
             }
         }
     }

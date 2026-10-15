@@ -2,7 +2,8 @@
 @namespace HydroPilotWeb.Components.Lotes
 
 @* Baby Leaf: cuánto del lote ya es baby leaf contra la meta del ciclo, y cuánto puede llegar a serlo.
-   Sin título ni badge de ventana: el dato principal ya dice de qué habla y la ventana está en la card de arriba. *@
+   Sin título ni badge de ventana: el dato principal ya dice de qué habla y la ventana está en la card de arriba.
+   La meta se edita con el lápiz, que abre el modal de metas del ciclo. *@
 <section class="lot-card" aria-label="Baby Leaf">
     <div class="lot-kpi">
         <span class="lot-card__big">@LotFormat.Pct1(Goals.AchievedPercent)</span>
@@ -66,10 +67,6 @@
             @if (Goal is null)
             {
                 <span class="lot-stat__value lot-stat__value--muted">Sin definir</span>
-                @if (CanEdit)
-                {
-                    <button class="lot-link" @onclick="OnEditObjectives">Definir meta</button>
-                }
             }
             else
             {

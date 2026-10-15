@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Data;
+using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Optimization;
@@ -18,11 +19,12 @@ public sealed record YieldParameters(
 public sealed record ParametersUpdateResult(bool Succeeded, IReadOnlyList<string> Errors);
 
 /// <summary>
-/// Parámetros globales del sistema (Ajustes &gt; Parámetros). Por ahora, los de rendimiento:
+/// Parámetros globales del sistema (Ajustes &gt; Parámetros):
 /// <list type="bullet">
 /// <item>Peso promedio por planta de cada destino: AppSettings.</item>
 /// <item>Precio por kg de cada destino: catálogo de precios a nivel global, el mismo que usa
 /// Optimización. Un precio específico de un lote, si existiera, sigue teniendo prioridad.</item>
+/// <item>Precio de nutrientes por litro (gastos del sistema de Simulación): AppSettings.</item>
 /// </list>
 /// Sin valor cargado quedan "sin definir": los precios demo del catálogo no cuentan como definidos.
 /// Solo Administrador y Productor los editan; el resto los ve.
@@ -33,6 +35,8 @@ public class SystemParametersService
 
     public const string BabyLeafGramsKey = "YieldBabyLeafGramsPerPlant";
     public const string ConventionalGramsKey = "YieldConventionalGramsPerPlant";
+    public const string NutrientPricePerLiterKey = "NutrientPricePerLiter";
+    public const decimal MaxNutrientPricePerLiter = 10_000_000m;
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
@@ -49,6 +53,48 @@ public class SystemParametersService
     }
 
     public static bool CanEdit(ClaimsPrincipal user) => EditorRoles.Any(user.IsInRole);
+
+    /// <summary>
+    /// Precio por kg de cada destino vigente para un lote a una fecha, con la misma precedencia que
+    /// Optimización (lote &gt; cultivo &gt; global) pero sin los precios demo: si el usuario no cargó
+    /// uno, queda sin definir.
+    /// </summary>
+    public static async Task<YieldPrices> ResolveLotPricesAsync(
+        HydroPilotDbContext context, Lot lot, DateOnly date, CancellationToken ct = default)
+    {
+        var rows = (await CostPriceResolver.ResolveActiveAsync(context, lot, date, ct, includeDemo: false))
+            .Where(r => r.Item == OptimizationContractCostItem.PricePerKg)
+            .ToList();
+        if (rows.Count == 0)
+            return YieldPrices.None;
+
+        var babyLeaf = rows.FirstOrDefault(r => r.Destination == OptimizationContractDestination.BabyLeaf);
+        var conventional = rows.FirstOrDefault(r => r.Destination == OptimizationContractDestination.Conventional);
+        return new YieldPrices(babyLeaf?.Value, conventional?.Value, (babyLeaf ?? conventional)!.Currency);
+    }
+
+    /// <summary>
+    /// Guarda en el lote los pesos por planta vigentes y los precios a la fecha de cosecha: el ciclo
+    /// cerrado se valoriza con ellos aunque los parámetros cambien después. No llama a SaveChanges.
+    /// </summary>
+    public async Task ApplyHarvestReferenceAsync(
+        HydroPilotDbContext context, Lot lot, DateOnly harvestDate, CancellationToken ct = default)
+    {
+        var reference = await GetYieldReferenceAsync(ct);
+        var prices = await ResolveLotPricesAsync(context, lot, harvestDate, ct);
+
+        lot.HarvestBabyLeafGramsPerPlant = reference.BabyLeafGramsPerPlant;
+        lot.HarvestConventionalGramsPerPlant = reference.ConventionalGramsPerPlant;
+        lot.HarvestBabyLeafPricePerKg = prices.BabyLeafPerKg;
+        lot.HarvestConventionalPricePerKg = prices.ConventionalPerKg;
+        lot.HarvestPriceCurrency = prices.BabyLeafPerKg is null && prices.ConventionalPerKg is null ? null : prices.Currency;
+    }
+
+    /// <summary>Pesos y precios guardados en un lote cerrado (null los que no se guardaron).</summary>
+    public static (YieldReference Reference, YieldPrices Prices) HarvestReference(Lot lot) => (
+        new YieldReference(lot.HarvestBabyLeafGramsPerPlant, lot.HarvestConventionalGramsPerPlant),
+        new YieldPrices(lot.HarvestBabyLeafPricePerKg, lot.HarvestConventionalPricePerKg,
+            lot.HarvestPriceCurrency ?? YieldPrices.None.Currency));
 
     /// <summary>Peso promedio por planta de cada destino; null = sin definir.</summary>
     public async Task<YieldReference> GetYieldReferenceAsync(CancellationToken ct = default) => new(
@@ -108,6 +154,26 @@ public class SystemParametersService
             user.Identity?.Name, normalized.BabyLeafGrams, normalized.BabyLeafPricePerKg,
             normalized.ConventionalGrams, normalized.ConventionalPricePerKg);
 
+        return new ParametersUpdateResult(true, []);
+    }
+
+    /// <summary>Precio de los nutrientes por litro (en la moneda de los precios); null = sin definir.</summary>
+    public Task<decimal?> GetNutrientPricePerLiterAsync(CancellationToken ct = default) =>
+        _settings.GetDecimalAsync(NutrientPricePerLiterKey, ct);
+
+    /// <summary>Guarda el precio de nutrientes por litro (vacío = sin definir). Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateNutrientPricePerLiterAsync(
+        decimal? pricePerLiter,
+        ClaimsPrincipal user,
+        CancellationToken ct = default)
+    {
+        if (!CanEdit(user))
+            return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
+        if (pricePerLiter is { } price && (price <= 0m || price > MaxNutrientPricePerLiter))
+            return new ParametersUpdateResult(false, ["El precio de nutrientes por litro tiene que ser mayor a 0."]);
+
+        await _settings.SetDecimalAsync(NutrientPricePerLiterKey, pricePerLiter, ct);
+        _logger.LogInformation("Precio de nutrientes actualizado por {User}: {Price}/L", user.Identity?.Name, pricePerLiter);
         return new ParametersUpdateResult(true, []);
     }
 

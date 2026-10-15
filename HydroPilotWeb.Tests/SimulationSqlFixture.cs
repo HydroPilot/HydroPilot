@@ -27,8 +27,8 @@ public sealed class SimulationDbContextFactory(DbContextOptions<HydroPilotDbCont
 /// <summary>
 /// Fixture de integración de simulación: base SQL Server limpia (drop + migrate)
 /// con el seed completo del DbInitializer (lote demo con plantas y evaluaciones,
-/// catálogos Baby Leaf). Provee los servicios reales (GddService, YieldService,
-/// LotAggregateService, ClimateScenarioProvider, YieldModel, SimulationService)
+/// catálogos Baby Leaf). Provee los servicios reales (GddService, SystemParametersService,
+/// LotAggregateService, ClimateScenarioProvider, SimulationService)
 /// sobre el mismo motor que Azure SQL.
 /// </summary>
 public sealed class SimulationSqlFixture : IAsyncLifetime
@@ -41,7 +41,7 @@ public sealed class SimulationSqlFixture : IAsyncLifetime
 
     /// <summary>Servicios del módulo compartidos por las pruebas.</summary>
     public GddService Gdd { get; private set; } = null!;
-    public YieldService Yield { get; private set; } = null!;
+    public SystemParametersService Parameters { get; private set; } = null!;
     public SimulationService Simulation { get; private set; } = null!;
 
     public async Task InitializeAsync()
@@ -52,6 +52,7 @@ public sealed class SimulationSqlFixture : IAsyncLifetime
             {
                 ["Admin:Password"] = "PassDeTestNoProductiva",
                 ["TelemetryApiKey"] = "api-key-de-test",
+                ["Weather:ApiKey"] = "", // los tests nunca descargan clima real (solo el pronóstico sembrado en la DB)
             })
             .Build();
 
@@ -87,17 +88,18 @@ public sealed class SimulationSqlFixture : IAsyncLifetime
             Configuration,
             NullLogger<WeatherService>.Instance);
         var gdd = new GddService(Factory, weather, settings);
-        var yield = new YieldService(Factory);
         var aggregate = new LotAggregateService(Factory, gdd);
+        var parameters = new SystemParametersService(Factory, settings, NullLogger<SystemParametersService>.Instance);
 
         Gdd = gdd;
-        Yield = yield;
+        Parameters = parameters;
         Simulation = new SimulationService(
             Factory,
             gdd,
             new ClimateScenarioProvider(gdd, weather),
-            new YieldModel(yield),
-            aggregate);
+            aggregate,
+            parameters,
+            new BabyLeafOutlookService(Factory, gdd));
     }
 
     public async Task DisposeAsync()

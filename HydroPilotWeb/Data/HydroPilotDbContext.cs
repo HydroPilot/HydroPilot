@@ -194,6 +194,9 @@ public class HydroPilotDbContext : DbContext
             entity.HasIndex(e => e.LotId);
             entity.HasIndex(e => e.NodeId);
             entity.HasIndex(e => e.ObservedAtUtc);
+            // Última lectura de un lote (pH/CE de la vista Lotes) y lecturas de un sensor en un período (GDD).
+            entity.HasIndex(e => new { e.LotId, e.ObservedAtUtc });
+            entity.HasIndex(e => new { e.SensorId, e.ObservedAtUtc });
             entity.HasIndex(e => new { e.NodeId, e.ExternalReadingId }).IsUnique();
 
             entity.HasOne(e => e.Sensor)
@@ -333,6 +336,12 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.BabyLeafHarvestTargetPercent).HasColumnType("decimal(5,2)");
             entity.Property(e => e.BabyLeafGoalPercent).HasColumnType("decimal(5,2)");
             entity.Property(e => e.MaxLossPercent).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.HarvestBabyLeafGramsPerPlant).HasColumnType("decimal(7,1)");
+            entity.Property(e => e.HarvestConventionalGramsPerPlant).HasColumnType("decimal(7,1)");
+            entity.Property(e => e.HarvestBabyLeafPricePerKg).HasColumnType("decimal(12,2)");
+            entity.Property(e => e.HarvestConventionalPricePerKg).HasColumnType("decimal(12,2)");
+            entity.Property(e => e.HarvestPriceCurrency).HasMaxLength(10);
+            entity.Property(e => e.CycleAverageDailyGdd).HasColumnType("decimal(6,2)");
 
             entity.HasIndex(e => e.StatusId);
             entity.HasIndex(e => e.CropTypeId);

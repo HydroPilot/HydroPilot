@@ -73,6 +73,42 @@ public class Lot
     /// <summary>Meta del ciclo (0-100): % máximo de plantas descartadas tolerado. Null = sin meta definida.</summary>
     public decimal? MaxLossPercent { get; set; }
 
+    // --- Referencia guardada al cosechar el lote: pesos y precios vigentes ese día ---
+    // Los parámetros del sistema cambian con el tiempo; el rendimiento real del ciclo se valoriza con
+    // los de la cosecha. Null = no estaba definido o el lote se cerró antes de guardarlos.
+    /// <summary>Peso promedio por planta Baby Leaf (g) al cosechar el lote.</summary>
+    public decimal? HarvestBabyLeafGramsPerPlant { get; set; }
+
+    /// <summary>Peso promedio por lechuga convencional (g) al cosechar el lote.</summary>
+    public decimal? HarvestConventionalGramsPerPlant { get; set; }
+
+    /// <summary>Precio por kg Baby Leaf vigente a la fecha de cosecha (sin los precios demo).</summary>
+    public decimal? HarvestBabyLeafPricePerKg { get; set; }
+
+    /// <summary>Precio por kg convencional vigente a la fecha de cosecha (sin los precios demo).</summary>
+    public decimal? HarvestConventionalPricePerKg { get; set; }
+
+    [MaxLength(10)]
+    public string? HarvestPriceCurrency { get; set; }
+
+    // --- Resultado del ciclo para el histórico (previsión de Baby Leaf y pérdidas) ---
+    // Se cargan a mano en los lotes previos. Null = se calcula de las plantas, su historial de
+    // estados y las lecturas del lote (los cerrados desde la app).
+    /// <summary>
+    /// Plantas aptas a Baby Leaf en el óptimo: lo que el lote PODÍA dar, aparte de cuántas se
+    /// cortaron como Baby Leaf (lo que se decidió).
+    /// </summary>
+    public int? BabyLeafAptAtOptimum { get; set; }
+
+    /// <summary>Plantas descartadas hasta que cerró la ventana Baby Leaf (pérdidas tempranas).</summary>
+    public int? EarlyLossPlants { get; set; }
+
+    /// <summary>Plantas descartadas después de la ventana Baby Leaf, esperando al convencional (pérdidas tardías).</summary>
+    public int? LateLossPlants { get; set; }
+
+    /// <summary>GDD diario promedio del ciclo (clima de adentro), para comparar lotes por clima parecido.</summary>
+    public decimal? CycleAverageDailyGdd { get; set; }
+
     public Greenhouse? Greenhouse { get; set; }
     public CropType? CropType { get; set; }
     public LotStatus? Status { get; set; }

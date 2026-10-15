@@ -1,0 +1,33 @@
+@using System.Globalization
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Campos de las metas del ciclo (meta Baby Leaf y pérdidas máximas), compartidos por el alta de
+   lote y el editor de metas. Vacío = sin definir. Van dentro de una grilla .lot-editor. *@
+<div class="lot-editor__field">
+    <label class="form-label mb-1" for="@($"{_id}-goal")">Meta Baby Leaf del ciclo (% de plantas)</label>
+    <input id="@($"{_id}-goal")" type="number" class="form-control" min="0" max="100" step="1"
+           value="@Format(BabyLeafGoal)" @onchange="e => OnChangedAsync(e, BabyLeafGoalChanged)" />
+</div>
+<div class="lot-editor__field">
+    <label class="form-label mb-1" for="@($"{_id}-loss")">Pérdidas máximas (% de plantas)</label>
+    <input id="@($"{_id}-loss")" type="number" class="form-control" min="0" max="100" step="1"
+           value="@Format(MaxLoss)" @onchange="e => OnChangedAsync(e, MaxLossChanged)" />
+</div>
+
+@code {
+    [Parameter] public decimal? BabyLeafGoal { get; set; }
+    [Parameter] public EventCallback<decimal?> BabyLeafGoalChanged { get; set; }
+    [Parameter] public decimal? MaxLoss { get; set; }
+    [Parameter] public EventCallback<decimal?> MaxLossChanged { get; set; }
+
+    private readonly string _id = $"goals-{Guid.NewGuid():N}";
+
+    // Los <input type="number"> usan punto decimal (cultura invariante), como @bind.
+    private static string? Format(decimal? value) => value?.ToString("0.##", CultureInfo.InvariantCulture);
+
+    // Al salir del campo (onchange, no en cada tecla). Vacío o no numérico = sin definir.
+    private static Task OnChangedAsync(ChangeEventArgs e, EventCallback<decimal?> changed) =>
+        changed.InvokeAsync(decimal.TryParse(e.Value?.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : (decimal?)null);
+}

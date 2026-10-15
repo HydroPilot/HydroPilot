@@ -47,6 +47,9 @@ builder.Services.AddScoped<PlantEvaluationService>();
 builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
 builder.Services.AddScoped<LotOverviewService>();
+builder.Services.AddScoped<LotCreationService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<BabyLeafOutlookService>();
 
 // --- Módulo de anomalías (plan 15 / ANO-01..09) ---
 // El proveedor de riesgo REAL se registra después del NoPlantRiskProvider: gana el último.
@@ -67,7 +70,6 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 // La frontera de hardware (IHardwareGateway) NO se registra: la simulación nunca
 // invoca hardware (SIM-07), y el test de aislamiento lo verifica con un adaptador falso.
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
-builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.YieldModel>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
 
 // --- Módulo de optimización (plan 16) ---

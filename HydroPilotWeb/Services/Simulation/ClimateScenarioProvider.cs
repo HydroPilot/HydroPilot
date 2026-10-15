@@ -5,11 +5,10 @@ namespace HydroPilotWeb.Services.Simulation;
 
 /// <summary>
 /// Plan climático del escenario (SIM-03): resuelve la proyección diaria de GDD
-/// según el modo (manual / replay histórico / pronóstico) y reporta proveedor,
-/// fecha de fetch, fallback y cobertura. La simulación NO llama a la API por cada
-/// movimiento de slider: se invoca una vez por corrida y, en modo pronóstico,
-/// reutiliza el fetch perezoso serializado con guard diario del forecasting
-/// (WeatherService/GddService), idéntico al de la pantalla de forecasting.
+/// según el modo (manual / pronóstico) y reporta proveedor, fecha de fetch,
+/// fallback y cobertura. Se invoca una vez por corrida y, en modo pronóstico con
+/// lote, usa la MISMA proyección que la vista Lotes (GddService: pronóstico y,
+/// los días sin pronóstico, el promedio de los últimos 7 días medidos).
 /// </summary>
 public sealed record ClimatePlan(
     IReadOnlyList<SimulationGddPoint> Points,
@@ -20,7 +19,8 @@ public sealed record ClimatePlan(
     int CoveredDays,
     int MissingDays,
     decimal? CoveragePercent,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    ForecastCorrection? Correction = null);
 
 /// <summary>
 /// Proveedor de escenario climático. Los valores numéricos de GDD salen SIEMPRE
@@ -29,9 +29,6 @@ public sealed record ClimatePlan(
 /// </summary>
 public class ClimateScenarioProvider
 {
-    /// <summary>Días observados usados como promedio para el replay histórico.</summary>
-    private const int HistoricReplayObservedDays = 14;
-
     private readonly GddService _gddService;
     private readonly WeatherService _weatherService;
 
@@ -41,23 +38,66 @@ public class ClimateScenarioProvider
         _weatherService = weatherService;
     }
 
+    /// <summary>
+    /// GDD del escenario LIBRE de la siembra a hoy, con el clima elegido (con lote, el historial
+    /// real lo da GddService). Manual: cada día suma el GDD de Tmin/Tmax. Pronóstico: el guardado
+    /// para esos días (el pasado no se descarga), corregido a la temperatura de adentro; los días
+    /// sin pronóstico no suman y se avisa. Siembra futura: todavía no hay días.
+    /// </summary>
+    public async Task<(IReadOnlyList<DailyGddPoint> Daily, IReadOnlyList<string> Warnings)> FreeHistoryAsync(
+        SimulationClimateInput climate,
+        decimal baseTemperature,
+        DateOnly sowingDate,
+        DateOnly today,
+        ForecastCorrection? correction = null,
+        CancellationToken ct = default)
+    {
+        if (sowingDate > today)
+            return ([], []);
+
+        if (climate.Mode == SimulationClimateMode.Manual)
+            return (GddCalculator.ManualHistory(climate, baseTemperature, sowingDate, today), []);
+
+        var rows = await _weatherService.GetForecastForDatesAsync(sowingDate, today, ct);
+        var daily = rows
+            .Select(row => new DailyGddPoint(
+                row.Date,
+                Math.Round(GddService.CorrectedForecastGdd(
+                    GddService.DailyGdd(Math.Max(row.TempMin, row.TempMax), Math.Min(row.TempMin, row.TempMax), baseTemperature),
+                    correction), 2),
+                GddPointSource.Forecast))
+            .ToList();
+
+        var days = today.DayNumber - sowingDate.DayNumber + 1;
+        IReadOnlyList<string> warnings = daily.Count < days
+            ? [$"{days - daily.Count} de {days} días desde la siembra sin pronóstico guardado: no suman GDD (para contarlos, usá clima manual)."]
+            : [];
+        return (daily, warnings);
+    }
+
+    /// <summary>
+    /// Proyección del clima elegido desde <paramref name="from"/> (mañana, o la siembra si es
+    /// futura) durante el horizonte; después, CycleTimelineLogic extrapola con el último día.
+    /// Con lote, el pronóstico ya viene corregido por GddService (como en Lotes); sin lote se aplica
+    /// <paramref name="freeCorrection"/>.
+    /// </summary>
     public async Task<ClimatePlan> BuildAsync(
         SimulationClimateInput climate,
         Lot? lot,
-        DateOnly referenceDate,
+        DateOnly from,
         decimal baseTemperature,
+        GddHistoryResult? lotHistory = null,
+        ForecastCorrection? freeCorrection = null,
         CancellationToken ct = default)
     {
         var horizon = Math.Clamp(climate.ForecastHorizonDays ?? 7, 1, 30);
-        var from = referenceDate.AddDays(1);
-        var to = referenceDate.AddDays(horizon);
+        var to = from.AddDays(horizon - 1);
         var warnings = new List<string>();
 
         return climate.Mode switch
         {
             SimulationClimateMode.Manual => BuildManual(climate, baseTemperature, from, to, horizon, warnings),
-            SimulationClimateMode.Historic => await BuildHistoricAsync(lot, referenceDate, from, to, horizon, warnings, ct),
-            SimulationClimateMode.Forecast => await BuildForecastAsync(lot, referenceDate, baseTemperature, from, to, horizon, warnings, ct),
+            SimulationClimateMode.Forecast => await BuildForecastAsync(lot, lotHistory, freeCorrection, baseTemperature, from, to, horizon, warnings, ct),
             _ => throw new ArgumentOutOfRangeException(nameof(climate.Mode))
         };
     }
@@ -80,43 +120,10 @@ public class ClimateScenarioProvider
         return new ClimatePlan(points, "manual", null, false, horizon, points.Count, 0, 100m, warnings);
     }
 
-    private async Task<ClimatePlan> BuildHistoricAsync(
-        Lot? lot,
-        DateOnly referenceDate,
-        DateOnly from,
-        DateOnly to,
-        int horizon,
-        List<string> warnings,
-        CancellationToken ct)
-    {
-        if (lot is null)
-        {
-            warnings.Add("Modo histórico sin lote: las lecturas de temperatura pertenecen a los sensores del invernadero; el escenario libre no tiene historial propio (no se inventa un promedio).");
-            return new ClimatePlan([], "historico", null, false, horizon, 0, horizon, 0m, warnings);
-        }
-
-        // Replay histórico: promedio del GDD observado reciente (respeta AsOfDate).
-        var average = await _gddService.GetRecentAverageDailyGddOrNullAsync(lot, referenceDate, HistoricReplayObservedDays, ct);
-        if (average is null)
-        {
-            warnings.Add("Sin promedio de días observados para el replay histórico: la proyección del escenario queda sin datos (no se asume 0).");
-            return new ClimatePlan([], "historico", null, false, horizon, 0, horizon, 0m, warnings);
-        }
-
-        warnings.Add($"Modo histórico: la proyección replica el promedio observado de los últimos {HistoricReplayObservedDays} días (fallback de replay); no es un pronóstico climático.");
-
-        var points = new List<SimulationGddPoint>();
-        for (var date = from; date <= to; date = date.AddDays(1))
-        {
-            points.Add(new SimulationGddPoint(date, Math.Round(average.Value, 2), SimulationGddSource.HistoricReplay));
-        }
-
-        return new ClimatePlan(points, "historico", null, true, horizon, points.Count, 0, 100m, warnings);
-    }
-
     private async Task<ClimatePlan> BuildForecastAsync(
         Lot? lot,
-        DateOnly referenceDate,
+        GddHistoryResult? lotHistory,
+        ForecastCorrection? freeCorrection,
         decimal baseTemperature,
         DateOnly from,
         DateOnly to,
@@ -127,13 +134,15 @@ public class ClimateScenarioProvider
         var points = new List<SimulationGddPoint>();
         DateTime? fetchedAt = null;
         var usedFallback = false;
+        var correction = lot is null ? freeCorrection : null;
 
         if (lot is not null)
         {
-            // Reutiliza el núcleo de forecasting (DB primero + fetch perezoso
-            // serializado con guard diario): la simulación NO duplica el fetch.
-            var projection = await _gddService.GetFutureGddProjectionAsync(lot, referenceDate, horizon, ct);
+            // La misma proyección que la vista Lotes (DB primero + fetch perezoso serializado con
+            // guard diario; días sin pronóstico: promedio de los últimos 7 días medidos).
+            var projection = await _gddService.GetFutureGddProjectionAsync(lot, from.AddDays(-1), horizon, ct, lotHistory);
             warnings.AddRange(projection.Warnings);
+            correction = projection.Correction;
 
             foreach (var point in projection.Points)
             {
@@ -154,20 +163,20 @@ public class ClimateScenarioProvider
         }
         else
         {
-            // Escenario libre sin lote: mismo proveedor (DB del pronóstico), con el
-            // fetch perezoso guardado del forecasting; sin lecturas propias no hay
-            // fallback de sensor (se informa la falta, no se asume 0).
-            await _weatherService.FetchForecastForDatesAsync(from, to, ct);
+            // Escenario libre sin lote: mismo proveedor (DB del pronóstico, fetch como mucho una
+            // vez por día); sin lecturas propias no hay promedio de respaldo (se informa la falta).
+            if (!await _weatherService.WasFetchedTodayAsync(ct))
+                await _weatherService.FetchForecastForDatesAsync(from, to, ct);
             var rows = await _weatherService.GetForecastForDatesAsync(from, to, ct);
 
             if (rows.Count == 0)
             {
-                warnings.Add($"Sin pronóstico climático para {from:yyyy-MM-dd}..{to:yyyy-MM-dd}: la proyección del escenario queda sin datos (no se asume 0).");
+                warnings.Add($"Sin pronóstico climático para {from:yyyy-MM-dd}..{to:yyyy-MM-dd}: la proyección del escenario queda sin datos (no se asume 0); usá clima manual.");
             }
             else
             {
                 fetchedAt = rows.Max(r => r.FetchedAt);
-                if (DateOnly.FromDateTime(fetchedAt.Value) < referenceDate.AddDays(-3))
+                if (DateOnly.FromDateTime(fetchedAt.Value) < from.AddDays(-4))
                 {
                     warnings.Add($"Pronóstico vencido (último fetch {fetchedAt:yyyy-MM-dd}): puede estar desactualizado.");
                 }
@@ -183,7 +192,7 @@ public class ClimateScenarioProvider
 
                     points.Add(new SimulationGddPoint(
                         row.Date,
-                        Math.Round(GddService.DailyGdd(tmax, tmin, baseTemperature), 2),
+                        Math.Round(GddService.CorrectedForecastGdd(GddService.DailyGdd(tmax, tmin, baseTemperature), correction), 2),
                         SimulationGddSource.Forecast));
                 }
             }
@@ -207,7 +216,8 @@ public class ClimateScenarioProvider
             covered,
             missing,
             coverage,
-            warnings);
+            warnings,
+            correction);
     }
 
     /// <summary>Fecha del último fetch del pronóstico persistido en el rango (solo lectura).</summary>
@@ -217,10 +227,6 @@ public class ClimateScenarioProvider
         return rows.Count > 0 ? rows.Max(r => r.FetchedAt) : null;
     }
 
-    private static SimulationGddSource MapSource(GddPointSource source) => source switch
-    {
-        GddPointSource.Forecast => SimulationGddSource.Forecast,
-        GddPointSource.Fallback => SimulationGddSource.Fallback,
-        _ => SimulationGddSource.HistoricReplay // Observed no ocurre en el rango futuro
-    };
+    private static SimulationGddSource MapSource(GddPointSource source) =>
+        source == GddPointSource.Forecast ? SimulationGddSource.Forecast : SimulationGddSource.Fallback;
 }

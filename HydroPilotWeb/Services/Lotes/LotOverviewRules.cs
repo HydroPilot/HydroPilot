@@ -3,8 +3,9 @@ using HydroPilotWeb.Services.Forecasting;
 namespace HydroPilotWeb.Services.Lotes;
 
 /// <summary>
-/// Objetivos editables del lote. El umbral de cosecha DECIDE el corte del lote
-/// (regla híbrida); las dos metas del ciclo MIDEN la producción planificada.
+/// Objetivos editables del lote. El umbral de cosecha decide el "listo" de la regla híbrida
+/// en Forecasting, Simulación y Optimización; la vista Lotes no lo usa (sus cortes van por
+/// GDD). Las dos metas del ciclo MIDEN la producción planificada.
 /// Null = sin definir (nunca se reemplaza por una constante).
 /// </summary>
 public sealed record LotObjectives(
@@ -169,6 +170,20 @@ public sealed record YieldScenario(DestinationYield BabyLeaf, DestinationYield C
 /// </summary>
 public sealed record LotYieldEstimate(YieldScenario Current, YieldScenario Potential, YieldReference Reference, YieldPrices Prices);
 
+/// <summary>
+/// Rendimiento real de un ciclo cerrado: plantas cosechadas de cada destino × peso y precio
+/// guardados al cosechar el lote (no los parámetros de hoy).
+/// </summary>
+public sealed record LotHarvestYield(YieldScenario Real, YieldReference Reference, YieldPrices Prices)
+{
+    /// <summary>Ingreso total; null si falta el de algún destino que tuvo plantas cosechadas.</summary>
+    public decimal? TotalRevenue =>
+        (Real.BabyLeaf.Plants == 0 || Real.BabyLeaf.Revenue is not null)
+        && (Real.Conventional.Plants == 0 || Real.Conventional.Revenue is not null)
+            ? (Real.BabyLeaf.Revenue ?? 0m) + (Real.Conventional.Revenue ?? 0m)
+            : null;
+}
+
 public static class LotYieldRules
 {
     public sealed record Input(int Apta, int Candidate, int Developing, int Conventional);
@@ -184,6 +199,14 @@ public static class LotYieldRules
             reference,
             prices);
     }
+
+    /// <summary>Ciclo cerrado: cosechadas como Baby Leaf y como convencional, con la referencia de la cosecha.</summary>
+    public static LotHarvestYield Harvested(int harvestedBabyLeaf, int harvestedConventional, YieldReference reference, YieldPrices prices) => new(
+        new YieldScenario(
+            Destination(harvestedBabyLeaf, reference.BabyLeafGramsPerPlant, prices.BabyLeafPerKg),
+            Destination(harvestedConventional, reference.ConventionalGramsPerPlant, prices.ConventionalPerKg)),
+        reference,
+        prices);
 
     private static DestinationYield Destination(int plants, decimal? gramsPerPlant, decimal? pricePerKg)
     {
@@ -260,10 +283,17 @@ public sealed record DataQualityAlert(DataQualityAlertKind Kind, string Title, s
 public static class LotDataQualityRules
 {
     /// <summary>
-    /// Prefijo del aviso del umbral de cosecha (LotAggregateService / ForecastService). La vista Lotes
-    /// no muestra el umbral y su % (aptas / activas) contradice al logrado de la card Baby Leaf.
+    /// Avisos de la fecha de cosecha del forecast (umbral de aptas, fecha por GDD objetivo, criterio de
+    /// tamaño convencional; LotAggregateService / ForecastService). La vista Lotes no usa esa fecha: sus
+    /// cortes salen de los óptimos por GDD (CycleTimelineLogic) y la extrapolación se marca con "≈".
     /// </summary>
-    public const string HarvestThresholdWarningPrefix = "Porcentaje de aptas (";
+    public static readonly IReadOnlyList<string> HarvestDateWarningPrefixes =
+    [
+        "Porcentaje de aptas (",
+        "Porcentaje objetivo de plantas aptas no configurado",
+        "La fecha por GDD (",
+        "Cosecha convencional: sin criterio de tamaño",
+    ];
 
     public static IReadOnlyList<DataQualityAlert> Alerts(ForecastSourceKind sourceKind, int coverageDays, int missingDays)
     {
@@ -301,13 +331,13 @@ public static class LotDataQualityRules
 
     /// <summary>
     /// Avisos técnicos a listar: sin los que ya explica una alerta (para no decir lo mismo dos veces)
-    /// ni el del umbral de cosecha.
+    /// ni los de la fecha de cosecha del forecast.
     /// </summary>
     public static IReadOnlyList<string> RemainingWarnings(IEnumerable<string> warnings, IReadOnlyList<DataQualityAlert> alerts)
     {
         var covered = alerts.SelectMany(a => CoveredWarnings[a.Kind]).ToList();
         return warnings
-            .Where(w => !w.StartsWith(HarvestThresholdWarningPrefix, StringComparison.Ordinal))
+            .Where(w => !HarvestDateWarningPrefixes.Any(prefix => w.StartsWith(prefix, StringComparison.Ordinal)))
             .Where(w => !covered.Any(marker => w.Contains(marker, StringComparison.OrdinalIgnoreCase)))
             .ToList();
     }
@@ -322,6 +352,15 @@ public enum CyclePhase { Desarrollo, VentanaBabyLeaf, VentanaConvencional, Sobre
 /// </summary>
 public sealed record CycleMilestone(decimal Gdd, DateOnly? Date, bool IsEstimate, bool IsExtrapolated);
 
+public enum HarvestDestination { BabyLeaf, Convencional }
+
+/// <summary>
+/// Próximo corte del lote: el óptimo y el límite (cierre de la ventana) de su destino.
+/// CutNow = ya pasó el óptimo: se corta lo que corresponda a ese destino, se llegue o no a
+/// la meta; lo que no se cortó como Baby Leaf sigue creciendo para convencional.
+/// </summary>
+public sealed record HarvestCut(HarvestDestination Destination, CycleMilestone Optimum, CycleMilestone Limit, bool CutNow);
+
 public sealed record CycleTimeline(
     DateOnly SowingDate,
     DateOnly AsOfDate,
@@ -329,16 +368,37 @@ public sealed record CycleTimeline(
     CyclePhase Phase,
     decimal AccumulatedGdd,
     CycleMilestone BabyLeafOpens,
+    CycleMilestone BabyLeafOptimum,
     CycleMilestone BabyLeafCloses,
-    CycleMilestone Overmaturity);
+    CycleMilestone ConventionalOptimum,
+    CycleMilestone Overmaturity)
+{
+    /// <summary>Corte Baby Leaf hasta que cierra su ventana; después, el convencional. Null en sobremadurez.</summary>
+    public HarvestCut? NextCut => Phase switch
+    {
+        CyclePhase.Desarrollo or CyclePhase.VentanaBabyLeaf => new HarvestCut(
+            HarvestDestination.BabyLeaf, BabyLeafOptimum, BabyLeafCloses, AccumulatedGdd >= BabyLeafOptimum.Gdd),
+        CyclePhase.VentanaConvencional => new HarvestCut(
+            HarvestDestination.Convencional, ConventionalOptimum, Overmaturity, AccumulatedGdd >= ConventionalOptimum.Gdd),
+        _ => null
+    };
+}
 
 /// <summary>
-/// Línea de tiempo del ciclo: convierte los umbrales de GDD (apertura y cierre de la
-/// ventana Baby Leaf, sobremadurez) en fechas. Hitos ya alcanzados → fecha observada
-/// en el historial; hitos futuros → GddDateLogic sobre la proyección. Lógica pura.
+/// Línea de tiempo del ciclo: convierte los umbrales de GDD (apertura, óptimo de corte y
+/// cierre de cada ventana) en fechas. Hitos ya alcanzados → fecha observada en el
+/// historial; hitos futuros → GddDateLogic sobre la proyección. Lógica pura.
 /// </summary>
 public static class CycleTimelineLogic
 {
+    /// <summary>
+    /// Óptimos de corte por GDD, fijos por ahora (después irán a Ajustes &gt; Parámetros). El sistema
+    /// no puede calcularlos: no sabe cómo crece cada planta (sin análisis de imagen, peso fijo).
+    /// Baby Leaf = GDD objetivo del cultivo; convencional = margen antes de la sobremadurez.
+    /// </summary>
+    public const decimal BabyLeafOptimumGdd = 300m;
+    public const decimal ConventionalOptimumGdd = 650m;
+
     public static CyclePhase PhaseFor(decimal gdd, decimal babyLeafMin, decimal babyLeafMax, decimal overmaturity) =>
         gdd < babyLeafMin ? CyclePhase.Desarrollo
         : gdd < babyLeafMax ? CyclePhase.VentanaBabyLeaf
@@ -376,13 +436,78 @@ public static class CycleTimelineLogic
         IReadOnlyList<DailyGddPoint> projection,
         decimal babyLeafMin,
         decimal babyLeafMax,
-        decimal overmaturity) => new(
+        decimal overmaturity,
+        decimal babyLeafOptimum = BabyLeafOptimumGdd,
+        decimal conventionalOptimum = ConventionalOptimumGdd)
+    {
+        // Cada óptimo queda dentro de su ventana aunque la configuración del cultivo cambie.
+        static decimal Within(decimal value, decimal min, decimal max) => Math.Min(Math.Max(value, min), max);
+
+        return new(
             sowingDate,
             asOfDate,
             Math.Max(0, asOfDate.DayNumber - sowingDate.DayNumber),
             PhaseFor(accumulated, babyLeafMin, babyLeafMax, overmaturity),
             accumulated,
             Milestone(babyLeafMin, accumulated, history, projection),
+            Milestone(Within(babyLeafOptimum, babyLeafMin, babyLeafMax), accumulated, history, projection),
             Milestone(babyLeafMax, accumulated, history, projection),
+            Milestone(Within(conventionalOptimum, babyLeafMax, overmaturity), accumulated, history, projection),
             Milestone(overmaturity, accumulated, history, projection));
+    }
+}
+
+/// <summary>
+/// Día de la curva de GDD: GDD del día y acumulado al cierre del día. Source null = día sin
+/// lectura de temperatura (no suma: el acumulado queda plano).
+/// </summary>
+public sealed record GddCurveDay(DateOnly Date, decimal? DailyGdd, decimal Cumulative, GddPointSource? Source);
+
+/// <summary>GDD acumulado día a día: lo medido (de la siembra a la fecha) y la proyección que sigue.</summary>
+public sealed record GddCurve(DateOnly SowingDate, DateOnly AsOfDate, IReadOnlyList<GddCurveDay> Measured, IReadOnlyList<GddCurveDay> Projected)
+{
+    public DateOnly EndDate => Projected.Count > 0 ? Projected[^1].Date : AsOfDate;
+
+    public decimal MaxCumulative => Projected.Count > 0 ? Projected[^1].Cumulative : Measured.Count > 0 ? Measured[^1].Cumulative : 0m;
+}
+
+/// <summary>
+/// Arma la curva de GDD del lote con los mismos datos del pronóstico (historial y proyección de
+/// 7 días). Los días sin lectura quedan marcados para verlos en el gráfico. Lógica pura.
+/// </summary>
+public static class GddCurveLogic
+{
+    public static GddCurve Build(
+        DateOnly sowingDate,
+        DateOnly asOfDate,
+        IReadOnlyList<DailyGddPoint> history,
+        IReadOnlyList<DailyGddPoint> projection)
+    {
+        // Siembra futura (escenario de Simulación para planificar): no hay nada medido todavía y la
+        // proyección arranca el día de la siembra.
+        var byDate = history.DistinctBy(p => p.Date).ToDictionary(p => p.Date);
+        var measured = new List<GddCurveDay>();
+        var cumulative = 0m;
+        for (var date = sowingDate; date <= asOfDate; date = date.AddDays(1))
+        {
+            if (byDate.TryGetValue(date, out var point))
+            {
+                cumulative += point.Gdd;
+                measured.Add(new GddCurveDay(date, point.Gdd, cumulative, point.Source));
+            }
+            else
+            {
+                measured.Add(new GddCurveDay(date, null, cumulative, null));
+            }
+        }
+
+        var projected = new List<GddCurveDay>();
+        foreach (var point in projection.Where(p => p.Date > asOfDate && p.Date >= sowingDate).OrderBy(p => p.Date))
+        {
+            cumulative += point.Gdd;
+            projected.Add(new GddCurveDay(point.Date, point.Gdd, cumulative, point.Source));
+        }
+
+        return new GddCurve(sowingDate, asOfDate, measured, projected);
+    }
 }

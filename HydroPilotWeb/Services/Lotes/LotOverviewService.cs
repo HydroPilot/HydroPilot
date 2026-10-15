@@ -3,10 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
-using HydroPilotWeb.Models.Optimization;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
-using HydroPilotWeb.Services.Optimization;
 
 namespace HydroPilotWeb.Services.Lotes;
 
@@ -51,17 +49,20 @@ public sealed record ClosedCycleDto(
     decimal? YieldPerM2);
 
 /// <summary>
-/// Todo lo que muestra la vista Lotes, armado desde los servicios existentes. Un lote
-/// cerrado no tiene línea de tiempo (sus ventanas ya pasaron): expone ClosedCycle.
+/// Todo lo que muestra la vista Lotes, armado desde los servicios existentes. En un lote
+/// cerrado la línea de tiempo y la curva de GDD llegan hasta el cierre (sin proyección) y el
+/// rendimiento es el real (HarvestYield), con los pesos y precios guardados al cosechar.
 /// </summary>
 public sealed record LotOverviewDto(
     LotStateDto State,
     ForecastResult? Forecast,
     CycleTimeline? Timeline,
+    GddCurve? Curve,
     LotPlantBreakdown Plants,
     LotObjectives Objectives,
     LotGoalsRules.Result Goals,
     LotYieldEstimate Yield,
+    LotHarvestYield? HarvestYield,
     IReadOnlyList<SolutionReadingDto> Solution,
     bool IsClosed,
     ClosedCycleDto? ClosedCycle,
@@ -88,6 +89,7 @@ public class LotOverviewService
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly LotAggregateService _aggregate;
     private readonly ForecastService _forecast;
+    private readonly GddService _gdd;
     private readonly SystemParametersService _parameters;
     private readonly IOptions<DashboardOptions> _dashboardOptions;
     private readonly ILogger<LotOverviewService> _logger;
@@ -96,6 +98,7 @@ public class LotOverviewService
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         LotAggregateService aggregate,
         ForecastService forecast,
+        GddService gdd,
         SystemParametersService parameters,
         IOptions<DashboardOptions> dashboardOptions,
         ILogger<LotOverviewService> logger)
@@ -103,6 +106,7 @@ public class LotOverviewService
         _dbFactory = dbFactory;
         _aggregate = aggregate;
         _forecast = forecast;
+        _gdd = gdd;
         _parameters = parameters;
         _dashboardOptions = dashboardOptions;
         _logger = logger;
@@ -136,16 +140,23 @@ public class LotOverviewService
     {
         var warnings = new List<string>();
 
+        // Un ciclo cerrado no necesita pronóstico (sus ventanas se arman con lo medido hasta el cierre).
+        var closedStatus = await LotStatusAsync(lotId, ct);
+        var lotIsClosed = closedStatus is LotStatusNames.Cosechado or LotStatusNames.Descartado;
+
         // Forecast primero: con la fecha de hoy refresca el snapshot de GDD que usa el estado del lote.
         ForecastResult? forecast = null;
-        try
+        if (!lotIsClosed)
         {
-            forecast = await _forecast.GetForecastAsync(lotId, asOfDate, ct: ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "No se pudo calcular el forecast del lote {LotId}", lotId);
-            warnings.Add("No se pudo calcular el pronóstico del lote: fechas y rendimiento no disponibles.");
+            try
+            {
+                forecast = await _forecast.GetForecastAsync(lotId, asOfDate, ct: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo calcular el forecast del lote {LotId}", lotId);
+                warnings.Add("No se pudo calcular el pronóstico del lote: fechas y rendimiento no disponibles.");
+            }
         }
 
         var state = await _aggregate.GetLotStateAsync(lotId, asOfDate, ct);
@@ -173,21 +184,31 @@ public class LotOverviewService
 
         var isClosed = state.StatusName is LotStatusNames.Cosechado or LotStatusNames.Descartado;
 
-        // Un ciclo cerrado no lleva línea de tiempo: sus ventanas ya pasaron (se muestra ClosedCycle).
         CycleTimeline? timeline = null;
-        if (!isClosed)
+        GddCurve? curve = null;
+        if (config is null || lastStage is null)
         {
-            if (config is null || lastStage is null)
-            {
+            if (!isClosed)
                 warnings.Add("Sin configuración Baby Leaf o etapas fenológicas del cultivo: no se pueden calcular las ventanas de cosecha.");
-            }
-            else if (forecast is not null)
-            {
-                timeline = CycleTimelineLogic.Build(
-                    lot.SowingDate, forecast.AsOfDate, forecast.GddAccumulated,
-                    forecast.GddHistory, forecast.FutureProjection,
-                    config.GddMin, config.GddMax, lastStage.GddMax);
-            }
+        }
+        else if (isClosed)
+        {
+            // Ciclo cerrado: las ventanas y la curva llegan hasta el cierre, solo con lo medido (sin
+            // proyección); las ventanas que no se alcanzaron quedan sin fecha.
+            var closedOn = await ClosedOnAsync(context, lot, asOfDate, ct);
+            var history = await _gdd.GetGddHistoryAsync(lot, closedOn, ct);
+            timeline = CycleTimelineLogic.Build(
+                lot.SowingDate, closedOn, history.Daily.Sum(p => p.Gdd), history.Daily, [],
+                config.GddMin, config.GddMax, lastStage.GddMax);
+            curve = GddCurveLogic.Build(lot.SowingDate, closedOn, history.Daily, []);
+        }
+        else if (forecast is not null)
+        {
+            timeline = CycleTimelineLogic.Build(
+                lot.SowingDate, forecast.AsOfDate, forecast.GddAccumulated,
+                forecast.GddHistory, forecast.FutureProjection,
+                config.GddMin, config.GddMax, lastStage.GddMax);
+            curve = GddCurveLogic.Build(lot.SowingDate, forecast.AsOfDate, forecast.GddHistory, forecast.FutureProjection);
         }
 
         var harvestedAsBabyLeaf = await context.Plants
@@ -204,13 +225,23 @@ public class LotOverviewService
             plants.TotalPlants, plants.HarvestedAsBabyLeaf, plants.Apta, plants.Candidate,
             plants.Discarded, plants.Risk, objectives.BabyLeafGoalPercent, objectives.MaxLossPercent));
 
-        var solution = await GetSolutionAsync(context, lot, asOfDate, ct);
+        // pH y CE solo se muestran en lotes en curso.
+        IReadOnlyList<SolutionReadingDto> solution = isClosed ? [] : await GetSolutionAsync(context, lot, asOfDate, ct);
 
         // Rendimiento por plantas (cada una tiene su hueco): peso de referencia × plantas de cada destino.
         var yieldEstimate = LotYieldRules.Estimate(
             new LotYieldRules.Input(plants.Apta, plants.Candidate, plants.Developing, plants.Conventional),
             await _parameters.GetYieldReferenceAsync(ct),
-            await GetYieldPricesAsync(context, lot, asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow), ct));
+            await SystemParametersService.ResolveLotPricesAsync(context, lot, asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow), ct));
+
+        // Ciclo cerrado: lo cosechado de cada destino, valorizado con los pesos y precios del día de la cosecha.
+        LotHarvestYield? harvestYield = null;
+        if (isClosed)
+        {
+            var (reference, prices) = SystemParametersService.HarvestReference(lot);
+            harvestYield = LotYieldRules.Harvested(
+                plants.HarvestedAsBabyLeaf, plants.Harvested - plants.HarvestedAsBabyLeaf, reference, prices);
+        }
 
         ClosedCycleDto? closedCycle = isClosed
             ? new ClosedCycleDto(
@@ -233,10 +264,12 @@ public class LotOverviewService
             state,
             forecast,
             timeline,
+            curve,
             plants,
             objectives,
             goals,
             yieldEstimate,
+            harvestYield,
             solution,
             isClosed,
             closedCycle,
@@ -276,22 +309,28 @@ public class LotOverviewService
         return new LotObjectivesUpdateResult(true, []);
     }
 
-    /// <summary>
-    /// Precio por kg vigente de cada destino, con la misma precedencia que Optimización pero sin
-    /// los precios demo: si el usuario no cargó uno, queda sin definir.
-    /// </summary>
-    private static async Task<YieldPrices> GetYieldPricesAsync(
-        HydroPilotDbContext context, Lot lot, DateOnly date, CancellationToken ct)
+    private async Task<string?> LotStatusAsync(int lotId, CancellationToken ct)
     {
-        var rows = (await CostPriceResolver.ResolveActiveAsync(context, lot, date, ct, includeDemo: false))
-            .Where(r => r.Item == OptimizationContractCostItem.PricePerKg)
-            .ToList();
-        if (rows.Count == 0)
-            return YieldPrices.None;
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        return await context.Lots.AsNoTracking().Where(l => l.Id == lotId).Select(l => l.Status!.Name).FirstOrDefaultAsync(ct);
+    }
 
-        var babyLeaf = rows.FirstOrDefault(r => r.Destination == OptimizationContractDestination.BabyLeaf);
-        var conventional = rows.FirstOrDefault(r => r.Destination == OptimizationContractDestination.Conventional);
-        return new YieldPrices(babyLeaf?.Value, conventional?.Value, (babyLeaf ?? conventional)!.Currency);
+    /// <summary>
+    /// Fecha de cierre del ciclo: la cosecha registrada o, si no hay (lote descartado), la última
+    /// cosecha o descarte de una planta. Con "Ver al" anterior, esa fecha.
+    /// </summary>
+    private static async Task<DateOnly> ClosedOnAsync(HydroPilotDbContext context, Lot lot, DateOnly? asOfDate, CancellationToken ct)
+    {
+        var closedOn = lot.ActualHarvestDate;
+        if (closedOn is null)
+        {
+            var lastHarvest = await context.Plants.Where(p => p.LotId == lot.Id).MaxAsync(p => p.HarvestDate, ct);
+            var lastDiscard = await context.Plants.Where(p => p.LotId == lot.Id).MaxAsync(p => p.DiscardDate, ct);
+            closedOn = lastHarvest > lastDiscard || lastDiscard is null ? lastHarvest : lastDiscard;
+        }
+
+        var date = closedOn ?? asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        return asOfDate is { } viewDate && viewDate < date ? viewDate : date;
     }
 
     private static LotPlantBreakdown Breakdown(LotStateDto state, int harvestedAsBabyLeaf)

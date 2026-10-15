@@ -1,7 +1,8 @@
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Meta del ciclo: pérdidas (plantas descartadas) contra el máximo tolerado. *@
+@* Meta del ciclo: pérdidas (plantas descartadas) contra el máximo tolerado. El máximo se edita con
+   el lápiz, que abre el modal de metas del ciclo. *@
 <section class="lot-card" aria-labelledby="lot-loss-title">
     <header class="lot-card__head">
         <h3 class="lot-card__title" id="lot-loss-title">
@@ -53,13 +54,7 @@
 
     @if (Max is null)
     {
-        <p class="lot-card__sub">
-            Sin máximo definido.
-            @if (CanEdit)
-            {
-                <button class="lot-link ms-1" @onclick="OnEditObjectives">Definir máximo</button>
-            }
-        </p>
+        <p class="lot-card__sub">Sin máximo definido.</p>
     }
 </section>
 

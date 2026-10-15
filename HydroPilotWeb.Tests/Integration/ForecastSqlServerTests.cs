@@ -1,6 +1,7 @@
 using HydroPilotWeb.Controllers;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Services;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using Microsoft.AspNetCore.Mvc;
@@ -468,6 +469,7 @@ public class ForecastSqlServerTests
     private ForecastingController BuildController() => new(
         _fixture.Factory,
         _fixture.Forecast,
+        new SystemParametersService(_fixture.Factory, _fixture.Settings, NullLogger<SystemParametersService>.Instance),
         NullLogger<ForecastingController>.Instance);
 
     private static async Task<Plant> AddPlantAsync(

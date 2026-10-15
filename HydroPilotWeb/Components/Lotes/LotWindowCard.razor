@@ -2,15 +2,16 @@
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Ventana actual del lote: fase del ciclo (badge) + línea de tiempo con las ventanas de cosecha.
-   El día del ciclo va en la línea de tiempo, junto a "Hoy". Los problemas de datos (temperaturas
-   sintéticas o faltantes) se marcan en la sección de detalles técnicos. *@
+@* Ventana actual del lote: fase del ciclo (badge) + línea de tiempo con las ventanas y el próximo
+   corte (óptimos por GDD, no la fecha del forecast). El día del ciclo va en la línea de tiempo, junto
+   a "Hoy". Los problemas de datos (temperaturas sintéticas o faltantes) se marcan en la sección de
+   detalles técnicos. *@
 <section class="lot-card" aria-labelledby="lot-window-title">
     <header class="lot-card__head">
         <h3 class="lot-card__title" id="lot-window-title">@(Overview.IsClosed ? "Ciclo" : "Ventana actual")</h3>
         @if (Overview.IsClosed)
         {
-            <span class="lot-badge">@(Overview.State.StatusName == LotStatusNames.Cosechado ? "Cosechado" : "Descartado")</span>
+            <span class="lot-badge">@(IsHarvested ? "Cosechado" : "Descartado")</span>
         }
         else if (Overview.Timeline is { } current)
         {
@@ -21,16 +22,24 @@
 
     @if (Overview.IsClosed)
     {
-        <p class="lot-card__sub">
-            Siembra @LotFormat.Day(Overview.State.SowingDate)
-            @(Overview.ClosedCycle?.HarvestDate is { } harvested ? $"→ cosecha {LotFormat.Day(harvested)}" : "· sin cosecha registrada")
-            @(Overview.ClosedCycle?.CycleDays is { } days ? $"· {LotFormat.Days(days)}" : null)
-        </p>
+        @if (Overview.Timeline is { } closedTimeline)
+        {
+            @* Las ventanas del ciclo con sus fechas reales, hasta el cierre. La siembra y la marca
+               "Cosecha / Descarte dd/mm (día N)" ya dicen las fechas: sin texto aparte. *@
+            <LotCycleTimeline Timeline="closedTimeline" ClosedLabel="@(IsHarvested ? "Cosecha" : "Descarte")" />
+        }
+        else
+        {
+            <p class="lot-card__sub">
+                Siembra @LotFormat.Day(Overview.State.SowingDate)
+                @(Overview.ClosedCycle?.HarvestDate is { } harvested ? $"→ cosecha {LotFormat.Day(harvested)}" : null)
+                @(Overview.ClosedCycle?.CycleDays is { } days ? $"· {LotFormat.Days(days)}" : null)
+            </p>
+        }
     }
     else if (Overview.Timeline is { } timeline)
     {
-        <LotCycleTimeline Timeline="timeline" EstimatedHarvestDate="Overview.Forecast?.EstimatedHarvestDate"
-                          HarvestIsExtrapolated="HarvestIsExtrapolated" />
+        <LotCycleTimeline Timeline="timeline" />
     }
     else
     {
@@ -41,10 +50,7 @@
 @code {
     [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
 
-    // Cosecha más allá del horizonte del pronóstico: es una extrapolación con el último GDD diario.
-    private bool HarvestIsExtrapolated =>
-        Overview.Forecast is { EstimatedHarvestDate: { } harvest } forecast
-        && harvest > forecast.AsOfDate.AddDays(forecast.ForecastHorizonDays);
+    private bool IsHarvested => Overview.State.StatusName == LotStatusNames.Cosechado;
 
     // El tono es el color del tramo de la línea de tiempo (el mismo del mapa).
     private static (string Label, string Tone) Phase(CyclePhase phase) => phase switch

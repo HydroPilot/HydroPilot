@@ -17,6 +17,9 @@ public static class LotFormat
 
     public static string Num(decimal value) => value.ToString("0.#", Culture);
 
+    /// <summary>Número con signo explícito ("+5,1", "-0,8").</summary>
+    public static string SignedNum(decimal value) => (value > 0 ? "+" : string.Empty) + Num(value);
+
     public static string Kg(decimal value) => value.ToString("0.#", Culture) + " kg";
 
     /// <summary>Kg con 2 decimales si es poco (0,21 kg), con 1 si no (13,3 kg).</summary>
@@ -24,7 +27,7 @@ public static class LotFormat
 
     /// <summary>Importe sin decimales con separador de miles ("$1.014"); otra moneda va con su código.</summary>
     public static string Money(decimal value, string currency) =>
-        (currency == "ARS" ? "$" : currency + " ") + value.ToString("N0", Culture);
+        (value < 0 ? "-" : string.Empty) + (currency == "ARS" ? "$" : currency + " ") + Math.Abs(value).ToString("N0", Culture);
 
     /// <summary>Fecha corta legible ("9 oct").</summary>
     public static string Day(DateOnly date) => date.ToString("d MMM", Culture).TrimEnd('.');

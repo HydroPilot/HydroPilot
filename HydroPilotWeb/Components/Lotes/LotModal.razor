@@ -1,0 +1,47 @@
+@namespace HydroPilotWeb.Components.Lotes
+@inject IJSRuntime JS
+
+@* Modal de la vista Lotes: se muestra mientras el padre lo renderiza. Cierra con ✕, Escape o un
+   clic afuera (salvo mientras guarda). Al abrirse, el foco va al primer campo. *@
+<div class="lot-modal" @onkeydown="OnKeyDownAsync">
+    <div class="lot-modal__backdrop" @onclick="CloseAsync"></div>
+    <div class="lot-modal__dialog" id="@_id" role="dialog" aria-modal="true" aria-labelledby="@($"{_id}-title")" tabindex="-1">
+        <header class="lot-modal__head">
+            <h3 class="lot-panel-title mb-0" id="@($"{_id}-title")">@Title</h3>
+            <button type="button" class="lot-modal__close" @onclick="CloseAsync" disabled="@Busy" aria-label="Cerrar">✕</button>
+        </header>
+        @ChildContent
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private readonly string _id = $"lot-modal-{Guid.NewGuid():N}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                $"const d = document.getElementById('{_id}'); if (d) (d.querySelector('input, select, textarea') ?? d).focus();");
+        }
+        catch (JSException)
+        {
+            // Sin foco inicial el modal igual funciona.
+        }
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            await CloseAsync();
+    }
+
+    private Task CloseAsync() => Busy ? Task.CompletedTask : OnClose.InvokeAsync();
+}

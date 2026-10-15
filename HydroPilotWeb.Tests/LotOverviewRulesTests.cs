@@ -57,12 +57,16 @@ public class LotOverviewRulesTests
     }
 
     [Fact]
-    public void Avisos_Sin_El_Del_Umbral_De_Cosecha()
+    public void Avisos_Sin_Los_De_La_Fecha_De_Cosecha_Del_Forecast()
     {
+        // Lotes no usa esa fecha (umbral de aptas, GDD objetivo, criterio de tamaño): sus cortes van por GDD.
         var warnings = LotDataQualityRules.RemainingWarnings(
         [
             "Se detectaron lecturas sintéticas (marker mock/demo) en el histórico: no representan precisión real.",
             "Porcentaje de aptas (36,8%) por debajo del objetivo (70,00%).",
+            "Porcentaje objetivo de plantas aptas no configurado: fecha de cosecha híbrida pendiente de decisión.",
+            "La fecha por GDD (2026-10-28) queda más allá del horizonte de 7 días: es una extrapolación con el último GDD diario, no un pronóstico climático.",
+            "Cosecha convencional: sin criterio de tamaño/madurez disponible (análisis de imagen pendiente): fecha híbrida sin decidir.",
         ], []);
 
         Assert.Equal(["Se detectaron lecturas sintéticas (marker mock/demo) en el histórico: no representan precisión real."], warnings);
@@ -83,11 +87,7 @@ public class LotOverviewRulesTests
             "La fecha por GDD (2026-10-28) queda más allá del horizonte de 7 días: es una extrapolación con el último GDD diario, no un pronóstico climático.",
         ], alerts);
 
-        Assert.Equal(
-        [
-            "Se descartaron 931 lecturas asociadas a otro lote por asignación nodo→lote.",
-            "La fecha por GDD (2026-10-28) queda más allá del horizonte de 7 días: es una extrapolación con el último GDD diario, no un pronóstico climático.",
-        ], warnings);
+        Assert.Equal(["Se descartaron 931 lecturas asociadas a otro lote por asignación nodo→lote."], warnings);
 
         // Lote Demo 01: el aviso de lecturas sintéticas lo explica la alerta.
         var synthetic = LotDataQualityRules.Alerts(ForecastSourceKind.Mock, coverageDays: 16, missingDays: 0);
@@ -235,6 +235,140 @@ public class LotOverviewRulesTests
         Assert.True(timeline.BabyLeafCloses.IsEstimate);
         Assert.True(timeline.BabyLeafCloses.Date > timeline.AsOfDate);
         Assert.True(timeline.Overmaturity.Date > timeline.BabyLeafCloses.Date);
+        Assert.Equal(300m, timeline.BabyLeafOptimum.Gdd);
+        Assert.Equal(650m, timeline.ConventionalOptimum.Gdd);
+        Assert.True(timeline.BabyLeafOptimum.Date > timeline.BabyLeafOpens.Date);
+        Assert.True(timeline.ConventionalOptimum.Date > timeline.BabyLeafCloses.Date);
+    }
+
+    private static CycleTimeline TimelineAt(decimal accumulated)
+    {
+        var asOf = new DateOnly(2026, 10, 13);
+        var projection = Points(asOf.AddDays(1), Enumerable.Repeat(15m, 7).ToArray());
+        return CycleTimelineLogic.Build(asOf.AddDays(-20), asOf, accumulated, [], projection, 250m, 450m, 750m);
+    }
+
+    [Theory]
+    [InlineData(200, HarvestDestination.BabyLeaf, false)]     // desarrollo: espera el óptimo Baby Leaf
+    [InlineData(280, HarvestDestination.BabyLeaf, false)]     // ventana abierta, antes del óptimo
+    [InlineData(300, HarvestDestination.BabyLeaf, true)]      // óptimo alcanzado: cortar ya, hasta el cierre
+    [InlineData(449, HarvestDestination.BabyLeaf, true)]
+    [InlineData(450, HarvestDestination.Convencional, false)] // lo que no se cortó sigue para convencional
+    [InlineData(650, HarvestDestination.Convencional, true)]
+    [InlineData(750, HarvestDestination.Convencional, true)]
+    public void Proximo_Corte_Segun_Fase_Por_Gdd(double gdd, HarvestDestination destination, bool cutNow)
+    {
+        var cut = TimelineAt((decimal)gdd).NextCut;
+
+        Assert.NotNull(cut);
+        Assert.Equal(destination, cut.Destination);
+        Assert.Equal(cutNow, cut.CutNow);
+    }
+
+    [Fact]
+    public void Proximo_Corte_Baby_Leaf_Tiene_Fecha_Del_Optimo_Y_Limite_En_El_Cierre()
+    {
+        var cut = TimelineAt(270m).NextCut!; // faltan 30 GDD al óptimo y 180 al cierre, a 15 por día
+
+        Assert.Equal(new DateOnly(2026, 10, 15), cut.Optimum.Date);
+        Assert.Equal(new DateOnly(2026, 10, 25), cut.Limit.Date);
+        Assert.Equal(450m, cut.Limit.Gdd);
+        Assert.True(cut.Limit.IsExtrapolated); // más allá de los 7 días de proyección
+    }
+
+    [Fact]
+    public void En_Sobremadurez_No_Hay_Proximo_Corte()
+    {
+        Assert.Null(TimelineAt(760m).NextCut);
+    }
+
+    [Fact]
+    public void Optimos_Quedan_Dentro_De_Su_Ventana()
+    {
+        // Ventana Baby Leaf 200–280 y convencional 280–600: 300 y 650 caen afuera.
+        var timeline = CycleTimelineLogic.Build(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 13), 100m,
+            [], [], 200m, 280m, 600m);
+
+        Assert.Equal(280m, timeline.BabyLeafOptimum.Gdd);
+        Assert.Equal(600m, timeline.ConventionalOptimum.Gdd);
+    }
+
+    [Fact]
+    public void Curva_De_Gdd_Acumula_Lo_Medido_Marca_Dias_Sin_Lectura_Y_Sigue_Con_La_Proyeccion()
+    {
+        var sowing = new DateOnly(2026, 10, 1);
+        var history = new List<DailyGddPoint>
+        {
+            new(sowing, 10m, GddPointSource.Observed),
+            new(sowing.AddDays(2), 12m, GddPointSource.Observed), // el día 2 no tiene lectura
+        };
+        var projection = Points(sowing.AddDays(3), 15m, 15m);
+
+        var curve = GddCurveLogic.Build(sowing, sowing.AddDays(2), history, projection);
+
+        Assert.Equal([10m, 10m, 22m], curve.Measured.Select(d => d.Cumulative));
+        Assert.Null(curve.Measured[1].Source); // día sin lectura: no suma
+        Assert.Equal([37m, 52m], curve.Projected.Select(d => d.Cumulative));
+        Assert.Equal(sowing.AddDays(4), curve.EndDate);
+        Assert.Equal(52m, curve.MaxCumulative);
+    }
+
+    [Fact]
+    public void Curva_De_Gdd_Con_Siembra_Futura_Solo_Proyecta_Desde_La_Siembra()
+    {
+        // Hoy 9/10, siembra 12/10: nada medido; los días antes de sembrar no suman.
+        var sowing = new DateOnly(2026, 10, 12);
+        var projection = Points(new DateOnly(2026, 10, 10), 15m, 15m, 15m, 15m);
+
+        var curve = GddCurveLogic.Build(sowing, new DateOnly(2026, 10, 9), [], projection);
+
+        Assert.Empty(curve.Measured);
+        Assert.Equal([sowing, sowing.AddDays(1)], curve.Projected.Select(d => d.Date));
+        Assert.Equal([15m, 30m], curve.Projected.Select(d => d.Cumulative));
+    }
+
+    [Theory]
+    [InlineData("Lote 03", 6, 10, 0, 0)]
+    [InlineData("", 6, 10, 0, 1)]       // sin nombre
+    [InlineData("Lote 03", 0, 10, 0, 1)] // grilla vacía
+    [InlineData("Lote 03", 6, 31, 0, 1)] // grilla demasiado grande
+    [InlineData("Lote 03", 6, 10, 1, 1)] // siembra futura
+    public void Alta_De_Lote_Valida_Nombre_Grilla_Y_Fecha(string name, int rows, int columns, int daysFromToday, int expectedErrors)
+    {
+        var today = new DateOnly(2026, 10, 14);
+        var input = new NewLotInput(name, CropTypeId: 1, GreenhouseId: 1, today.AddDays(daysFromToday), rows, columns);
+
+        Assert.Equal(expectedErrors, NewLotRules.Validate(input, today).Count);
+    }
+
+    [Fact]
+    public void Alta_De_Lote_Valida_Y_Redondea_Las_Metas_Opcionales()
+    {
+        var today = new DateOnly(2026, 10, 14);
+        var input = new NewLotInput("Lote 03", 1, 1, today, 6, 10, BabyLeafGoalPercent: 80.126m, MaxLossPercent: null);
+
+        Assert.Empty(NewLotRules.Validate(input, today));
+        Assert.Equal(80.13m, NewLotRules.Goals(input).BabyLeafGoalPercent);
+        Assert.Null(NewLotRules.Goals(input).MaxLossPercent); // vacía: sin definir
+        Assert.Single(NewLotRules.Validate(input with { MaxLossPercent = 150m }, today));
+    }
+
+    [Fact]
+    public void Rendimiento_Real_Del_Ciclo_Usa_La_Referencia_De_La_Cosecha()
+    {
+        var harvest = LotYieldRules.Harvested(3, 2, new YieldReference(30m, 200m), new YieldPrices(3000m, 2000m, "ARS"));
+
+        Assert.Equal(new DestinationYield(3, 0.09m, 270m), harvest.Real.BabyLeaf);
+        Assert.Equal(new DestinationYield(2, 0.4m, 800m), harvest.Real.Conventional);
+        Assert.Equal(1070m, harvest.TotalRevenue);
+
+        // Sin precio convencional y con plantas convencionales cosechadas: no hay total.
+        var partial = LotYieldRules.Harvested(3, 2, new YieldReference(30m, 200m), new YieldPrices(3000m, null, "ARS"));
+        Assert.Null(partial.TotalRevenue);
+
+        // Sin plantas convencionales, ese precio no hace falta para el total.
+        var babyLeafOnly = LotYieldRules.Harvested(3, 0, new YieldReference(30m, 200m), new YieldPrices(3000m, null, "ARS"));
+        Assert.Equal(270m, babyLeafOnly.TotalRevenue);
     }
 
     [Fact]
