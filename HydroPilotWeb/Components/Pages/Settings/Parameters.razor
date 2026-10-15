@@ -1,0 +1,180 @@
+@page "/settings/parametros"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@using HydroPilotWeb.Services.Lotes
+@inject SystemParametersService ParametersService
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Parámetros del sistema - HydroPilot</PageTitle>
+
+@* Parámetros globales: valen para todo el sistema, no para un lote. Todos los ven; solo
+   Administrador y Productor los editan. *@
+<section class="settings-layout">
+    <div class="settings-stack">
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Rendimiento</span>
+                    <h3>Pesos y precios de referencia</h3>
+                    <p class="panel__subtitle">
+                        Con estos valores se estima el rendimiento de cada lote: plantas × peso promedio × precio por kg.
+                        Aplican a todos los lotes.
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (error is not null)
+            {
+                <div class="alert alert-danger py-2 small">@error</div>
+            }
+            else if (current is null)
+            {
+                <div class="d-flex justify-content-center my-4">
+                    <div class="spinner-border" role="status"><span class="visually-hidden">Cargando...</span></div>
+                </div>
+            }
+            else
+            {
+                <YieldParametersEditor Current="current" ReadOnly="!canEdit" Saving="saving" Errors="errors"
+                                       SavedMessage="@savedMessage" OnSave="SaveAsync" />
+            }
+        </article>
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Gastos del sistema</span>
+                    <h3>Precio de nutrientes</h3>
+                    <p class="panel__subtitle">
+                        Con este precio la Simulación calcula el gasto en nutrientes de cada ciclo: litros que se consumen
+                        según las plantas vivas y la etapa × precio por litro.
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (current is not null)
+            {
+                <div class="lot-editor">
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-nutrient-price">Precio nutrientes (@current.Currency por litro)</label>
+                        <input id="param-nutrient-price" type="number" class="form-control" min="0" step="0.01"
+                               @bind="nutrientPrice" @bind:event="oninput" disabled="@(!canEdit)" placeholder="Sin definir" />
+                    </div>
+                </div>
+
+                @if (nutrientErrors.Count > 0)
+                {
+                    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+                        <ul class="mb-0">
+                            @foreach (var nutrientError in nutrientErrors)
+                            {
+                                <li>@nutrientError</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (canEdit)
+                {
+                    <div class="lot-editor__actions">
+                        @if (!string.IsNullOrEmpty(nutrientSavedMessage))
+                        {
+                            <span class="lot-muted mt-0 me-auto">@nutrientSavedMessage</span>
+                        }
+                        <button class="btn btn-success btn-sm" @onclick="SaveNutrientPriceAsync" disabled="@savingNutrient">
+                            @(savingNutrient ? "Guardando…" : "Guardar precio")
+                        </button>
+                    </div>
+                }
+            }
+        </article>
+    </div>
+</section>
+
+@code {
+    private YieldParameters? current;
+    private System.Security.Claims.ClaimsPrincipal user = new();
+    private bool canEdit;
+    private bool saving;
+    private IReadOnlyList<string> errors = [];
+    private string? savedMessage;
+    private string? error;
+
+    private decimal? nutrientPrice;
+    private bool savingNutrient;
+    private IReadOnlyList<string> nutrientErrors = [];
+    private string? nutrientSavedMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            user = (await AuthState.GetAuthenticationStateAsync()).User;
+            canEdit = SystemParametersService.CanEdit(user);
+            current = await ParametersService.GetYieldParametersAsync();
+            nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar los parámetros: {ex.Message}";
+        }
+    }
+
+    // Sin ceros de más ("5.00" → "5").
+    private static decimal? Trim(decimal? value) => value / 1.0000000000000000000000000000m;
+
+    private async Task SaveNutrientPriceAsync()
+    {
+        savingNutrient = true;
+        nutrientSavedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateNutrientPricePerLiterAsync(nutrientPrice, user);
+            nutrientErrors = result.Errors;
+            if (result.Succeeded)
+            {
+                nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
+                nutrientSavedMessage = "Precio guardado.";
+            }
+        }
+        catch (Exception ex)
+        {
+            nutrientErrors = [$"No se pudo guardar el precio: {ex.Message}"];
+        }
+        finally
+        {
+            savingNutrient = false;
+        }
+    }
+
+    private async Task SaveAsync(YieldReferenceInput input)
+    {
+        saving = true;
+        savedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateYieldParametersAsync(input, user);
+            errors = result.Errors;
+            if (result.Succeeded)
+            {
+                current = await ParametersService.GetYieldParametersAsync();
+                savedMessage = "Parámetros guardados.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errors = [$"No se pudieron guardar los parámetros: {ex.Message}"];
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

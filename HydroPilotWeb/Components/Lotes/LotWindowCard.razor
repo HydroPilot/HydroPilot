@@ -1,0 +1,63 @@
+@using HydroPilotWeb.Services.Forecasting
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Ventana actual del lote: fase del ciclo (badge) + línea de tiempo con las ventanas y el próximo
+   corte (óptimos por GDD, no la fecha del forecast). El día del ciclo va en la línea de tiempo, junto
+   a "Hoy". Los problemas de datos (temperaturas sintéticas o faltantes) se marcan en la sección de
+   detalles técnicos. *@
+<section class="lot-card" aria-labelledby="lot-window-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-window-title">@(Overview.IsClosed ? "Ciclo" : "Ventana actual")</h3>
+        @if (Overview.IsClosed)
+        {
+            <span class="lot-badge">@(IsHarvested ? "Cosechado" : "Descartado")</span>
+        }
+        else if (Overview.Timeline is { } current)
+        {
+            var (label, tone) = Phase(current.Phase);
+            <span class="lot-badge lot-badge--@tone">@label</span>
+        }
+    </header>
+
+    @if (Overview.IsClosed)
+    {
+        @if (Overview.Timeline is { } closedTimeline)
+        {
+            @* Las ventanas del ciclo con sus fechas reales, hasta el cierre. La siembra y la marca
+               "Cosecha / Descarte dd/mm (día N)" ya dicen las fechas: sin texto aparte. *@
+            <LotCycleTimeline Timeline="closedTimeline" ClosedLabel="@(IsHarvested ? "Cosecha" : "Descarte")" />
+        }
+        else
+        {
+            <p class="lot-card__sub">
+                Siembra @LotFormat.Day(Overview.State.SowingDate)
+                @(Overview.ClosedCycle?.HarvestDate is { } harvested ? $"→ cosecha {LotFormat.Day(harvested)}" : null)
+                @(Overview.ClosedCycle?.CycleDays is { } days ? $"· {LotFormat.Days(days)}" : null)
+            </p>
+        }
+    }
+    else if (Overview.Timeline is { } timeline)
+    {
+        <LotCycleTimeline Timeline="timeline" />
+    }
+    else
+    {
+        <p class="lot-card__sub">Sin datos de temperatura suficientes para proyectar las ventanas de cosecha.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
+
+    private bool IsHarvested => Overview.State.StatusName == LotStatusNames.Cosechado;
+
+    // El tono es el color del tramo de la línea de tiempo (el mismo del mapa).
+    private static (string Label, string Tone) Phase(CyclePhase phase) => phase switch
+    {
+        CyclePhase.Desarrollo => ("Desarrollo", "dev"),
+        CyclePhase.VentanaBabyLeaf => ("Baby Leaf", "bl"),
+        CyclePhase.VentanaConvencional => ("Convencional", "conv"),
+        _ => ("Sobremadurez", "over")
+    };
+}

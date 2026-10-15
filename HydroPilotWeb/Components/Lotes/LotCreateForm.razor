@@ -1,0 +1,135 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Alta de un lote (va dentro del modal "Nuevo lote"): sin m² (cada planta tiene su hueco); la grilla
+   define cuántas plantas se crean. Las metas del ciclo son opcionales: vacías quedan sin definir. *@
+@if (SingleChoices is { } single)
+{
+    @* Con un solo cultivo o invernadero no hay nada que elegir: se muestra arriba, destacado. *@
+    <p class="lot-modal__context">@single</p>
+}
+
+<div class="lot-editor">
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="new-lot-name">Nombre</label>
+        <input id="new-lot-name" type="text" class="form-control" maxlength="@NewLotRules.MaxNameLength"
+               @bind="name" @bind:event="oninput" />
+    </div>
+    @if (Options.Crops.Count > 1)
+    {
+        <div class="lot-editor__field">
+            <label class="form-label mb-1" for="new-lot-crop">Cultivo</label>
+            <select id="new-lot-crop" class="form-select" @bind="cropTypeId">
+                @foreach (var crop in Options.Crops)
+                {
+                    <option value="@crop.Id">@crop.Name</option>
+                }
+            </select>
+        </div>
+    }
+    @if (Options.Greenhouses.Count > 1)
+    {
+        <div class="lot-editor__field">
+            <label class="form-label mb-1" for="new-lot-greenhouse">Invernadero</label>
+            <select id="new-lot-greenhouse" class="form-select" @bind="greenhouseId">
+                @foreach (var greenhouse in Options.Greenhouses)
+                {
+                    <option value="@greenhouse.Id">@greenhouse.Name</option>
+                }
+            </select>
+        </div>
+    }
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="new-lot-sowing">Fecha de siembra</label>
+        <input id="new-lot-sowing" type="date" class="form-control" max="@Today.ToString("yyyy-MM-dd")"
+               @bind="sowingDate" />
+    </div>
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="new-lot-rows">Grilla (filas × columnas)</label>
+        <div class="lot-grid-input">
+            <input id="new-lot-rows" type="number" class="form-control" min="1" max="@NewLotRules.MaxGridSide" step="1"
+                   aria-label="Filas" @bind="rows" @bind:event="oninput" />
+            <span aria-hidden="true">×</span>
+            <input id="new-lot-columns" type="number" class="form-control" min="1" max="@NewLotRules.MaxGridSide" step="1"
+                   aria-label="Columnas" @bind="columns" @bind:event="oninput" />
+        </div>
+        <p class="lot-editor__help">@PlantsHelp Se crean todas en desarrollo.</p>
+    </div>
+</div>
+
+<h4 class="lot-modal__section">Metas del ciclo <span>(Dejá un campo vacío para no definirlo)</span></h4>
+<div class="lot-editor">
+    <LotGoalFields @bind-BabyLeafGoal="babyLeafGoal" @bind-MaxLoss="maxLoss" />
+</div>
+
+@if (Errors.Count > 0)
+{
+    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+        <ul class="mb-0">
+            @foreach (var error in Errors)
+            {
+                <li>@error</li>
+            }
+        </ul>
+    </div>
+}
+
+<div class="lot-editor__actions">
+    <button class="btn btn-outline-secondary btn-sm" @onclick="OnCancel" disabled="@Saving">Cancelar</button>
+    <button class="btn btn-success btn-sm" @onclick="SaveAsync" disabled="@Saving">
+        @(Saving ? "Creando…" : "Crear lote")
+    </button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public NewLotOptions Options { get; set; } = null!;
+    [Parameter] public bool Saving { get; set; }
+    [Parameter] public IReadOnlyList<string> Errors { get; set; } = [];
+    [Parameter] public EventCallback<NewLotInput> OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private string? name;
+    private int cropTypeId;
+    private int greenhouseId;
+    private DateOnly sowingDate = Today;
+    // Por defecto la grilla del lote demo (6 × 10).
+    private int? rows = 6;
+    private int? columns = 10;
+    private decimal? babyLeafGoal;
+    private decimal? maxLoss;
+    private NewLotOptions? loadedFrom;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(loadedFrom, Options))
+        {
+            name = Options.SuggestedName;
+            cropTypeId = Options.Crops.FirstOrDefault()?.Id ?? 0;
+            greenhouseId = Options.Greenhouses.FirstOrDefault()?.Id ?? 0;
+            loadedFrom = Options;
+        }
+    }
+
+    private string PlantsHelp => rows is int r && r > 0 && columns is int c && c > 0
+        ? $"{LotFormat.Plants(r * c)} en total."
+        : "Cantidad de posiciones de la grilla.";
+
+    // Con un solo cultivo o invernadero no hay nada que elegir: se informa en vez de mostrar el selector.
+    private string? SingleChoices
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (Options.Crops.Count == 1)
+                parts.Add($"Cultivo: {Options.Crops[0].Name}");
+            if (Options.Greenhouses.Count == 1)
+                parts.Add($"Invernadero: {Options.Greenhouses[0].Name}");
+            return parts.Count > 0 ? string.Join(" · ", parts) : null;
+        }
+    }
+
+    private Task SaveAsync() => OnSave.InvokeAsync(new NewLotInput(
+        name, cropTypeId, greenhouseId, sowingDate, rows ?? 0, columns ?? 0, babyLeafGoal, maxLoss));
+}

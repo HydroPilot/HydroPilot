@@ -130,26 +130,83 @@ button {
     min-height: 100vh;
 }
 
+/* Barra lateral: riel de íconos que se despliega por encima del contenido (sin
+   moverlo) al pasar el mouse o al navegar con teclado. Las medidas centran los
+   íconos en el riel: 12px de margen + 14px de padding + 10px (medio ícono) = 36px. */
 .shell {
+    --sidebar-rail: 72px;
+    --sidebar-open: 248px;
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-rail) minmax(0, 1fr);
 }
 
 .shell-sidebar {
     position: sticky;
     top: 0;
+    z-index: 40;
+    width: var(--sidebar-rail);
     height: 100vh;
+    overflow: hidden;
     background: var(--bg-sidebar);
     color: var(--text-on-dark-primary);
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--sidebar-border);
     box-shadow: var(--shadow-sidebar);
+    transition: width 180ms ease 80ms, box-shadow 180ms ease 80ms;
+}
+
+.brand__text,
+.sidebar-nav__text,
+.user-chip__info {
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+/* Solo con mouse: en pantallas táctiles el :hover queda "pegado" al tocar y el
+   menú taparía la página después de navegar. */
+@media (hover: hover) {
+    .shell-sidebar:hover {
+        width: var(--sidebar-open);
+        box-shadow: 18px 0 44px rgba(0, 0, 0, 0.28);
+        transition-delay: 120ms;
+    }
+
+    .shell-sidebar:hover :is(.brand__text, .sidebar-nav__text, .user-chip__info) {
+        opacity: 1;
+        transition-delay: 200ms;
+    }
+
+    .shell-sidebar:hover .sidebar-nav__label {
+        color: var(--text-on-dark-muted);
+        transition-delay: 200ms;
+    }
+
+    .shell-sidebar:hover .sidebar-nav__label::before {
+        opacity: 0;
+    }
+}
+
+.shell-sidebar:has(:focus-visible) {
+    width: var(--sidebar-open);
+    box-shadow: 18px 0 44px rgba(0, 0, 0, 0.28);
+}
+
+.shell-sidebar:has(:focus-visible) :is(.brand__text, .sidebar-nav__text, .user-chip__info) {
+    opacity: 1;
+}
+
+.shell-sidebar:has(:focus-visible) .sidebar-nav__label {
+    color: var(--text-on-dark-muted);
+}
+
+.shell-sidebar:has(:focus-visible) .sidebar-nav__label::before {
+    opacity: 0;
 }
 
 .brand-block {
-    padding: 24px 24px 10px;
+    padding: 16px 17px 10px;
 }
 
 .brand {
@@ -159,12 +216,14 @@ button {
 }
 
 .brand__logo {
+    flex: 0 0 38px;
     width: 38px;
     height: 38px;
     border-radius: 12px;
 }
 
 .user-chip__avatar {
+    flex: 0 0 38px;
     width: 38px;
     height: 38px;
     border-radius: 12px;
@@ -179,6 +238,7 @@ button {
     display: flex;
     flex-direction: column;
     line-height: 1.05;
+    white-space: nowrap;
 }
 
 .brand__text strong {
@@ -194,40 +254,59 @@ button {
 .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 22px;
-    padding: 12px 20px 20px;
+    gap: 8px;
+    padding: 4px 12px 12px;
     flex: 1;
+    overflow-x: hidden;
     overflow-y: auto;
+    scrollbar-width: thin; /* en pantallas bajas el menú scrollea: que la barra no ocupe el riel */
 }
 
 .sidebar-nav__section {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
 }
 
+/* Contraído, el título de sección se reemplaza por una rayita separadora. */
 .sidebar-nav__label {
-    font-size: 0.72rem;
+    position: relative;
+    font-size: 0.68rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--text-on-dark-muted);
-    padding: 10px 12px 6px;
+    white-space: nowrap;
+    color: transparent;
+    padding: 8px 14px 4px;
+    transition: color 120ms ease;
+}
+
+.sidebar-nav__label::before {
+    content: "";
+    position: absolute;
+    left: 14px;
+    top: calc(50% + 2px);
+    width: 20px;
+    height: 1px;
+    background: var(--text-on-dark-muted);
+    transition: opacity 120ms ease;
 }
 
 .sidebar-nav__item {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 14px;
-    border-radius: 16px;
+    padding: 7px 14px;
+    border-radius: 12px;
+    font-size: 0.92rem;
+    white-space: nowrap;
+    overflow: hidden;
     color: var(--text-on-dark-item);
-    transition: transform 140ms ease, background-color 140ms ease, color 140ms ease;
+    transition: background-color 140ms ease, color 140ms ease;
 }
 
 .sidebar-nav__item:hover {
     background: var(--sidebar-item-hover);
     color: white;
-    transform: translateX(2px);
 }
 
 .sidebar-nav__item.active {
@@ -235,14 +314,29 @@ button {
     color: white;
 }
 
-.sidebar-nav__item span:first-child {
-    width: 1.1rem;
-    text-align: center;
+.sidebar-nav__icon {
+    flex: 0 0 20px;
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
     opacity: 0.9;
 }
 
+.sidebar-nav__item--logout {
+    margin-top: 4px;
+    color: var(--text-on-dark-faded);
+}
+
+.sidebar-nav__item--logout:hover {
+    color: #f87171;
+}
+
 .sidebar-footer {
-    padding: 18px 18px 22px;
+    padding: 10px 12px 12px;
     border-top: 1px solid var(--sidebar-border);
 }
 
@@ -252,13 +346,21 @@ button {
     gap: 12px;
     background: var(--sidebar-item-hover);
     border: 1px solid var(--sidebar-border);
-    border-radius: 18px;
-    padding: 12px;
+    border-radius: 14px;
+    padding: 4px;
+    overflow: hidden;
+}
+
+.user-chip__info {
+    min-width: 0;
+    white-space: nowrap;
 }
 
 .user-chip strong,
 .user-chip small {
     display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .user-chip strong {
@@ -281,34 +383,41 @@ button {
     position: sticky;
     top: 0;
     z-index: 10;
-    min-height: 92px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 20px;
-    padding: 18px 28px;
+    gap: 16px;
+    padding: 10px 28px;
     background: var(--bg-topbar);
     backdrop-filter: blur(16px);
     border-bottom: 1px solid var(--border-panel);
 }
 
-.shell-topbar__titles h1 {
+.shell-topbar__title {
     margin: 0;
-    font-size: 1.55rem;
+    font-size: 1.4rem;
     font-weight: 750;
     letter-spacing: -0.03em;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
 }
 
-.shell-topbar__titles p {
-    margin: 6px 0 0;
-    color: var(--text-secondary);
-    font-size: 0.92rem;
+.shell-topbar__icon {
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .shell-topbar__actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
     justify-content: flex-end;
 }
@@ -317,7 +426,8 @@ button {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 16px;
+    height: 38px;
+    padding: 0 14px;
     border-radius: 999px;
     border: 1px solid var(--accent-border);
     background: var(--accent-bg-subtle);
@@ -353,7 +463,7 @@ button {
 }
 
 .shell-content {
-    padding: 28px;
+    padding: 16px 28px 28px;
 }
 
 .dashboard-grid {
@@ -402,8 +512,7 @@ button {
 .kpi-card p,
 .panel p,
 .resource-row__meta span,
-.anomaly-row p,
-.quick-card span {
+.anomaly-row p {
     margin: 0;
 }
 
@@ -686,51 +795,7 @@ button {
     letter-spacing: 0.04em;
 }
 
-.quick-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-}
-
-.quick-card {
-    padding: 16px;
-    border-radius: 18px;
-    border: 1px solid var(--border-panel);
-    background: var(--bg-quick-card);
-    transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
-}
-
-.quick-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(22, 163, 74, 0.25);
-    box-shadow: 0 14px 32px var(--border-panel);
-}
-
-.quick-card strong,
-.quick-card span {
-    display: block;
-}
-
-.quick-card strong {
-    font-size: 0.92rem;
-    margin-bottom: 6px;
-}
-
-.quick-card span {
-    font-size: 0.74rem;
-    color: var(--text-dim);
-}
-
 @media (max-width: 1100px) {
-    .shell {
-        grid-template-columns: 1fr;
-    }
-
-    .shell-sidebar {
-        position: relative;
-        height: auto;
-    }
-
     .dashboard-kpis,
     .dashboard-main,
     .dashboard-secondary {
@@ -742,14 +807,21 @@ button {
     .shell-topbar {
         flex-direction: column;
         align-items: flex-start;
+        gap: 8px;
+        padding: 10px 18px;
+    }
+
+    .shell-topbar__actions {
+        max-width: 100%;
+        justify-content: flex-start;
+    }
+
+    .topbar-context {
+        max-width: 100%;
     }
 
     .shell-content {
-        padding: 18px;
-    }
-
-    .quick-grid {
-        grid-template-columns: 1fr;
+        padding: 12px 18px 18px;
     }
 }
 
@@ -803,12 +875,12 @@ button {
 }
 
 .topbar-action {
-    width: 42px;
-    height: 42px;
+    width: 38px;
+    height: 38px;
     display: inline-grid;
     place-items: center;
     border: 1px solid var(--border-panel);
-    border-radius: 14px;
+    border-radius: 12px;
     background: var(--bg-input);
     color: var(--text-dimmer);
     box-shadow: var(--shadow-topbar);
@@ -832,14 +904,36 @@ button {
     stroke-linejoin: round;
 }
 
+/* Contexto (invernadero · cultivo): no es un botón, pero comparte su aspecto. */
+.topbar-context {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0; /* sin esto el ancho del texto le gana al max-width y se sale en pantallas chicas */
+    max-width: 340px;
+    height: 38px;
+    padding: 0 14px 0 12px;
+    border: 1px solid var(--border-panel);
+    border-radius: 12px;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    box-shadow: var(--shadow-topbar);
+    font-size: 0.86rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.topbar-context span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .btn-pill,
 .btn-icon,
 .tag,
 .impact-chip,
 .prio,
 .switch,
-.settings-nav__item,
-.quick-card,
 .recommendation-card,
 .timeline-row,
 .metric-card,
@@ -1287,6 +1381,107 @@ button {
     background: rgba(22, 163, 74, 0.03);
 }
 
+/* Botón secundario visible en los dos temas (Limpiar, Refrescar, Reconocer): al lado de la acción
+   principal verde, sin competir con ella. */
+.btn.hp-btn-secondary {
+    background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text-primary) 24%, transparent);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.btn.hp-btn-secondary:hover,
+.btn.hp-btn-secondary:focus-visible {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Pestañas (Informes): la activa en verde como las acciones principales; el resto, secundarias visibles. */
+.hp-pills {
+    --bs-nav-pills-link-active-bg: var(--bs-success);
+    --bs-nav-pills-link-active-color: #fff;
+}
+
+.hp-pills .nav-link {
+    color: var(--text-primary);
+    border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+    font-weight: 600;
+    font-size: 0.88rem;
+}
+
+.hp-pills .nav-link:hover:not(.active) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.hp-pills .nav-link.active {
+    border-color: transparent;
+}
+
+/* Tablas de datos de Bootstrap (Simulación, Optimización, Anomalías): sin el fondo oscuro
+   rectangular, encabezado chico y filas con separadores suaves. hp-table-card las envuelve en una
+   tarjeta con borde fino cuando no están dentro de un panel. */
+.hp-table-card {
+    border: 1px solid var(--border-panel);
+    border-radius: 14px;
+}
+
+.table.hp-table {
+    --bs-table-bg: transparent;
+    --bs-table-color: inherit;
+    --bs-table-border-color: var(--border-panel);
+    margin: 0;
+    font-size: 0.86rem;
+}
+
+.hp-table th,
+.hp-table td {
+    padding: 10px 14px;
+    vertical-align: middle;
+}
+
+.hp-table thead th {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.hp-table tbody tr {
+    transition: background-color 140ms ease;
+}
+
+.hp-table tbody tr:hover {
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.hp-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.hp-table .hp-table__total td {
+    border-top: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.hp-table .hp-table__row--selected {
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.hp-table .hp-table__row--selected td:first-child {
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.hp-table .hp-table__row--warn {
+    background: color-mix(in srgb, #eab308 10%, transparent);
+}
+
+.hp-table .hp-table__row--warn td:first-child {
+    box-shadow: inset 3px 0 0 #eab308;
+}
+
 .mono {
     font-family: 'IBM Plex Mono', monospace;
 }
@@ -1295,40 +1490,11 @@ button {
     text-align: right;
 }
 
+/* Perfil y Notificaciones se navegan desde el menú lateral: sin sub-menú propio. */
 .settings-layout {
     display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 18px;
-}
-
-.settings-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.settings-nav__item {
-    padding: 12px 14px;
-    border-radius: 14px;
-    border: 1px solid transparent;
-    color: var(--text-secondary);
-    transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.settings-nav__item:hover,
-.settings-nav__item:focus-visible {
-    background: var(--accent-bg-subtle);
-    border-color: var(--accent-border);
-    color: var(--accent-dark);
-    outline: none;
-    transform: translateX(2px);
-}
-
-.settings-nav__item--active {
-    background: rgba(22, 163, 74, 0.08);
-    border-color: rgba(22, 163, 74, 0.12);
-    color: var(--accent-dark);
-    font-weight: 700;
 }
 
 .settings-stack {
@@ -1931,15 +2097,6 @@ button {
         align-items: flex-start;
     }
 
-    .settings-nav {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .settings-nav__item {
-        text-align: center;
-    }
-
     .settings-panel__header {
         flex-direction: column;
         gap: 10px;
@@ -1960,6 +2117,7 @@ button {
     .profile-role {
         flex-wrap: wrap;
     }
+}
 
 .theme-toggle--login {
     position: fixed;
@@ -2002,9 +2160,11 @@ button {
     justify-content: space-between;
     gap: 16px;
     flex-wrap: wrap;
-    padding: 14px 18px;
-    background: var(--bg-panel);
-    border: 1px solid var(--border-panel);
+    padding: 18px 22px;
+    /* Distinta del resto de las cards: tinte verde con borde y barra del acento. */
+    background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 16%, var(--bg-panel)) 0%, var(--bg-panel) 70%);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-left: 4px solid var(--accent);
     border-radius: 18px;
     box-shadow: var(--shadow-panel);
 }
@@ -2016,13 +2176,16 @@ button {
 }
 
 .dashboard-toolbar__context strong {
-    font-size: 0.98rem;
+    font-size: 1.25rem;
+    font-weight: 750;
     letter-spacing: -0.02em;
+    color: var(--text-primary);
 }
 
 .dashboard-toolbar__context span {
-    font-size: 0.8rem;
-    color: var(--text-dim);
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-secondary);
 }
 
 .dashboard-toolbar__actions {
@@ -2065,6 +2228,26 @@ button {
 
 .kpi-card__age {
     color: var(--text-dimmer);
+}
+
+.kpi-card__badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.kpi-card__quality {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.7rem;
+    background: rgba(234, 179, 8, 0.16);
+    color: #ca8a04;
+    cursor: help;
 }
 
 .kpi-card__fresh {
@@ -2134,4 +2317,1498 @@ button {
 .status-pill--muted span {
     background: var(--text-dimmer);
     box-shadow: none;
+}
+
+/* === Lotes: vista de situación (cards, ciclo, metas y mapa) === */
+.lot-view {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.lot-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.lot-toolbar__select {
+    width: auto;
+    min-width: 240px;
+    font-weight: 650;
+}
+
+/* Cargando otro lote: el contenido anterior queda atenuado y sin clics hasta que llega el nuevo. */
+.lot-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.lot-layout--loading {
+    opacity: 0.45;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+}
+
+/* "+ Nuevo lote": misma altura que el selector de lote (se estira a la fila), verde como "Crear lote". */
+.lot-toolbar__new {
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.lot-toolbar__date {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.lot-toolbar__date input {
+    width: auto;
+}
+
+/* --- Chips y badges --- */
+.lot-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 650;
+    border: 1px solid var(--border-panel);
+    background: var(--chip-bg);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.lot-chip--success {
+    background: var(--bs-success-bg-subtle);
+    border-color: var(--bs-success-border-subtle);
+    color: var(--bs-success-text-emphasis);
+}
+
+.lot-chip--warning {
+    background: var(--bs-warning-bg-subtle);
+    border-color: var(--bs-warning-border-subtle);
+    color: var(--bs-warning-text-emphasis);
+}
+
+.lot-chip--danger {
+    background: var(--bs-danger-bg-subtle);
+    border-color: var(--bs-danger-border-subtle);
+    color: var(--bs-danger-text-emphasis);
+}
+
+.lot-chip--info {
+    background: var(--bs-info-bg-subtle);
+    border-color: var(--bs-info-border-subtle);
+    color: var(--bs-info-text-emphasis);
+}
+
+button.lot-chip {
+    cursor: pointer;
+}
+
+/* Chip "⚠ N avisos" de la fila del lote (datos poco confiables). */
+.lot-chip--strong {
+    font-weight: 750;
+}
+
+button.lot-chip[aria-pressed="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+    color: var(--text-primary);
+}
+
+.lot-chip__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    flex: none;
+}
+
+.lot-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-panel);
+    background: var(--chip-bg);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.lot-badge--solid {
+    border-color: transparent;
+    background: var(--accent);
+    color: #ffffff;
+}
+
+.lot-badge--info {
+    background: var(--bs-info-bg-subtle);
+    border-color: var(--bs-info-border-subtle);
+    color: var(--bs-info-text-emphasis);
+}
+
+.lot-badge--warning {
+    background: var(--bs-warning-bg-subtle);
+    border-color: var(--bs-warning-border-subtle);
+    color: var(--bs-warning-text-emphasis);
+}
+
+.lot-badge--danger {
+    background: var(--bs-danger-bg-subtle);
+    border-color: var(--bs-danger-border-subtle);
+    color: var(--bs-danger-text-emphasis);
+}
+
+/* Fase del ciclo: mismos colores que los tramos de la línea de tiempo y el mapa. */
+.lot-badge--dev,
+.lot-badge--bl,
+.lot-badge--conv,
+.lot-badge--over {
+    border-color: transparent;
+    color: #ffffff;
+}
+
+.lot-badge--dev {
+    background: #2e9e4f;
+}
+
+.lot-badge--bl {
+    background: #2d7dd2;
+}
+
+.lot-badge--conv {
+    background: #8a4fd3;
+}
+
+.lot-badge--over {
+    background: #d64545;
+}
+
+.lot-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 0.85rem;
+    font-weight: 650;
+    color: var(--text-link);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* Lápiz ✎ espejado: la goma queda hacia afuera de la card. */
+.lot-icon-btn {
+    padding: 2px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transform: scaleX(-1);
+}
+
+.lot-icon-btn:hover {
+    background: var(--chip-bg);
+    color: var(--text-primary);
+}
+
+/* --- Layout: mapa a la izquierda (60%), cards apiladas a la derecha (40%) --- */
+.lot-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 16px;
+    align-items: start;
+}
+
+/* Izquierda: mapa y debajo los detalles técnicos. Derecha: cards de situación. */
+.lot-layout__main,
+.lot-layout__side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+/* --- Cards (Ventana actual, Baby Leaf, Rendimiento, Pérdidas) --- */
+
+.lot-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 18px 20px;
+    border: 1px solid var(--border-panel);
+    border-radius: 20px;
+    background: var(--bg-panel);
+    box-shadow: var(--shadow-panel);
+}
+
+.lot-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.lot-card__title {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 750;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+}
+
+/* Dato al lado del título ("Pérdidas 9,1% (2/22 descartadas)"). */
+.lot-card__title-value {
+    margin-left: 4px;
+}
+
+.lot-card__title-note {
+    font-size: 0.82rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--text-secondary);
+}
+
+.lot-card__actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.lot-card__big {
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 750;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+}
+
+.lot-card__sub {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+/* KPI principal: número grande + qué significa. */
+.lot-kpi {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.lot-kpi__text {
+    font-size: 0.95rem;
+    font-weight: 650;
+    line-height: 1.3;
+    color: var(--text-primary);
+}
+
+.lot-kpi__note {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.lot-kpi__action {
+    margin-left: auto;
+    align-self: flex-start;
+}
+
+/* Leyenda de una barra: cuadradito del color del tramo + cantidad con nombre. */
+.lot-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.lot-legend__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lot-legend__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex: none;
+}
+
+/* Rendimiento: dos mitades (actual | potencial), cada una con kg y $ por destino. */
+.lot-yield {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Pie del mapa: ayuda y cosecha masiva. */
+.lot-map-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.lot-map-foot__actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Botón de cosecha convencional: violeta, el color del destino en el mapa. */
+.lot-btn-conv {
+    border-color: #8a4fd3;
+    background: #8a4fd3;
+    color: #ffffff;
+}
+
+.lot-btn-conv:hover:not(:disabled),
+.lot-btn-conv:focus-visible {
+    border-color: #7440b8;
+    background: #7440b8;
+    color: #ffffff;
+}
+
+/* Ciclo cerrado: una sola columna (rendimiento real). */
+.lot-yield--single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.lot-yield__total {
+    margin: 8px 0 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.lot-yield__total strong {
+    color: var(--text-primary);
+}
+
+.lot-yield__col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding-right: 12px;
+}
+
+.lot-yield__col + .lot-yield__col {
+    padding: 0 0 0 12px;
+    border-left: 1px solid var(--border-panel);
+}
+
+/* Baby Leaf | Convencional, uno al lado del otro dentro de cada mitad. */
+.lot-yield__lines {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.lot-yield__line {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.lot-yield__dest {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+
+.lot-yield__kg {
+    font-size: 1.1rem;
+    font-weight: 750;
+    line-height: 1.2;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.lot-yield__money {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+/* Pie de card con dos datos (Meta del ciclo / Potencial). */
+.lot-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-top: 12px;
+    border-top: 1px solid var(--border-panel);
+}
+
+.lot-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+    padding-right: 16px;
+}
+
+.lot-stat + .lot-stat {
+    padding: 0 0 0 16px;
+    border-left: 1px solid var(--border-panel);
+}
+
+.lot-stat__label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.lot-stat__value {
+    font-size: 1.15rem;
+    font-weight: 750;
+    color: var(--text-primary);
+}
+
+.lot-stat__value small {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.lot-stat__value--success {
+    color: var(--accent);
+}
+
+.lot-stat__value--warning {
+    color: var(--bs-warning-text-emphasis);
+}
+
+.lot-stat__value--danger {
+    color: var(--bs-danger-text-emphasis);
+}
+
+.lot-stat__value--muted {
+    color: var(--text-secondary);
+}
+
+.lot-stat__hint {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* --- Barras de progreso con marcador (meta / máximo) --- */
+.lot-progress {
+    position: relative;
+    height: 10px;
+    margin: 6px 0 2px;
+    border-radius: 999px;
+    border: 1px solid var(--border-panel);
+    background: var(--chip-bg);
+}
+
+.lot-progress--lg {
+    height: 14px;
+}
+
+.lot-progress__fill {
+    display: flex;
+    height: 100%;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.lot-progress__seg {
+    height: 100%;
+}
+
+.lot-progress__marker {
+    position: absolute;
+    top: -5px;
+    width: 3px;
+    height: calc(100% + 10px);
+    border-radius: 2px;
+    background: var(--text-primary);
+    transform: translateX(-1px);
+}
+
+.lot-seg--striped {
+    background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.38) 0 4px, transparent 4px 8px);
+}
+
+/* Contenedor de consultas: 1cqw = 1% del ancho de la barra, para ubicar las etiquetas. */
+.lot-bar-labels {
+    position: relative;
+    container-type: inline-size;
+    height: 18px;
+    margin-top: 4px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+/* Etiqueta de un marcador (meta / máximo), con --pos = posición en % de la raya.
+   Queda centrada en la raya; si no entra, se corre lo justo para no salirse:
+   desplazamiento = clamp(0, pos − mitad de la etiqueta, ancho − etiqueta). */
+.lot-bar-labels__goal {
+    position: absolute;
+    top: 0;
+    left: 0;
+    white-space: nowrap;
+    color: var(--text-primary);
+    transform: translateX(clamp(0px, calc(var(--pos) * 1cqw - 50%), calc(100cqw - 100%)));
+}
+
+/* --- Barra apilada de estados (todas las plantas) --- */
+.lot-stack {
+    display: flex;
+    height: 26px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--chip-bg);
+}
+
+/* Cada tramo es un contenedor: el % se oculta solo si no entra en su ancho real. */
+.lot-stack__seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 700;
+    container-type: inline-size;
+}
+
+@container (max-width: 30px) {
+    .lot-stack__pct {
+        display: none;
+    }
+}
+
+/* "27,3%" es más ancho que "4,5%". */
+@container (max-width: 38px) {
+    .lot-stack__pct--long {
+        display: none;
+    }
+}
+
+/* --- Línea de tiempo del ciclo --- */
+.lot-timeline {
+    position: relative;
+    padding-top: 22px;
+}
+
+.lot-timeline__bar {
+    display: flex;
+    height: 26px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--chip-bg);
+}
+
+/* Colores de la paleta del mapa (En desarrollo / Baby Leaf apta / Cosecha convencional).
+   La fase actual va en color pleno; las demás, como un tinte del mismo color. */
+.lot-timeline__seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: var(--seg);
+    color: #ffffff;
+}
+
+.lot-timeline__seg--dev {
+    --seg: #2e9e4f;
+}
+
+.lot-timeline__seg--bl {
+    --seg: #2d7dd2;
+}
+
+.lot-timeline__seg--conv {
+    --seg: #8a4fd3;
+}
+
+.lot-timeline__seg--dim {
+    background: color-mix(in srgb, var(--seg) 22%, transparent);
+    color: color-mix(in srgb, var(--seg) 55%, var(--text-primary));
+    font-weight: 600;
+}
+
+.lot-timeline__today {
+    position: absolute;
+    top: 16px;
+    width: 3px;
+    height: 38px;
+    border-radius: 2px;
+    background: var(--text-primary);
+    transform: translateX(-1px);
+}
+
+.lot-timeline__today-label {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.lot-timeline__today-label--start {
+    transform: none;
+}
+
+.lot-timeline__today-label--end {
+    transform: translateX(-100%);
+}
+
+.lot-timeline__cycle-day {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+/* Óptimos de corte: rombo sobre el borde inferior de la barra (22px de padding + 26px
+   de barra − 5px), para no pisar el nombre del tramo en barras angostas. */
+.lot-timeline__harvest,
+.lot-timeline__harvest-icon {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 2px solid #13202d;
+    border-radius: 2px;
+    background: #ffffff;
+}
+
+.lot-timeline__harvest {
+    position: absolute;
+    top: 43px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    transform: translateX(-50%) rotate(45deg);
+}
+
+/* El óptimo que no es el próximo corte (ya pasó, o es del destino siguiente). */
+.lot-timeline__harvest--dim {
+    opacity: 0.45;
+    box-shadow: none;
+}
+
+.lot-timeline__harvest-icon {
+    margin: 0 2px;
+    transform: rotate(45deg);
+}
+
+.lot-timeline__legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.lot-timeline__legend strong {
+    color: var(--text-primary);
+}
+
+.lot-timeline__legend .lot-timeline__cut-now {
+    color: var(--bs-success-text-emphasis);
+}
+
+.lot-timeline__legend .lot-timeline__overdue {
+    color: var(--bs-danger-text-emphasis);
+}
+
+.lot-timeline__labels {
+    position: relative;
+    height: 18px;
+    margin-top: 10px; /* deja lugar a la punta del rombo de cosecha */
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.lot-timeline__labels span {
+    position: absolute;
+    white-space: nowrap;
+    transform: translateX(-50%);
+}
+
+.lot-timeline__labels .lot-timeline__label--start {
+    transform: none;
+}
+
+.lot-timeline__labels .lot-timeline__label--end {
+    transform: translateX(-100%);
+}
+
+/* --- Paneles, editor de metas y sección técnica --- */
+.lot-panel-title {
+    margin: 0 0 12px;
+    font-size: 1.15rem;
+    font-weight: 750;
+    letter-spacing: -0.02em;
+}
+
+.lot-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.lot-panel-head .lot-panel-title {
+    margin: 0;
+}
+
+.lot-muted {
+    margin: 8px 0 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.lot-editor {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+}
+
+.lot-editor__field label {
+    font-size: 0.85rem;
+    font-weight: 650;
+}
+
+.lot-editor__help {
+    margin: 4px 0 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.lot-editor__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+/* Modal de la vista Lotes (alta de lote, metas del ciclo): por encima de la barra superior y el menú. */
+.lot-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+
+.lot-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(5, 10, 16, 0.6);
+}
+
+.lot-modal__dialog {
+    position: relative;
+    width: min(640px, 100%);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 20px;
+    border: 1px solid var(--border-panel);
+    border-radius: 16px;
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.lot-modal__dialog:focus {
+    outline: none;
+}
+
+.lot-modal__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.lot-modal__close {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.lot-modal__close:hover:not(:disabled) {
+    background: var(--chip-bg);
+    color: var(--text-primary);
+}
+
+/* Contexto fijo del alta (cultivo e invernadero cuando hay uno solo). */
+.lot-modal__context {
+    margin: 0 0 16px;
+    padding: 8px 12px;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    font-size: 0.85rem;
+    font-weight: 650;
+    color: var(--text-primary);
+}
+
+.lot-modal__section {
+    margin: 18px 0 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-panel);
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+
+.lot-modal__section span {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+/* Alta de lote: filas × columnas en una sola línea. */
+.lot-grid-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+}
+
+.lot-grid-input input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* --- Curva de GDD (dentro de "Detalles y calidad de los datos") ---
+   El SVG se estira al ancho; los trazos no se deforman (non-scaling-stroke) y los textos van en HTML. */
+.lot-gdd__frame {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+}
+
+.lot-gdd__yaxis {
+    position: relative;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.lot-gdd__yaxis span {
+    position: absolute;
+    right: 6px;
+    transform: translateY(-50%);
+    white-space: nowrap;
+}
+
+.lot-gdd__plot {
+    position: relative;
+    height: 170px;
+    border-left: 1px solid var(--border-panel);
+    border-bottom: 1px solid var(--border-panel);
+}
+
+.lot-gdd__plot svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.lot-gdd__band--bl {
+    fill: color-mix(in srgb, #2d7dd2 16%, transparent);
+}
+
+.lot-gdd__band--conv {
+    fill: color-mix(in srgb, #8a4fd3 16%, transparent);
+}
+
+.lot-gdd__optimum {
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+    vector-effect: non-scaling-stroke;
+}
+
+.lot-gdd__optimum--bl {
+    stroke: #2d7dd2;
+}
+
+.lot-gdd__optimum--conv {
+    stroke: #8a4fd3;
+}
+
+.lot-gdd__today {
+    stroke: var(--text-secondary);
+    stroke-width: 1;
+    stroke-dasharray: 2 3;
+    vector-effect: non-scaling-stroke;
+}
+
+.lot-gdd__line {
+    fill: none;
+    stroke: #2e9e4f;
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.lot-gdd__line--projected {
+    stroke-dasharray: 6 5;
+}
+
+.lot-gdd__hit {
+    fill: transparent;
+}
+
+.lot-gdd__hit:hover {
+    fill: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.lot-gdd__optimum-label {
+    position: absolute;
+    right: 4px;
+    transform: translateY(-115%);
+    font-size: 0.68rem;
+    font-weight: 650;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.lot-gdd__optimum-label--bl {
+    color: color-mix(in srgb, #2d7dd2 75%, var(--text-primary));
+}
+
+.lot-gdd__optimum-label--conv {
+    color: color-mix(in srgb, #8a4fd3 75%, var(--text-primary));
+}
+
+/* Día sin lectura: marca roja sobre el eje (el acumulado queda plano ese día). */
+.lot-gdd__gap {
+    position: absolute;
+    bottom: 0;
+    height: 6px;
+    background: var(--bs-danger);
+}
+
+.lot-gdd__xaxis {
+    position: relative;
+    height: 18px;
+    margin: 4px 0 0 34px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.lot-gdd__xaxis span {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
+
+.lot-gdd__xaxis .lot-gdd__x--start {
+    transform: none;
+}
+
+.lot-gdd__xaxis .lot-gdd__x--end {
+    transform: translateX(-100%);
+}
+
+.lot-gdd__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 4px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.lot-gdd__legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lot-gdd__key {
+    display: inline-block;
+    width: 16px;
+    border-top: 2.5px solid #2e9e4f;
+}
+
+.lot-gdd__key--projected {
+    border-top-style: dashed;
+}
+
+.lot-gdd__key--gap,
+.lot-gdd__key--bl,
+.lot-gdd__key--conv {
+    width: 12px;
+    height: 10px;
+    border: none;
+    border-radius: 2px;
+}
+
+.lot-gdd__key--gap {
+    height: 6px;
+    background: var(--bs-danger);
+}
+
+.lot-gdd__key--bl {
+    background: color-mix(in srgb, #2d7dd2 35%, transparent);
+}
+
+.lot-gdd__key--conv {
+    background: color-mix(in srgb, #8a4fd3 35%, transparent);
+}
+
+.lot-tech {
+    border: 1px solid var(--border-panel);
+    border-radius: 16px;
+    background: var(--bg-panel);
+}
+
+.lot-tech > summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+}
+
+.lot-tech > summary::-webkit-details-marker {
+    display: none;
+}
+
+.lot-tech[open] > summary {
+    border-bottom: 1px solid var(--border-panel);
+}
+
+.lot-tech__body {
+    display: grid;
+    grid-template-columns: minmax(170px, 0.6fr) minmax(0, 1.4fr);
+    gap: 16px;
+    padding: 16px;
+}
+
+/* Datos poco confiables (temperaturas sintéticas o faltantes): sección en rojo, con ⚠ y el motivo
+   visible aun cerrada. */
+.lot-tech--alert {
+    border-color: color-mix(in srgb, var(--bs-danger) 55%, transparent);
+    background: color-mix(in srgb, var(--bs-danger) 14%, var(--bg-panel));
+}
+
+.lot-tech--alert[open] > summary {
+    border-bottom-color: color-mix(in srgb, var(--bs-danger) 35%, transparent);
+}
+
+.lot-tech__alert-icon,
+.lot-tech__alert-text {
+    color: var(--bs-danger-text-emphasis);
+}
+
+.lot-tech__alert-text {
+    font-weight: 700;
+}
+
+.lot-tech__alert-icon {
+    margin-left: 4px;
+}
+
+/* Alerta dentro de la lista de avisos: en rojo y sin viñeta (lleva ⚠). */
+.lot-tech__alert-item {
+    list-style: none;
+    margin-left: -1rem;
+    color: var(--bs-danger-text-emphasis);
+}
+
+/* GDD y etapa, uno debajo del otro (sin el separador vertical de .lot-stat). */
+/* La curva de GDD va a todo el ancho, debajo de los datos y los avisos. */
+.lot-tech__chart {
+    grid-column: 1 / -1;
+}
+
+.lot-tech__facts {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.lot-tech__facts .lot-stat + .lot-stat {
+    padding: 0;
+    border-left: 0;
+}
+
+/* --- Mapa del lote --- */
+/* El mapa ocupa el ancho; el detalle de la planta se abre como popover anclado a la celda. */
+.lot-map-stage {
+    position: relative;
+    margin: 0 auto;
+}
+
+.lot-map-stage--open {
+    z-index: 9; /* por encima de la capa de cierre (8) y por debajo de la barra superior (10) */
+}
+
+.lot-popover-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 8;
+    background: transparent;
+}
+
+.lot-popover {
+    --lot-popover-bg: #ffffff;
+    position: absolute;
+    z-index: 3;
+    width: 320px;
+    max-width: calc(100vw - 32px);
+    filter: drop-shadow(0 14px 28px rgba(0, 0, 0, 0.28));
+}
+
+[data-theme="dark"] .lot-popover {
+    --lot-popover-bg: #1b2a3c;
+}
+
+.lot-popover:focus {
+    outline: none;
+}
+
+.lot-popover .plant-detail {
+    border: 1px solid var(--border-input);
+    border-radius: 14px;
+    background: var(--lot-popover-bg);
+}
+
+.lot-popover--center {
+    --lot-arrow-x: 50%;
+    transform: translateX(-50%);
+}
+
+.lot-popover--start {
+    --lot-arrow-x: 28px;
+    transform: translateX(-28px);
+}
+
+.lot-popover--end {
+    --lot-arrow-x: calc(100% - 28px);
+    transform: translateX(calc(-100% + 28px));
+}
+
+.lot-popover::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    left: var(--lot-arrow-x);
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border-input);
+    background: var(--lot-popover-bg);
+    transform: translateX(-50%) rotate(45deg);
+}
+
+.lot-popover--below::before {
+    top: -7px;
+    border-right: 0;
+    border-bottom: 0;
+}
+
+.lot-popover--above::before {
+    bottom: -7px;
+    border-left: 0;
+    border-top: 0;
+}
+
+.lot-map {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid var(--border-panel);
+    background: var(--chip-bg);
+}
+
+.lot-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0;
+    aspect-ratio: 1 / 1;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: transform 0.08s, box-shadow 0.08s, opacity 0.12s;
+}
+
+.lot-cell:hover {
+    transform: scale(1.06);
+    z-index: 2;
+}
+
+.lot-cell--selected {
+    outline: 3px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.lot-cell--empty {
+    border: 1px dashed var(--border-input);
+}
+
+.lot-cell--harvested {
+    opacity: 0.55;
+}
+
+.lot-cell--dim {
+    opacity: 0.15;
+}
+
+.lot-cell__label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
+.plant-detail__stage {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    margin: 10px 0 6px;
+}
+
+.plant-detail__stage-badge {
+    font-size: 0.85rem;
+    padding: 0.4em 0.7em;
+}
+
+.plant-detail__note {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.plant-detail__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0 8px;
+}
+
+.plant-detail__score {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.plant-detail__score strong {
+    color: var(--text-primary);
+}
+
+.plant-detail details > summary {
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.plant-detail .list-group-item {
+    padding: 0.35rem 0.25rem;
+    font-size: 13px;
+    background: transparent;
+}
+
+/* Datos de la planta: pares etiqueta / valor en dos columnas. */
+.plant-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+    margin: 10px 0 0;
+}
+
+.plant-facts dt {
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.plant-facts dd {
+    margin: 2px 0 0;
+    font-size: 0.85rem;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+
+.plant-facts__wide {
+    grid-column: 1 / -1;
+}
+
+.plant-facts__image {
+    display: block;
+    width: 100%;
+    max-height: 260px;
+    margin-top: 4px;
+    border-radius: 10px;
+    object-fit: cover;
+    background: var(--chip-bg);
+}
+
+/* Historial: línea de tiempo vertical, sin tabla ni fondo. */
+.plant-history__title {
+    margin: 14px 0 8px;
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.plant-history {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.plant-history__item {
+    position: relative;
+    padding: 0 0 12px 20px;
+}
+
+/* La línea que une los puntos (no sigue después del último). */
+.plant-history__item:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    bottom: -2px;
+    left: 4px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--border-panel);
+}
+
+.plant-history__item::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--dot);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot) 22%, transparent);
+}
+
+.plant-history__change {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 6px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.plant-history__change strong {
+    color: var(--text-primary);
+}
+
+.plant-history__arrow {
+    color: var(--text-muted);
+}
+
+.plant-history__meta {
+    margin-top: 2px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+@media (max-width: 1100px) {
+    .lot-layout,
+    .lot-tech__body {
+        grid-template-columns: 1fr;
+    }
+
+    /* Apilado: primero la situación (cards), después el mapa. */
+    .lot-layout__side {
+        order: -1;
+    }
+}
+
+@media (max-width: 720px) {
+    .lot-stats {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .lot-stat + .lot-stat {
+        padding: 10px 0 0;
+        border-left: 0;
+        border-top: 1px solid var(--border-panel);
+    }
+
+    .lot-yield {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .lot-yield__col + .lot-yield__col {
+        padding: 10px 0 0;
+        border-left: 0;
+        border-top: 1px solid var(--border-panel);
+    }
+
+    /* En pantallas chicas el detalle se muestra debajo del mapa, sin flotar. */
+    .lot-popover {
+        position: static;
+        width: auto;
+        max-width: none;
+        margin-top: 10px;
+        transform: none;
+    }
+
+    .lot-popover::before {
+        display: none;
+    }
+
+    .lot-toolbar__date {
+        margin-left: 0;
+    }
 }

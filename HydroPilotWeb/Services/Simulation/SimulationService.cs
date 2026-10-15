@@ -10,85 +10,95 @@ using HydroPilotWeb.Services.Lotes;
 namespace HydroPilotWeb.Services.Simulation;
 
 /// <summary>
-/// Orquesta el escenario what-if (SIM-02): un servicio que recibe el
-/// <see cref="SimulationRequest"/> y devuelve UN único <see cref="SimulationResult"/>
-/// (la vista y la API consumen el mismo resultado; la vista no accede a EF).
+/// Orquesta el escenario what-if (SIM-02): recibe el <see cref="SimulationRequest"/> y devuelve
+/// UN único <see cref="SimulationResult"/> (la vista y la API consumen el mismo resultado).
 ///
-/// La simulación es SOLO LECTURA sobre el dominio productivo: nunca modifica
-/// lotes, plantas, lecturas, predicciones, nodos ni configuración de cultivo, y
-/// nunca invoca hardware (ver <see cref="IHardwareGateway"/> — frontera no usada).
-/// Respeta AsOfDate (ReferenceDate) en toda consulta simulada (SIM-04) y reutiliza
-/// el núcleo de forecasting (GddService/GddDateLogic/YieldService/YieldMath) sin
-/// copiar fórmulas. SIM-06: esta entrega NO persiste escenarios (preview).
+/// Usa la lógica de la vista Lotes (gana Lotes):
+/// <list type="number">
+/// <item>GDD acumulado hasta hoy: lecturas reales del lote o, en el escenario libre, el clima
+/// elegido desde la siembra (siembra futura: 0, todavía no se sembró).</item>
+/// <item>Proyección con el clima del escenario (manual / pronóstico) desde mañana, o desde la
+/// siembra si es futura.</item>
+/// <item>Ventanas y óptimos de corte por GDD con <see cref="CycleTimelineLogic"/>.</item>
+/// <item>Previsión de aptas a Baby Leaf y pérdidas por etapa (<see cref="BabyLeafOutlookService"/>:
+/// histórico pesado por temporada × clima, combinado con el estado actual del lote).</item>
+/// <item>Estrategias (máximo Baby Leaf / meta Baby Leaf / todo convencional) con plantas × peso ×
+/// precio y costos del ciclo (<see cref="SimulationStrategies"/>).</item>
+/// </list>
+/// SOLO LECTURA sobre el dominio productivo y nunca invoca hardware (ver <see cref="IHardwareGateway"/>).
+/// SIM-06: no persiste escenarios (preview).
 /// </summary>
 public class SimulationService
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly GddService _gddService;
     private readonly ClimateScenarioProvider _climateProvider;
-    private readonly YieldModel _yieldModel;
     private readonly LotAggregateService _lotAggregate;
+    private readonly SystemParametersService _parameters;
+    private readonly BabyLeafOutlookService _outlook;
 
     public SimulationService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         GddService gddService,
         ClimateScenarioProvider climateProvider,
-        YieldModel yieldModel,
-        LotAggregateService lotAggregate)
+        LotAggregateService lotAggregate,
+        SystemParametersService parameters,
+        BabyLeafOutlookService outlook)
     {
         _dbFactory = dbFactory;
         _gddService = gddService;
         _climateProvider = climateProvider;
-        _yieldModel = yieldModel;
         _lotAggregate = lotAggregate;
+        _parameters = parameters;
+        _outlook = outlook;
     }
 
-    /// <summary>Opciones de contexto para los selectores de la UI (solo lectura).</summary>
+    /// <summary>
+    /// Opciones de contexto para los selectores de la UI y los parámetros del sistema (solo lectura).
+    /// Solo lotes abiertos: uno cerrado no tiene plantas activas que simular.
+    /// </summary>
     public async Task<SimulationContextOptions> GetContextOptionsAsync(CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
         var lots = await context.Lots
-            .Include(l => l.CropType)
-            .Include(l => l.Status)
+            .AsNoTracking()
+            .Where(l => l.Status == null || (l.Status.Name != LotStatusNames.Cosechado && l.Status.Name != LotStatusNames.Descartado))
             .OrderByDescending(l => l.SowingDate)
             .Select(l => new SimulationLotOption(
-                l.Id, l.Name ?? $"Lote {l.Id}", l.CropType!.Name, l.Status!.Name, l.SowingDate, l.PlantedAreaM2, l.BabyLeafHarvestTargetPercent))
+                l.Id,
+                l.Name ?? $"Lote {l.Id}",
+                l.CropType!.Name,
+                l.Status!.Name,
+                l.SowingDate,
+                l.Plants.Count,
+                l.Plants.Count(p => p.OperationalState == PlantOperationalState.Activa),
+                l.BabyLeafGoalPercent))
             .ToListAsync(ct);
 
         var crops = await context.CropTypes
+            .AsNoTracking()
             .OrderBy(c => c.Name)
-            .Select(c => new SimulationCropOption(c.Id, c.Name, c.GddTarget, c.BaseTemperature, c.YieldPerM2))
+            .Select(c => new SimulationCropOption(c.Id, c.Name, c.BaseTemperature))
             .ToListAsync(ct);
 
-        return new SimulationContextOptions(lots, crops);
+        return new SimulationContextOptions(
+            lots, crops, await _parameters.GetYieldParametersAsync(ct), await _parameters.GetNutrientPricePerLiterAsync(ct));
     }
 
     /// <summary>
-    /// Simulación preview (SIM-06, sin persistencia). Devuelve validación + resultado.
-    /// La misma entrada produce el mismo resultado (determinismo), salvo que el
-    /// pronóstico climático persistido cambie entre corridas (origen informado).
+    /// Simulación preview (SIM-06, sin persistencia), siempre desde hoy. Devuelve validación +
+    /// resultado. La misma entrada el mismo día produce el mismo resultado, salvo que cambien las
+    /// lecturas, el pronóstico guardado o los parámetros del sistema entre corridas.
     /// </summary>
     public async Task<SimulationPreview> PreviewAsync(SimulationRequest request, CancellationToken ct = default)
     {
-        var errors = SimulationRequestValidator.Validate(request);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var errors = SimulationRequestValidator.Validate(request, today);
         if (errors.Count > 0)
-        {
             return new SimulationPreview(false, errors, null);
-        }
 
         var warnings = new List<string>();
-        var realToday = DateOnly.FromDateTime(DateTime.UtcNow);
-
-        if (request.SaveScenario)
-        {
-            warnings.Add("La persistencia de escenarios (SimulationRun) no está disponible en esta entrega: el preview no guarda nada (SIM-06).");
-        }
-
-        if (request.ReferenceDate > realToday.AddDays(1))
-        {
-            warnings.Add($"Fecha de referencia futura ({request.ReferenceDate:yyyy-MM-dd}): entorno simulado; las lecturas se limitan a esa fecha (AsOfDate) y el pronóstico puede no cubrirla.");
-        }
 
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -97,380 +107,232 @@ public class SimulationService
         if (request.LotId is { } lotId)
         {
             lot = await context.Lots
+                .AsNoTracking()
                 .Include(l => l.CropType)
                 .Include(l => l.Status)
-                .Include(l => l.AppliedPhenologicalStage)
                 .FirstOrDefaultAsync(l => l.Id == lotId, ct);
 
             if (lot is null)
-            {
                 return new SimulationPreview(false, [$"Lote '{lotId}' no encontrado."], null);
-            }
+            if (lot.Status?.Name is LotStatusNames.Cosechado or LotStatusNames.Descartado)
+                return new SimulationPreview(false, [$"El lote '{lot.Name}' está cerrado: no tiene plantas activas que simular."], null);
         }
 
         var crop = lot?.CropType;
         if (crop is null && request.CropTypeId is { } cropId)
-        {
-            crop = await context.CropTypes.FirstOrDefaultAsync(c => c.Id == cropId, ct);
-        }
+            crop = await context.CropTypes.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cropId, ct);
 
         if (crop is null)
-        {
             return new SimulationPreview(false, ["Cultivo no encontrado para el contexto del escenario."], null);
-        }
 
         var sowingDate = lot?.SowingDate ?? request.SowingDate!.Value;
-        var areaM2 = lot?.PlantedAreaM2 ?? request.AreaM2!.Value;
         var baseTemperature = crop.BaseTemperature == 0 ? 4.5m : crop.BaseTemperature;
-        var gddTarget = crop.GddTarget;
 
-        // --- GDD base respetando AsOfDate (SIM-04): nunca lecturas posteriores ---
-        decimal accumulated;
+        // Sin lote, el pronóstico (afuera) se corrige con lo que midió el invernadero en los últimos
+        // días (con lote, GddService lo corrige con las lecturas del propio lote, como en Lotes).
+        var freeCorrection = lot is null && request.Climate.Mode == SimulationClimateMode.Forecast
+            ? await _gddService.GetForecastCorrectionAsync(null, today, ct: ct)
+            : null;
+
+        // --- 1. GDD hasta hoy (SIM-04): el medido del lote, o el clima elegido desde la siembra ---
+        IReadOnlyList<DailyGddPoint> history;
+        GddHistoryResult? measured = null;
         if (lot is not null)
         {
-            var history = await _gddService.GetGddHistoryAsync(lot, request.ReferenceDate, ct);
-            accumulated = history.Daily.Sum(p => p.Gdd);
-            warnings.AddRange(history.Warnings);
+            measured = await _gddService.GetGddHistoryAsync(lot, today, ct);
+            history = measured.Daily;
+            warnings.AddRange(measured.Warnings);
         }
         else
         {
-            (accumulated, var accWarnings) = GddCalculator.AccumulatedManualScenario(
-                request.Climate, baseTemperature, sowingDate, request.ReferenceDate);
-            warnings.AddRange(accWarnings);
+            (history, var freeWarnings) = await _climateProvider.FreeHistoryAsync(
+                request.Climate, baseTemperature, sowingDate, today, freeCorrection, ct);
+            warnings.AddRange(freeWarnings);
         }
+        var accumulated = Math.Round(history.Sum(p => p.Gdd), 2);
 
-        // --- Plan climático del escenario (SIM-03) ---
-        var plan = await _climateProvider.BuildAsync(request.Climate, lot, request.ReferenceDate, baseTemperature, ct);
+        // --- 2. Clima del escenario (SIM-03): desde mañana, o desde la siembra si es futura ---
+        var plan = await _climateProvider.BuildAsync(
+            request.Climate, lot, GddCalculator.ProjectionStart(sowingDate, today), baseTemperature, measured, freeCorrection, ct);
         warnings.AddRange(plan.Warnings);
+        var projection = GddCalculator.ToCorePoints(plan.Points);
 
-        // --- Fecha estimada por GDD puro (SIM-04) ---
-        var (harvestDate, extrapolation, harvestWarnings) = GddCalculator.EstimateHarvestDate(
-            accumulated, plan.Points, gddTarget, request.ReferenceDate, sowingDate,
-            crop.EstimatedDaysToHarvest, plan.HorizonDays);
-        warnings.AddRange(harvestWarnings);
+        // --- 3. Ventanas y óptimos de corte: la misma línea de tiempo que la vista Lotes ---
+        var config = await context.BabyLeafConfigs
+            .AsNoTracking()
+            .Where(c => c.CropTypeId == crop.Id && c.IsActive)
+            .OrderByDescending(c => c.Id)
+            .FirstOrDefaultAsync(ct);
+        var lastStage = await context.PhenologicalStages
+            .AsNoTracking()
+            .Where(s => s.CropTypeId == crop.Id && s.IsActive)
+            .OrderByDescending(s => s.Order)
+            .FirstOrDefaultAsync(ct);
 
-        // --- Rendimiento conservador/base/optimista (SIM-04, núcleo forecasting) ---
-        var (yieldEstimate, yieldWarnings) = await _yieldModel.EstimateAsync(lot, crop, accumulated, areaM2, ct);
-        warnings.AddRange(yieldWarnings);
-
-        // --- Costos (SIM-05) ---
-        var projectedCostDays = CostCalculator.ResolveProjectedDays(
-            request.ReferenceDate, harvestDate, plan.HorizonDays, warnings);
-        var costs = CostCalculator.Calculate(request.Costs, projectedCostDays);
-        costs = costs with { CostPerKg = CostCalculator.CostPerKg(costs.Total, yieldEstimate.Base) };
-        warnings.AddRange(costs.Warnings);
-
-        // --- Regla híbrida de cosecha simulada (SIM-08/09) ---
-        var harvestOutcome = await BuildHarvestOutcomeAsync(
-            context, lot, crop, request, accumulated, plan.Points, ct);
-        if (harvestOutcome is not null)
+        CycleTimeline? timeline = null;
+        if (config is null || lastStage is null)
         {
-            warnings.AddRange(harvestOutcome.Warnings);
+            warnings.Add("Sin configuración Baby Leaf o etapas fenológicas del cultivo: no se pueden calcular las ventanas ni los cortes.");
         }
+        else
+        {
+            timeline = CycleTimelineLogic.Build(
+                sowingDate, today, accumulated, history, projection,
+                config.GddMin, config.GddMax, lastStage.GddMax);
+        }
+        var curve = GddCurveLogic.Build(sowingDate, today, history, projection);
 
-        // --- Comparación de estrategias (SIM-09) ---
-        var (realAptaCount, totalActive) = await AptaCountsAsync(context, lot, ct);
-        var alternatives = AlternativeComparisonService.Compare(new AlternativeComparisonService.Context(
-            request.ReferenceDate,
-            accumulated,
-            plan.Points,
-            plan.HorizonDays,
-            crop.Name,
-            gddTarget,
-            await BabyLeafWindowAsync(context, crop, request.Harvest.EnableBabyLeaf, ct),
-            realAptaCount,
-            totalActive,
-            request.Harvest.HypothesisAptaPercent,
-            request.Harvest.RequiredTargetPercent ?? lot?.BabyLeafHarvestTargetPercent,
-            await ConventionalHasMaturityDataAsync(context, lot, ct),
-            request.Harvest.EnableBabyLeaf,
-            request.Harvest.EnableConvencional));
-        warnings.AddRange(alternatives.Warnings);
+        // --- 4. Plantas que se simulan: las activas del lote o las del escenario libre ---
+        var plants = lot is not null
+            ? await context.Plants.CountAsync(p => p.LotId == lot.Id && p.OperationalState == PlantOperationalState.Activa, ct)
+            : request.PlantCount!.Value;
+        if (lot is not null && plants == 0)
+            warnings.Add("El lote no tiene plantas activas: no queda nada por cosechar en el escenario.");
 
-        // --- Contexto de lote + grilla opcional (SIM-08/10, solo lectura) ---
-        SimulationLotInfo? lotInfo = null;
+        // Semillas = todas las plantas del lote (o las del escenario libre). Las que ya se cosecharon o
+        // descartaron consumieron agua y nutrientes hasta ese día.
+        var seeds = plants;
+        IReadOnlyList<DateOnly> exitedPlantDates = [];
         if (lot is not null)
         {
-            var lotState = await _lotAggregate.GetLotStateAsync(lot.Id, request.ReferenceDate, ct);
-            if (lotState is not null)
-            {
-                warnings.AddRange(lotState.Warnings);
-                lotInfo = new SimulationLotInfo(
-                    lotState.LotId,
-                    lotState.Name,
-                    lotState.CropTypeName,
-                    lotState.SowingDate,
-                    lotState.AreaM2,
-                    Math.Round(accumulated, 2),
-                    lotState.PhenologicalStageName,
-                    lotState.PhenologicalStageOrder,
-                    lotState.GridRows ?? 0,
-                    lotState.GridColumns ?? 0,
-                    lotState.TotalPlants,
-                    lotState.ActivePlants,
-                    lotState.HarvestedPlants,
-                    lotState.DiscardedPlants,
-                    lotState.EmptyPositions,
-                    lotState.Cells);
-            }
+            var lotPlants = await context.Plants.AsNoTracking()
+                .Where(p => p.LotId == lot.Id)
+                .Select(p => new { p.OperationalState, p.HarvestDate, p.DiscardDate })
+                .ToListAsync(ct);
+            seeds = lotPlants.Count;
+            exitedPlantDates = lotPlants
+                .Where(p => p.OperationalState != PlantOperationalState.Activa)
+                .Select(p => p.HarvestDate ?? p.DiscardDate ?? today)
+                .ToList();
         }
 
-        var contextInfo = new SimulationContextInfo(
-            lot is not null ? "lote" : "cultivo",
-            lot?.Id,
-            lot?.Name,
-            crop.Name,
-            sowingDate,
-            areaM2,
-            baseTemperature,
-            gddTarget);
+        // --- 5. Pesos y precios: los del sistema (precio propio del lote si lo tiene), o los del escenario ---
+        var reference = await YieldReferenceAsync(context, lot, crop, request, today, ct);
+        if (reference.Weights.BabyLeafGramsPerPlant is null || reference.Weights.ConventionalGramsPerPlant is null)
+            warnings.Add("Falta el peso por planta de algún destino (Ajustes > Parámetros o el escenario): esos kg quedan sin calcular.");
+        if (reference.Prices.BabyLeafPerKg is null || reference.Prices.ConventionalPerKg is null)
+            warnings.Add("Falta el precio por kg de algún destino (Ajustes > Parámetros o el escenario): esos ingresos quedan sin calcular.");
+
+        // --- 6. Previsión: aptas a Baby Leaf y pérdidas por etapa (histórico + estado del lote) ---
+        var outlook = BabyLeafOutlook.None;
+        if (timeline is not null)
+        {
+            // Clima esperado del ciclo para comparar con los lotes previos: lo que va (medido o del
+            // escenario) más la proyección.
+            var cycleDays = history.Where(p => p.Source != GddPointSource.Fallback).Select(p => p.Gdd)
+                .Concat(plan.Points.Select(p => p.Gdd)).ToList();
+            var expectedAverage = cycleDays.Count > 0 ? Math.Round(cycleDays.Average(), 2) : (decimal?)null;
+            outlook = await _outlook.GetOutlookAsync(
+                new BabyLeafOutlookRequest(crop.Id, sowingDate, timeline, expectedAverage, lot?.Id), ct);
+
+            if (outlook.AptRate is null)
+                warnings.Add("Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas las plantas llegan aptas a Baby Leaf.");
+            if (outlook.History.EarlyLossRate is null && outlook.History.LateLossRate is null)
+                warnings.Add("Sin historial de pérdidas por etapa: no se descuentan pérdidas.");
+            if (outlook.History.UsedAllLots)
+                warnings.Add($"Ningún lote cerrado es de una temporada o clima parecido: la previsión usa el promedio de los {outlook.History.Lots.Count}.");
+        }
+
+        // Precio de nutrientes: el del escenario o, vacío, el de Ajustes > Parámetros.
+        var costs = request.Costs.NutrientPricePerLiter is null
+            ? request.Costs with { NutrientPricePerLiter = await _parameters.GetNutrientPricePerLiterAsync(ct) }
+            : request.Costs;
+
+        // --- 7. Estrategias: máximo Baby Leaf / meta Baby Leaf / todo convencional ---
+        IReadOnlyList<SimulationStrategyOutcome> strategies = timeline is null
+            ? []
+            : SimulationStrategies.Build(new SimulationStrategies.Input(
+                sowingDate, today, timeline, plants, request.Harvest.BabyLeafGoalPercent,
+                outlook.AptRate, outlook.RemainingEarlyLossRate, outlook.RemainingLateLossRate,
+                reference.Weights, reference.Prices, costs, seeds, exitedPlantDates));
+
+        // --- Contexto de lote + grilla (SIM-08/10, solo lectura) ---
+        SimulationLotInfo? lotInfo = null;
+        if (lot is not null && await _lotAggregate.GetLotStateAsync(lot.Id, today, ct) is { } lotState)
+        {
+            lotInfo = new SimulationLotInfo(
+                lotState.LotId,
+                lotState.PhenologicalStageName,
+                lotState.GridRows ?? 0,
+                lotState.GridColumns ?? 0,
+                lotState.TotalPlants,
+                lotState.ActivePlants,
+                lotState.HarvestedPlants,
+                lotState.DiscardedPlants,
+                lotState.Cells);
+        }
 
         var result = new SimulationResult(
-            SimulationId: ComputeSimulationId(request),
+            SimulationId: ComputeSimulationId(request, today),
             Request: request,
+            Today: today,
             IsSimulated: true,
-            Context: contextInfo,
+            Context: new SimulationContextInfo(
+                lot is not null ? "lote" : "cultivo",
+                lot?.Id,
+                lot?.Name,
+                crop.Name,
+                sowingDate,
+                plants,
+                baseTemperature),
             Lot: lotInfo,
             Gdd: new SimulationGdd(
-                Math.Round(accumulated, 2),
-                gddTarget,
+                accumulated,
                 baseTemperature,
                 plan.Points,
                 plan.HorizonDays,
                 plan.CoveredDays,
                 plan.MissingDays,
                 plan.CoveragePercent,
-                harvestDate,
-                GddCalculator.DaysRemaining(request.ReferenceDate, harvestDate),
                 plan.ProviderName,
                 plan.FetchedAtUtc,
                 plan.UsedFallback,
-                extrapolation,
-                plan.Warnings.Concat(harvestWarnings).Distinct().ToList()),
-            Yield: yieldEstimate,
-            Harvest: harvestOutcome,
-            Alternatives: alternatives,
-            Costs: costs,
-            Warnings: warnings.Distinct().ToList());
+                plan.Warnings,
+                plan.Correction),
+            Timeline: timeline,
+            Curve: curve,
+            Reference: reference,
+            Outlook: outlook,
+            Strategies: strategies,
+            Warnings: warnings.Concat(strategies.SelectMany(s => s.Warnings)).Distinct().ToList());
 
         return new SimulationPreview(true, [], result);
     }
 
     /// <summary>
-    /// Regla híbrida de cosecha simulada (SIM-09): la MISMA regla de producción
-    /// (HarvestReadinessRules) con el % de aptas REAL de evaluaciones o la
-    /// HIPÓTESIS explícita del usuario. Nunca se inventa una evaluación visual.
+    /// Pesos y precios del escenario: lo que cargó el usuario y, para lo vacío, los de Ajustes &gt;
+    /// Parámetros (con el precio propio del lote, si lo tiene, vigente hoy).
     /// </summary>
-    private async Task<SimulationHarvestOutcome?> BuildHarvestOutcomeAsync(
-        HydroPilotDbContext context,
-        Lot? lot,
-        CropType crop,
-        SimulationRequest request,
-        decimal accumulated,
-        IReadOnlyList<SimulationGddPoint> projection,
-        CancellationToken ct)
+    private async Task<SimulationYieldReference> YieldReferenceAsync(
+        HydroPilotDbContext context, Lot? lot, CropType crop, SimulationRequest request, DateOnly today, CancellationToken ct)
     {
-        if (!request.Harvest.EnableBabyLeaf && !request.Harvest.EnableConvencional)
-        {
-            return null;
-        }
+        var system = await _parameters.GetYieldReferenceAsync(ct);
+        var prices = await SystemParametersService.ResolveLotPricesAsync(
+            context, lot ?? new Lot { CropTypeId = crop.Id }, today, ct);
+        var overrides = request.Yield;
 
-        var warnings = new List<string>();
-        (decimal Min, decimal Max)? window = null;
-
-        if (request.Harvest.EnableBabyLeaf)
-        {
-            var config = await context.BabyLeafConfigs
-                .Where(c => c.CropTypeId == crop.Id && c.IsActive)
-                .OrderByDescending(c => c.Id)
-                .FirstOrDefaultAsync(ct);
-
-            if (config is null)
+        return new SimulationYieldReference(
+            new YieldReference(
+                overrides?.BabyLeafGramsPerPlant ?? system.BabyLeafGramsPerPlant,
+                overrides?.ConventionalGramsPerPlant ?? system.ConventionalGramsPerPlant),
+            prices with
             {
-                warnings.Add("Sin configuración Baby Leaf activa para el cultivo: no se puede evaluar la ventana GDD ni la fecha híbrida Baby Leaf.");
-            }
-            else
-            {
-                window = (config.GddMin, config.GddMax);
-            }
-        }
-
-        var requiredPercent = request.Harvest.RequiredTargetPercent ?? lot?.BabyLeafHarvestTargetPercent;
-        var (realAptaCount, totalActive) = await AptaCountsAsync(context, lot, ct);
-        var hypothesis = request.Harvest.HypothesisAptaPercent;
-
-        // % de aptas efectivo para la regla: hipótesis explícita o dato real.
-        var usesHypothesis = hypothesis is not null;
-        decimal? aptaPercentUsed = usesHypothesis
-            ? Math.Round(hypothesis!.Value, 1)
-            : totalActive > 0 ? Math.Round(realAptaCount * 100m / totalActive, 1) : null;
-
-        // Decisiones (GDD y/o hipótesis), separadas para que la salida indique
-        // qué parte decidió cada cosa.
-        bool gddInWindow = window is { } w && accumulated >= w.Min && accumulated < w.Max;
-        DateOnly? babyLeafEntry = window is { } win
-            ? GddDateLogic.EstimateCrossDate(
-                accumulated,
-                projection.Select(p => new DailyGddPoint(p.Date, p.Gdd, GddPointSource.Forecast)).ToList(),
-                win.Min)
-            : null;
-        DateOnly? conventionalEntry = GddDateLogic.EstimateCrossDate(
-            accumulated,
-            projection.Select(p => new DailyGddPoint(p.Date, p.Gdd, GddPointSource.Forecast)).ToList(),
-            crop.GddTarget);
-
-        bool? isReady = null;
-        string? decisionReason = null;
-
-        if (window is { } activeWindow)
-        {
-            if (lot is not null)
-            {
-                // Regla híbrida de producción reutilizada (HarvestReadinessRules).
-                var aptaCountForRule = usesHypothesis
-                    ? Math.Max(0, (int)Math.Round(hypothesis!.Value * totalActive / 100m, 0, MidpointRounding.AwayFromZero))
-                    : realAptaCount;
-                var rule = HarvestReadinessRules.Evaluate(new HarvestReadinessRules.Input(
-                    accumulated, activeWindow.Min, activeWindow.Max, aptaCountForRule, totalActive, requiredPercent));
-
-                if (rule.PendingReason is not null)
-                {
-                    warnings.Add(rule.PendingReason);
-                }
-
-                if (rule.IsReady == false)
-                {
-                    if (!rule.GddInWindow)
-                    {
-                        warnings.Add($"GDD {accumulated} fuera de la ventana Baby Leaf ({activeWindow.Min}–{activeWindow.Max}).");
-                    }
-
-                    if (requiredPercent is { } req && aptaPercentUsed < req)
-                    {
-                        warnings.Add($"Porcentaje de aptas ({aptaPercentUsed}%) por debajo del objetivo ({req}%).");
-                    }
-                }
-
-                isReady = rule.IsReady;
-                decisionReason = rule.IsReady switch
-                {
-                    true when usesHypothesis =>
-                        $"GDD {accumulated} en ventana ({activeWindow.Min}–{activeWindow.Max}) Y hipótesis del usuario de {aptaPercentUsed}% aptas ≥ umbral {requiredPercent}%.",
-                    true =>
-                        $"GDD {accumulated} en ventana ({activeWindow.Min}–{activeWindow.Max}) Y {aptaPercentUsed}% aptas reales ≥ umbral {requiredPercent}%.",
-                    null => rule.PendingReason,
-                    _ =>
-                        $"GDD en ventana: {rule.GddInWindow}; % aptas ({aptaPercentUsed}%) vs umbral ({requiredPercent}%)."
-                };
-            }
-            else
-            {
-                // Escenario libre: sin plantas activas no aplica la regla de % sobre
-                // posición; se informa la ventana (parte GDD) y la hipótesis como dato.
-                var pendingReason = requiredPercent is null
-                    ? "Sin umbral objetivo de aptas: decisión híbrida pendiente."
-                    : usesHypothesis
-                        ? $"Escenario libre sin plantas activas: la regla híbrida de % sobre posiciones requiere contexto de lote; se informan la ventana GDD y la hipótesis ({aptaPercentUsed}%)."
-                        : "Escenario libre sin plantas activas ni hipótesis de % aptas: decisión híbrida pendiente.";
-                warnings.Add(pendingReason);
-                decisionReason = pendingReason;
-            }
-        }
-        else if (request.Harvest.EnableBabyLeaf)
-        {
-            decisionReason = "Sin configuración Baby Leaf: sin ventana GDD para la estrategia.";
-            warnings.Add(decisionReason);
-        }
-
-        if (request.Harvest.EnableConvencional)
-        {
-            var hasMaturity = await ConventionalHasMaturityDataAsync(context, lot, ct);
-            if (!hasMaturity)
-            {
-                warnings.Add(lot is null
-                    ? "Cosecha convencional en escenario libre: la madurez requiere análisis de imagen (fase futura): decisión pendiente, no se infiere tamaño."
-                    : "Cosecha convencional: sin análisis de imagen persistido (fase futura): la madurez queda pendiente, no se infiere tamaño.");
-            }
-        }
-
-        return new SimulationHarvestOutcome(
-            Enabled: true,
-            HasBabyLeafConfig: window is not null,
-            WindowMin: window?.Min,
-            WindowMax: window?.Max,
-            GddInWindow: gddInWindow,
-            RequiredPercent: requiredPercent,
-            RealAptaCount: realAptaCount,
-            TotalActivePlants: totalActive,
-            AptaPercentUsed: aptaPercentUsed,
-            AptaPercentIsHypothesis: usesHypothesis,
-            IsReady: isReady,
-            DecisionReason: decisionReason,
-            BabyLeafEntryDate: babyLeafEntry,
-            ConventionalEntryDate: conventionalEntry,
-            ConventionalHasMaturityData: await ConventionalHasMaturityDataAsync(context, lot, ct),
-            Warnings: warnings);
-    }
-
-    /// <summary>Conteos de aptas y activas del lote (solo lectura): sin lote = sin plantas.</summary>
-    private static async Task<(int RealAptaCount, int TotalActive)> AptaCountsAsync(
-        HydroPilotDbContext context, Lot? lot, CancellationToken ct)
-    {
-        if (lot is null)
-        {
-            return (0, 0);
-        }
-
-        var plants = await context.Plants
-            .Include(p => p.CommercialStage)
-            .Where(p => p.LotId == lot.Id && p.OperationalState == PlantOperationalState.Activa)
-            .Select(p => p.CommercialStage!.Name)
-            .ToListAsync(ct);
-
-        var apta = plants.Count(n => n == CommercialStageNames.BabyLeafApta);
-        return (apta, plants.Count);
-    }
-
-    private async Task<(decimal Min, decimal Max)?> BabyLeafWindowAsync(
-        HydroPilotDbContext context, CropType crop, bool onlyWhenEnabled, CancellationToken ct)
-    {
-        if (!onlyWhenEnabled)
-        {
-            return null;
-        }
-
-        var config = await context.BabyLeafConfigs
-            .Where(c => c.CropTypeId == crop.Id && c.IsActive)
-            .OrderByDescending(c => c.Id)
-            .FirstOrDefaultAsync(ct);
-
-        return config is null ? null : (config.GddMin, config.GddMax);
-    }
-
-    /// <summary>¿Hay análisis de imagen persistido para plantas activas del lote? (fase futura).</summary>
-    private static async Task<bool> ConventionalHasMaturityDataAsync(
-        HydroPilotDbContext context, Lot? lot, CancellationToken ct)
-    {
-        if (lot is null)
-        {
-            return false;
-        }
-
-        return await context.PlantImageAnalyses
-            .AnyAsync(a => a.PlantImage != null
-                           && a.PlantImage.Plant != null
-                           && a.PlantImage.Plant.LotId == lot.Id
-                           && a.PlantImage.Plant.OperationalState == PlantOperationalState.Activa, ct);
+                BabyLeafPerKg = overrides?.BabyLeafPricePerKg ?? prices.BabyLeafPerKg,
+                ConventionalPerKg = overrides?.ConventionalPricePerKg ?? prices.ConventionalPerKg,
+            },
+            HasScenarioOverrides: overrides is { } o
+                && (o.BabyLeafGramsPerPlant is not null || o.ConventionalGramsPerPlant is not null
+                    || o.BabyLeafPricePerKg is not null || o.ConventionalPricePerKg is not null));
     }
 
     /// <summary>
-    /// Id determinista del escenario (SIM: misma entrada → mismo id y mismo
-    /// resultado). Hash SHA-256 del request serializado; no identifica runs
-    /// persistidos (no los hay en esta entrega).
+    /// Id determinista del escenario (SIM: misma entrada el mismo día → mismo id y mismo
+    /// resultado). Hash SHA-256 del request serializado y de hoy (el escenario arranca hoy);
+    /// no identifica runs persistidos (no los hay en esta entrega).
     /// </summary>
-    public static string ComputeSimulationId(SimulationRequest request)
+    public static string ComputeSimulationId(SimulationRequest request, DateOnly today)
     {
-        var json = JsonSerializer.Serialize(request);
+        var json = JsonSerializer.Serialize(new { request, today });
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
         return Convert.ToHexString(hash)[..16];
     }

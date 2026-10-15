@@ -385,9 +385,10 @@ public class OptimizationRulesTests
     // Helpers
     // ------------------------------------------------------------------
 
+    // InvariantCulture: con cultura es-AR "6.0" se parsearía como 60 (el punto es separador de miles).
     private static SnapshotReading Ph(string value, int minutesAgo) =>
-        new("pH", TelemetryContract.QualityValid, decimal.Parse(value), Now.AddMinutes(-minutesAgo));
+        new("pH", TelemetryContract.QualityValid, decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture), Now.AddMinutes(-minutesAgo));
 
     private static SnapshotReading Ec(string value, int minutesAgo) =>
-        new("CE", TelemetryContract.QualityValid, decimal.Parse(value), Now.AddMinutes(-minutesAgo));
+        new("CE", TelemetryContract.QualityValid, decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture), Now.AddMinutes(-minutesAgo));
 }

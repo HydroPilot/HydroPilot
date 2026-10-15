@@ -1,0 +1,96 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Detalle técnico del lote y calidad del dato. Si la temperatura (de la que salen los GDD, la fase y
+   las fechas) tiene problemas, la sección se pone en rojo con ⚠ y el motivo se ve sin abrirla.
+   La ficha completa del lote ya no va (repetía datos); el flujo diario está en Admin > Mantenimiento.
+   La curva de GDD (antes en Forecasting) muestra de dónde salen las fechas y los días sin lectura. *@
+<details id="lot-data-details" class="lot-tech @(HasAlerts ? "lot-tech--alert" : null)">
+    <summary>
+        <span>
+            ▸ Detalles y calidad de los datos
+            @if (HasAlerts)
+            {
+                <span class="lot-tech__alert-icon" aria-label="Datos poco confiables">⚠</span>
+            }
+        </span>
+        <span>
+            @LotFormat.Num(Gdd) GDD · @(Overview.State.PhenologicalStageName ?? "sin etapa") ·
+            @* Con datos poco confiables la cantidad de avisos va en rojo: el motivo está adentro. *@
+            <span class="@(HasAlerts ? "lot-tech__alert-text" : null)">
+                @(Overview.NoticeCount == 1 ? "1 aviso" : $"{Overview.NoticeCount} avisos")
+            </span>
+        </span>
+    </summary>
+    <div class="lot-tech__body">
+        <div class="lot-tech__facts">
+            <div class="lot-stat">
+                <span class="lot-stat__label">GDD acumulado</span>
+                <span class="lot-stat__value">@LotFormat.Num(Gdd)</span>
+                @if (Overview.Timeline is { } window)
+                {
+                    <span class="lot-stat__hint">
+                        La ventana Baby Leaf va de @LotFormat.Num(window.BabyLeafOpens.Gdd) a @LotFormat.Num(window.BabyLeafCloses.Gdd) GDD.
+                    </span>
+                }
+            </div>
+            <div class="lot-stat">
+                <span class="lot-stat__label">Etapa fenológica</span>
+                <span class="lot-stat__value">@(Overview.State.PhenologicalStageName ?? "Sin definir")</span>
+            </div>
+        </div>
+        <div>
+            <h6 class="small text-uppercase text-muted">Avisos de calidad del dato</h6>
+            @if (Overview.NoticeCount == 0)
+            {
+                <p class="lot-muted mt-0">Sin avisos: los cálculos tienen los datos que necesitan.</p>
+            }
+            else
+            {
+                @* Cada problema una sola vez: las alertas (en rojo) ya explican sus avisos técnicos. *@
+                <ul class="small mb-0 ps-3">
+                    @foreach (var alert in Overview.DataAlerts)
+                    {
+                        <li class="mb-1 lot-tech__alert-item">⚠ <strong>@alert.Title</strong>: @alert.Consequence</li>
+                    }
+                    @foreach (var warning in Overview.Warnings)
+                    {
+                        <li class="mb-1">@warning</li>
+                    }
+                </ul>
+            }
+            @if (Overview.Forecast is { } forecast)
+            {
+                <p class="lot-muted">
+                    Fuente del pronóstico: @forecast.DataSourceSummary · modelo @forecast.ModelVersion ·
+                    cobertura @(forecast.CoveragePercent is { } c ? LotFormat.Pct(c) : "—")
+                </p>
+                @if (forecast.ForecastCorrection is { } correction)
+                {
+                    <p class="lot-muted">
+                        Pronóstico corregido a la temperatura de adentro: @LotFormat.SignedNum(correction.OffsetPerDay) GDD/día
+                        (diferencia promedio entre el sensor y el pronóstico de los últimos @LotFormat.Days(correction.CalibrationDays)).
+                    </p>
+                }
+            }
+        </div>
+        @if (Overview.Curve is { } curve && Overview.Timeline is { } timeline)
+        {
+            <div class="lot-tech__chart">
+                <h6 class="small text-uppercase text-muted">GDD acumulado por día</h6>
+                <LotGddChart Curve="curve" Timeline="timeline" />
+            </div>
+        }
+    </div>
+</details>
+
+@code {
+    [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
+
+    private bool HasAlerts => Overview.DataAlerts.Count > 0;
+
+    // En un ciclo cerrado, el GDD al cierre (el de hoy sigue sumando si el nodo quedó asignado al lote).
+    private decimal Gdd => Overview.IsClosed && Overview.Timeline is { } closed
+        ? closed.AccumulatedGdd
+        : Overview.State.GddAccumulated;
+}

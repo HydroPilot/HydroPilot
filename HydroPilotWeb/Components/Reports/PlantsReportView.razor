@@ -59,7 +59,7 @@
     </div>
 
     <div class="d-flex gap-2 mb-2">
-        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+        <button class="btn btn-success btn-sm" @onclick="Generate" disabled="@loading">
             @(loading ? "Generando..." : "Generar")
         </button>
     </div>
@@ -74,7 +74,7 @@
     {
         <div class="alert alert-danger">
             <strong>No se pudo generar el reporte.</strong> @error
-            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+            <button class="btn btn-sm hp-btn-secondary ms-2" @onclick="Generate">Reintentar</button>
         </div>
     }
     else if (result is not null)
@@ -146,7 +146,7 @@
                                     }
                                 </td>
                                 <td>
-                                    <button class="btn btn-outline-primary btn-sm" @onclick="() => ShowDetail(p.PlantId)">Detalle</button>
+                                    <button class="btn btn-sm hp-btn-secondary" @onclick="() => ShowDetail(p.PlantId)">Detalle</button>
                                 </td>
                             </tr>
                         }
@@ -155,7 +155,7 @@
             </div>
             <ReportPager Page="result.Page" TotalRows="result.TotalRows" PageSize="result.PageSize"
                          PageChanged="OnPageChanged" />
-            <button class="btn btn-outline-secondary btn-sm mt-2" @onclick="Download">⬇ CSV plantas (página actual)</button>
+            <button class="btn btn-sm hp-btn-secondary mt-2" @onclick="Download">⬇ CSV plantas (página actual)</button>
 
             @if (detail is not null || selectedPlantId is not null)
             {

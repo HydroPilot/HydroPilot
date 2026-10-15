@@ -1,0 +1,63 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Metas del ciclo: va dentro del modal "Metas del ciclo" (lápiz de las cards Baby Leaf y Pérdidas). *@
+<p class="lot-muted mt-0 mb-3">Dejá un campo vacío para no definirlo.</p>
+
+<div class="lot-editor">
+    @* Umbral de cosecha: oculto por ahora (en revisión si aporta valor). Al guardar se conserva el valor vigente.
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="obj-threshold">Umbral de cosecha (% de aptas)</label>
+        <input id="obj-threshold" type="number" class="form-control" min="1" max="100" step="1"
+               @bind="threshold" @bind:event="oninput" />
+        <p class="lot-editor__help">Regla para decidir el corte: el lote completo se cosecha cuando este % de las plantas activas está apto.</p>
+    </div>
+    *@
+    <LotGoalFields @bind-BabyLeafGoal="babyLeafGoal" @bind-MaxLoss="maxLoss" />
+</div>
+
+@if (Errors.Count > 0)
+{
+    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+        <ul class="mb-0">
+            @foreach (var error in Errors)
+            {
+                <li>@error</li>
+            }
+        </ul>
+    </div>
+}
+
+<div class="lot-editor__actions">
+    <button class="btn btn-outline-secondary btn-sm" @onclick="OnCancel" disabled="@Saving">Cancelar</button>
+    <button class="btn btn-success btn-sm" @onclick="SaveAsync" disabled="@Saving">
+        @(Saving ? "Guardando…" : "Guardar metas")
+    </button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public LotObjectives Current { get; set; } = null!;
+    [Parameter] public bool Saving { get; set; }
+    [Parameter] public IReadOnlyList<string> Errors { get; set; } = [];
+    [Parameter] public EventCallback<LotObjectives> OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private decimal? threshold;
+    private decimal? babyLeafGoal;
+    private decimal? maxLoss;
+    private LotObjectives? loadedFrom;
+
+    protected override void OnParametersSet()
+    {
+        // Carga los valores vigentes al abrir el editor (o al cambiar de lote), sin pisar lo que se está escribiendo.
+        if (!ReferenceEquals(loadedFrom, Current))
+        {
+            threshold = Current.HarvestThresholdPercent;
+            babyLeafGoal = Current.BabyLeafGoalPercent;
+            maxLoss = Current.MaxLossPercent;
+            loadedFrom = Current;
+        }
+    }
+
+    private Task SaveAsync() => OnSave.InvokeAsync(new LotObjectives(threshold, babyLeafGoal, maxLoss));
+}

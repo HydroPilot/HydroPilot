@@ -4,129 +4,206 @@
 
 <div class="card plant-detail h-100">
     <div class="card-body">
-        <h6 class="card-title">Detalle de planta</h6>
-
         @if (Detail is null)
         {
-            <p class="text-muted small mb-0">
-                Seleccioná una posición del mapa para ver el detalle.
-            </p>
+            <h6 class="card-title">Planta seleccionada</h6>
+            <p class="text-muted small mb-0">Tocá una planta del mapa para ver su estado.</p>
+        }
+        else if (Detail.PlantId == 0)
+        {
+            <div class="d-flex align-items-start justify-content-between gap-2">
+                <h6 class="card-title mb-1">Posición F@(Detail.Row)-C@(Detail.Column)</h6>
+                @CloseButton
+            </div>
+            <p class="text-muted small mb-0">Posición libre: no hay planta sembrada acá.</p>
         }
         else
         {
             var stageStyle = CommercialStagePalette.ForStage(Detail.CommercialStageName);
+            // Cosechada / descartada llevan la fecha en el mismo cartel.
             var opState = Detail.OperationalState switch
             {
-                PlantOperationalState.Cosechada => (Label: "Cosechada", Css: "badge text-bg-success"),
-                PlantOperationalState.Descartada => (Label: "Descartada", Css: "badge text-bg-secondary"),
+                PlantOperationalState.Cosechada => (Label: $"Cosechada{When(Detail.HarvestDate)}", Css: "badge text-bg-success"),
+                PlantOperationalState.Descartada => (Label: $"Descartada{When(Detail.DiscardDate)}", Css: "badge text-bg-secondary"),
                 _ => (Label: "Activa", Css: "badge text-bg-primary")
             };
 
-            <div class="d-flex align-items-center gap-2 mb-2">
-                <strong>F@(Detail.Row)-C@(Detail.Column)</strong>
-                <span class="@opState.Css">@opState.Label</span>
+            <div class="d-flex align-items-start justify-content-between gap-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <h6 class="card-title mb-0">Planta F@(Detail.Row)-C@(Detail.Column)</h6>
+                    <span class="@opState.Css">@opState.Label</span>
+                </div>
+                @CloseButton
+            </div>
+
+            @* El estado comercial va como cartel en lugar de una frase que decía lo mismo. *@
+            <div class="plant-detail__stage">
                 @if (Detail.CommercialStageName is not null)
                 {
-                    <span class="badge" style="background: @stageStyle.Background; color: @stageStyle.Color;">@Detail.CommercialStageName</span>
+                    <span class="badge plant-detail__stage-badge" style="background: @stageStyle.Background; color: @stageStyle.Color;">@Detail.CommercialStageName</span>
+                }
+                @if (Detail.OperationalState == PlantOperationalState.Descartada && !string.IsNullOrWhiteSpace(Detail.DiscardReason))
+                {
+                    <span class="plant-detail__note">Motivo: @Detail.DiscardReason</span>
                 }
             </div>
 
-            <ul class="list-group list-group-flush plant-detail__list">
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>Etapa fenológica</span>
-                    <strong>@(Detail.PhenologicalStageName ?? "—")</strong>
-                </li>
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>GDD del lote</span>
-                    <strong>@Detail.LotGdd</strong>
-                </li>
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>EC / pH</span>
-                    <strong>@(Detail.CurrentEc?.ToString() ?? "—") / @(Detail.CurrentPh?.ToString() ?? "—")</strong>
-                </li>
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>BabyLeafScore</span>
-                    <strong>@(Detail.BabyLeafScore?.ToString() ?? "—")</strong>
-                </li>
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>GrowthRate</span>
-                    <strong>@(Detail.GrowthRate?.ToString() ?? "—")</strong>
-                </li>
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>Última evaluación</span>
-                    <strong>@(Detail.LastEvaluationAtUtc?.ToString("dd/MM/yyyy HH:mm") ?? "—")</strong>
-                </li>
-                @if (Detail.HarvestDate is not null)
-                {
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Cosechada</span>
-                        <strong>@Detail.HarvestDate.Value.ToString("dd/MM/yyyy")</strong>
-                    </li>
-                }
-                @if (Detail.DiscardDate is not null)
-                {
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Descartada</span>
-                        <strong>@Detail.DiscardDate.Value.ToString("dd/MM/yyyy")</strong>
-                    </li>
-                    <li class="list-group-item">
-                        <span class="text-muted">Motivo:</span> @Detail.DiscardReason
-                    </li>
-                }
-                <li class="list-group-item d-flex justify-content-between">
-                    <span>Imagen</span>
-                    @if (Detail.HasImage)
-                    {
-                        <strong title="@Detail.LastImagePath">@Detail.LastImageFileName</strong>
-                    }
-                    else
-                    {
-                        <span class="text-muted">Sin imagen</span>
-                    }
-                </li>
-            </ul>
-
-            @if (Detail.History.Count > 0)
+            @if (Detail.BabyLeafScore is { } score)
             {
-                <h6 class="mt-3 mb-1 small text-uppercase text-muted">Histórico de cambios</h6>
-                <table class="table table-sm table-striped small mb-0">
-                    <thead>
-                        <tr>
-                            <th>Fecha</th>
-                            <th>Origen</th>
-                            <th>Cambio</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+                <p class="plant-detail__score">
+                    Score Baby Leaf <strong>@LotFormat.Num(score)/100</strong>
+                    @if (Detail.Confidence is { } confidence)
+                    {
+                        <span> · confianza @LotFormat.Pct(confidence * 100m)</span>
+                    }
+                </p>
+            }
+
+            @if (AllowActions && Detail.OperationalState == PlantOperationalState.Activa)
+            {
+                <div class="plant-detail__actions">
+                    <button class="btn btn-sm btn-success" @onclick="OnHarvest" disabled="@Busy">
+                        Cosechar F@(Detail.Row)-C@(Detail.Column)
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="() => showDiscardInput = !showDiscardInput" disabled="@Busy">
+                        Descartar
+                    </button>
+                </div>
+                @if (showDiscardInput)
+                {
+                    <div class="input-group input-group-sm mb-2">
+                        <input class="form-control" placeholder="Motivo del descarte (opcional)" @bind="discardReason" />
+                        <button class="btn btn-danger" @onclick="ConfirmDiscardAsync" disabled="@Busy">Confirmar</button>
+                    </div>
+                }
+            }
+
+            @* Solo datos de la planta: GDD, pH y CE son del lote y ya están en la vista. *@
+            <details class="mt-2">
+                <summary>Detalle de la planta</summary>
+                <dl class="plant-facts">
+                    <div>
+                        <dt>Etapa fenológica</dt>
+                        <dd>@(Detail.PhenologicalStageName ?? "—")</dd>
+                    </div>
+                    <div>
+                        <dt>Crecimiento</dt>
+                        <dd>@(Detail.GrowthRate is { } growth ? $"{LotFormat.Num(growth)} %/día" : "—")</dd>
+                    </div>
+                    <div>
+                        <dt>Última evaluación</dt>
+                        <dd>@(Detail.LastEvaluationAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</dd>
+                    </div>
+                    @* La imagen va a todo el ancho, debajo de la última evaluación, para verla grande. *@
+                    <div class="plant-facts__wide">
+                        <dt>Imagen</dt>
+                        @if (Detail.HasImage && !string.IsNullOrWhiteSpace(Detail.LastImagePath))
+                        {
+                            <dd>
+                                <img class="plant-facts__image" src="@Detail.LastImagePath"
+                                     alt="@($"Imagen de la planta F{Detail.Row}-C{Detail.Column}")" title="@Detail.LastImageFileName" />
+                            </dd>
+                        }
+                        else
+                        {
+                            <dd>Sin imagen</dd>
+                        }
+                    </div>
+                </dl>
+
+                @if (Detail.History.Count > 0)
+                {
+                    <h6 class="plant-history__title">Historial de cambios</h6>
+                    @* Línea de tiempo, lo más reciente arriba; el punto toma el color del estado nuevo. *@
+                    <ol class="plant-history">
                         @foreach (var entry in Detail.History.Take(8))
                         {
-                            <tr title="@entry.Reason">
-                                <td>@entry.ChangedAtUtc.ToString("dd/MM")</td>
-                                <td>@entry.Source</td>
-                                <td>@(entry.PreviousState ?? "·") → @(entry.NewState ?? "·")</td>
-                            </tr>
+                            <li class="plant-history__item" style="--dot: @DotColor(entry.NewState);">
+                                <div class="plant-history__change">
+                                    <span>@(entry.PreviousState ?? "Alta")</span>
+                                    <span class="plant-history__arrow" aria-label="pasó a">→</span>
+                                    <strong>@(entry.NewState ?? "—")</strong>
+                                </div>
+                                <div class="plant-history__meta">
+                                    @entry.ChangedAtUtc.ToLocalTime().ToString("dd/MM HH:mm") · @SourceLabel(entry.Source)
+                                    @if (!string.IsNullOrWhiteSpace(entry.Reason))
+                                    {
+                                        <span> · @entry.Reason</span>
+                                    }
+                                </div>
+                            </li>
                         }
-                    </tbody>
-                </table>
-            }
+                    </ol>
+                }
 
-            @foreach (var warning in Detail.Warnings)
-            {
-                <div class="alert alert-warning py-1 px-2 small mb-1 mt-2">@warning</div>
-            }
+                @* "Sin imagen" ya se ve en los datos de la planta. *@
+                @foreach (var warning in Detail.Warnings.Where(w => !w.StartsWith("Sin imagen", StringComparison.Ordinal)))
+                {
+                    <div class="small text-muted mt-2">@warning</div>
+                }
+            </details>
         }
     </div>
 </div>
 
-<style>
-    .plant-detail .plant-detail__list .list-group-item {
-        padding: 0.35rem 0.25rem;
-        font-size: 13px;
-    }
-</style>
-
 @code {
     [Parameter] public PlantDetailDto? Detail { get; set; }
+
+    /// <summary>Muestra cosechar/descartar para plantas activas (solo la vista Lotes).</summary>
+    [Parameter] public bool AllowActions { get; set; }
+    [Parameter] public bool Busy { get; set; }
     [Parameter] public EventCallback OnHarvest { get; set; }
-    [Parameter] public EventCallback<string> OnDiscard { get; set; }
+    [Parameter] public EventCallback<string?> OnDiscard { get; set; }
+
+    /// <summary>Si se pasa, muestra un botón × para cerrar (uso como popover en la vista Lotes).</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private RenderFragment? CloseButton => OnClose.HasDelegate
+        ? @<button type="button" class="btn-close btn-sm" aria-label="Cerrar detalle" @onclick="OnClose"></button>
+        : null;
+
+    private bool showDiscardInput;
+    private string? discardReason;
+    private int? lastPlantId;
+
+    protected override void OnParametersSet()
+    {
+        // Al cambiar de planta se cierra el formulario de descarte.
+        if (Detail?.PlantId != lastPlantId)
+        {
+            showDiscardInput = false;
+            discardReason = null;
+            lastPlantId = Detail?.PlantId;
+        }
+    }
+
+    private async Task ConfirmDiscardAsync()
+    {
+        await OnDiscard.InvokeAsync(string.IsNullOrWhiteSpace(discardReason) ? null : discardReason.Trim());
+        showDiscardInput = false;
+        discardReason = null;
+    }
+
+    private static string DotColor(string? state) => state switch
+    {
+        "Cosechada" => "var(--accent)",
+        "Descartada" => "#8a94a0",
+        null or "Activa" => "var(--text-muted)",
+        _ => CommercialStagePalette.ForStage(state).Background
+    };
+
+    private static string SourceLabel(string? source) => source switch
+    {
+        "harvest" => "cosecha",
+        "harvest-bulk" => "cosecha masiva",
+        "discard" => "descarte",
+        "daily-flow" => "flujo diario",
+        "demo" => "datos demo",
+        "seed" => "carga inicial",
+        "manual" => "manual",
+        null or "" => "sin origen",
+        _ => source
+    };
+
+    private static string When(DateOnly? date) => date is { } d ? $" · {LotFormat.Day(d)}" : string.Empty;
 }

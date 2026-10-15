@@ -4,7 +4,7 @@
 @using HydroPilotWeb.Services.Dashboard
 @inject DashboardService Dashboard
 
-<PageTitle>Dashboard HydroPilot</PageTitle>
+<PageTitle>Invernadero - HydroPilot</PageTitle>
 
 @if (_error is not null)
 {
@@ -34,7 +34,7 @@ else
 
         <div class="dashboard-toolbar">
             <div class="dashboard-toolbar__context">
-                <strong>◫ @_snapshot.Context.GreenhouseName</strong>
+                <strong>@_snapshot.Context.GreenhouseName</strong>
                 <span>
                     @(string.IsNullOrWhiteSpace(_snapshot.Context.ActiveLotCrop)
                         ? "Sin lote activo"
@@ -45,7 +45,7 @@ else
 
             <div class="dashboard-toolbar__actions">
                 <span class="dashboard-toolbar__updated">Actualizado @LastRefreshText</span>
-                <button class="btn btn-sm btn-outline-secondary" @onclick="RefreshAsync" disabled="@_busy">
+                <button class="btn btn-sm hp-btn-secondary" @onclick="RefreshAsync" disabled="@_busy">
                     @if (_busy)
                     {
                         <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
@@ -81,12 +81,14 @@ else
                         {
                             <span class="kpi-card__origin">@kpi.NodeIdentifier · @kpi.SensorName</span>
                             <span class="kpi-card__age">hace @AgeText(kpi.ObservedAtUtc)</span>
-                            @if (kpi.Quality is not null && kpi.Quality != TelemetryContract.QualityValid)
-                            {
-                                <span class="badge text-bg-warning">@kpi.Quality</span>
-                            }
                         }
-                        <span class="kpi-card__fresh @FreshnessClass(kpi.FreshnessState)">@FreshnessText(kpi.FreshnessState)</span>
+                        <div class="kpi-card__badges">
+                            <span class="kpi-card__fresh @FreshnessClass(kpi.FreshnessState)">@FreshnessText(kpi.FreshnessState)</span>
+                            @if (kpi.Value is not null && kpi.Quality is not null && kpi.Quality != TelemetryContract.QualityValid)
+                            {
+                                <span class="kpi-card__quality" title="@QualityHint(kpi.Quality)">@QualityText(kpi.Quality)</span>
+                            }
+                        </div>
                     </div>
                 </article>
             }
@@ -253,21 +255,6 @@ else
                 }
             </article>
 
-            <article class="panel">
-                <div class="panel__header panel__header--compact">
-                    <h3>Accesos rápidos</h3>
-                </div>
-
-                <div class="quick-grid">
-                    @foreach (var shortcut in Shortcuts)
-                    {
-                        <a href="@shortcut.Href" class="quick-card">
-                            <strong>@shortcut.Title</strong>
-                            <span>@shortcut.Description</span>
-                        </a>
-                    }
-                </div>
-            </article>
         </section>
     </div>
 }
@@ -284,14 +271,6 @@ else
 
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private readonly CancellationTokenSource _cts = new();
-
-    private static readonly ShortcutItem[] Shortcuts =
-    [
-        new("Forecasting", "Predicción de rendimiento", "/forecasting"),
-        new("Simulación", "Escenarios what-if", "/simulation"),
-        new("Optimización", "Recomendaciones del módulo", "/optimization"),
-        new("Anomalías", "Timeline de eventos", "/anomalies"),
-    ];
 
     protected override async Task OnInitializedAsync()
     {
@@ -436,6 +415,23 @@ else
             ? $"{kpi.Label}: {kpi.Value?.ToString("0.0") ?? "—"} {kpi.Unit} · observado {observed.ToLocalTime():dd/MM/yyyy HH:mm:ss} · {kpi.NodeIdentifier}/{kpi.SensorName}"
             : $"{kpi.Label}: sin lecturas";
 
+    /// <summary>Calidad de la última lectura según la validación de telemetría (VALID no se muestra).</summary>
+    private static string QualityText(string quality) => quality switch
+    {
+        TelemetryContract.QualitySuspect => "Lectura dudosa",
+        TelemetryContract.QualityStale => "Lectura vieja",
+        TelemetryContract.QualityInvalid => "Lectura inválida",
+        _ => quality
+    };
+
+    private static string QualityHint(string quality) => quality switch
+    {
+        TelemetryContract.QualitySuspect => "La última lectura quedó fuera de la banda operativa del sensor: puede ser un valor real raro o una falla del sensor.",
+        TelemetryContract.QualityStale => "La última lectura llegó con mucha demora respecto de cuándo se midió.",
+        TelemetryContract.QualityInvalid => "La última lectura está fuera del rango físico posible del sensor.",
+        _ => quality
+    };
+
     private static string DeltaText(DashboardKpiDto kpi)
     {
         if (kpi.DeltaPercent is double pct)
@@ -502,5 +498,4 @@ else
         _ => "text-bg-secondary"
     };
 
-    private sealed record ShortcutItem(string Title, string Description, string Href);
 }

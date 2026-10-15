@@ -91,11 +91,6 @@ public static class OptimizationContract
     /// <summary>Horas de vigencia de una recomendación PENDING antes de EXPIRED.</summary>
     public const int DefaultPendingExpirationHours = 24;
 
-    public const string InformativeBanner = "Las recomendaciones son informativas y no controlan actuadores.";
-
-    public const string NoDoseBanner =
-        "No se calculan dosis exactas: requiere volumen, concentración, receta validada y curva de respuesta.";
-
     /// <summary>Motivo canónico cuando la comparación económica no puede calcularse.</summary>
     public const string NotCalculableReason = "Comparación no calculable";
 }

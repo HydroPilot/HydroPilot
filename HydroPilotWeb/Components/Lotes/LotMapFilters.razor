@@ -1,0 +1,41 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+<div class="chip-row" role="group" aria-label="Filtrar el mapa por estado">
+    <button type="button" class="lot-chip" aria-pressed="@(Selected is null ? "true" : "false")"
+            @onclick="() => OnSelected.InvokeAsync(null)">
+        Todas
+    </button>
+    @foreach (var filter in Filters.Where(f => f.Count > 0 || f.AlwaysVisible))
+    {
+        <button type="button" class="lot-chip" aria-pressed="@(Selected == filter.Key ? "true" : "false")"
+                @onclick="() => OnSelected.InvokeAsync(Selected == filter.Key ? null : filter.Key)">
+            <span class="lot-chip__dot" style="@filter.DotStyle" aria-hidden="true"></span>
+            @filter.Label @filter.Count
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public LotPlantBreakdown Plants { get; set; } = null!;
+    [Parameter] public string? Selected { get; set; }
+    [Parameter] public EventCallback<string?> OnSelected { get; set; }
+
+    private sealed record Filter(string Key, string Label, int Count, string DotStyle, bool AlwaysVisible);
+
+    private IEnumerable<Filter> Filters =>
+    [
+        new(LotCellKeys.Apta, "Aptas", Plants.Apta, Fill(CommercialStageNames.BabyLeafApta), true),
+        new(LotCellKeys.Candidata, "Candidatas", Plants.Candidate, Fill(CommercialStageNames.CandidataBabyLeaf), true),
+        new(LotCellKeys.Desarrollo, "En desarrollo", Plants.Developing, Fill(CommercialStageNames.EnDesarrollo), true),
+        new(LotCellKeys.Convencional, "Convencional", Plants.Conventional, Fill(CommercialStageNames.CosechaConvencional), false),
+        new(LotCellKeys.Riesgo, "En riesgo", Plants.Risk, Fill(CommercialStageNames.RiesgoFueraDeVentana), false),
+        // Cosechadas: el mapa las muestra atenuadas con "✓" sobre su color congelado.
+        new(LotCellKeys.Cosechada, "Cosechadas", Plants.Harvested, $"border: 2px solid {Color(CommercialStageNames.BabyLeafApta)};", false),
+        new(LotCellKeys.Descartada, "Descartadas", Plants.Discarded, "background: #8a94a0;", false),
+    ];
+
+    private static string Color(string stage) => CommercialStagePalette.ForStage(stage).Background;
+
+    private static string Fill(string stage) => $"background: {Color(stage)};";
+}

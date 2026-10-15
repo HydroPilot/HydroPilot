@@ -1,0 +1,211 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Rendimiento por destino: plantas × peso de referencia (no kg/m²: en hidroponía cada planta
+   tiene su hueco, así que se sabe cuántas hay). Actual = lo listo hoy; potencial = lo que puede llegar.
+   Pesos y precios se editan en Ajustes > Parámetros. En un ciclo cerrado, solo el real, con los
+   pesos y precios guardados al cosechar el lote. *@
+<section class="lot-card" aria-labelledby="lot-yield-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-yield-title">Rendimiento del lote</h3>
+    </header>
+
+    @if (Overview.IsClosed && Overview.HarvestYield is { Real: var real } && real.BabyLeaf.Plants + real.Conventional.Plants == 0)
+    {
+        @* Lote descartado completo (o cerrado sin cosechas): no hay rendimiento que valorizar. *@
+        <p class="lot-card__sub mt-0">No se cosechó ninguna planta@(IsHarvested ? "." : ": el lote se descartó completo.")</p>
+    }
+    else if (Overview.IsClosed && Overview.HarvestYield is { } harvest)
+    {
+        @* Ciclo cerrado: solo lo real, valorizado con los pesos y precios guardados el día de la cosecha. *@
+        <div class="lot-yield lot-yield--single">
+            <div class="lot-yield__col">
+                <span class="lot-stat__label">Rendimiento real</span>
+                <div class="lot-yield__lines">
+                    @foreach (var line in HarvestLines(harvest))
+                    {
+                        <div class="lot-yield__line" title="@line.Detail">
+                            <span class="lot-yield__dest">
+                                <span class="lot-legend__dot" style="background: @line.Color;"></span>@line.Destination
+                            </span>
+                            @* Sin peso guardado no hay kg: se muestran las plantas cosechadas (0 plantas = 0 kg). *@
+                            <strong class="lot-yield__kg">@HarvestKg(line.Value)</strong>
+                            <span class="lot-yield__money">@HarvestMoney(line.Value, harvest)</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        @if (harvest.TotalRevenue is { } total && (harvest.Real.BabyLeaf.Plants + harvest.Real.Conventional.Plants) > 0)
+        {
+            <p class="lot-yield__total">Total <strong>@LotFormat.Money(total, harvest.Prices.Currency)</strong></p>
+        }
+        <p class="lot-card__sub">@HarvestPricesText(harvest)</p>
+    }
+    else if (Yield.Reference.BabyLeafGramsPerPlant is null && Yield.Reference.ConventionalGramsPerPlant is null)
+    {
+        @* Sin pesos por planta no hay kg que mostrar: no se inventa un valor. *@
+        <p class="lot-card__sub">
+            Sin definir el peso promedio por planta: no se pueden estimar los kg.
+            @DefineLink
+        </p>
+    }
+    else
+    {
+        <div class="lot-yield">
+            @foreach (var column in Columns)
+            {
+                <div class="lot-yield__col">
+                    <span class="lot-stat__label">@column.Title</span>
+                    @* Baby Leaf y convencional en la misma fila. *@
+                    <div class="lot-yield__lines">
+                        @foreach (var line in column.Lines)
+                        {
+                            <div class="lot-yield__line" title="@line.Detail">
+                                <span class="lot-yield__dest">
+                                    <span class="lot-legend__dot" style="background: @line.Color;"></span>@line.Destination
+                                </span>
+                                <strong class="lot-yield__kg">@(line.Value.Kg is { } kg ? LotFormat.KgFine(kg) : "—")</strong>
+                                <span class="lot-yield__money">@MoneyText(line.Value)</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+        @if (MissingNote is { } missing)
+        {
+            <p class="lot-card__sub">@missing @DefineLink</p>
+        }
+        else
+        {
+            <p class="lot-card__sub">Baby Leaf @PricePerKg(Yield.Prices.BabyLeafPerKg) · Convencional @PricePerKg(Yield.Prices.ConventionalPerKg)</p>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
+    /// <summary>Puede editar los parámetros del sistema: el link dice "Definir" en vez de "Ver parámetros".</summary>
+    [Parameter] public bool CanEdit { get; set; }
+
+    private static readonly string AptaColor = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta).Background;
+    private static readonly string ConventionalColor = CommercialStagePalette.ForStage(CommercialStageNames.CosechaConvencional).Background;
+
+    private sealed record YieldLine(string Destination, string Color, DestinationYield Value, string Detail);
+    private sealed record YieldColumn(string Title, IReadOnlyList<YieldLine> Lines);
+
+    private LotYieldEstimate Yield => Overview.Yield;
+    private LotPlantBreakdown Plants => Overview.Plants;
+
+    // El detalle (tooltip) explica de dónde sale cada número: plantas × peso de referencia.
+    private IReadOnlyList<YieldColumn> Columns
+    {
+        get
+        {
+            var bl = Grams(Yield.Reference.BabyLeafGramsPerPlant);
+            var conv = Grams(Yield.Reference.ConventionalGramsPerPlant);
+            var aptas = LotFormat.Count(Plants.Apta, "apta", "aptas");
+            var conventional = LotFormat.Count(Plants.Conventional, "convencional", "convencionales");
+
+            return
+            [
+                new("Rendimiento actual",
+                [
+                    new("Baby Leaf", AptaColor, Yield.Current.BabyLeaf, $"{aptas} × {bl}"),
+                    new("Convencional", ConventionalColor, Yield.Current.Conventional, $"{conventional} × {conv}"),
+                ]),
+                new("Rendimiento potencial",
+                [
+                    new("Baby Leaf", AptaColor, Yield.Potential.BabyLeaf,
+                        $"({aptas} + {LotFormat.Count(Plants.Candidate, "candidata", "candidatas")}) × {bl}"),
+                    new("Convencional", ConventionalColor, Yield.Potential.Conventional,
+                        $"({Plants.Developing} en desarrollo + {conventional}) × {conv}"),
+                ]),
+            ];
+        }
+    }
+
+    /// <summary>Qué parámetros del sistema faltan (como "Sin definir" en las metas); null si están todos.</summary>
+    private string? MissingNote
+    {
+        get
+        {
+            var reference = Yield.Reference;
+            var prices = Yield.Prices;
+            var missing = new List<string>();
+
+            if (reference.BabyLeafGramsPerPlant is null && reference.ConventionalGramsPerPlant is null)
+                missing.Add("peso por planta");
+            else
+            {
+                if (reference.BabyLeafGramsPerPlant is null) missing.Add("peso Baby Leaf");
+                if (reference.ConventionalGramsPerPlant is null) missing.Add("peso convencional");
+            }
+
+            if (prices.BabyLeafPerKg is null && prices.ConventionalPerKg is null)
+                missing.Add("precio por kg");
+            else
+            {
+                if (prices.BabyLeafPerKg is null) missing.Add("precio Baby Leaf");
+                if (prices.ConventionalPerKg is null) missing.Add("precio convencional");
+            }
+
+            return missing.Count == 0
+                ? null
+                : $"Sin definir: {(missing.Count == 1 ? missing[0] : string.Join(", ", missing.Take(missing.Count - 1)) + " y " + missing[^1])}.";
+        }
+    }
+
+    // Pesos y precios son parámetros del sistema: se cargan en Ajustes > Parámetros, no desde el lote.
+    private RenderFragment DefineLink =>
+        @<a class="lot-link ms-1" href="settings/parametros">@(CanEdit ? "Definir en Parámetros" : "Ver parámetros")</a>;
+
+    private IEnumerable<YieldLine> HarvestLines(LotHarvestYield harvest)
+    {
+        var bl = Grams(harvest.Reference.BabyLeafGramsPerPlant);
+        var conv = Grams(harvest.Reference.ConventionalGramsPerPlant);
+        yield return new("Baby Leaf", AptaColor, harvest.Real.BabyLeaf,
+            $"{LotFormat.Count(harvest.Real.BabyLeaf.Plants, "cosechada", "cosechadas")} como Baby Leaf × {bl}");
+        yield return new("Convencional", ConventionalColor, harvest.Real.Conventional,
+            $"{LotFormat.Count(harvest.Real.Conventional.Plants, "cosechada", "cosechadas")} como convencional × {conv}");
+    }
+
+    private static string HarvestKg(DestinationYield value) =>
+        value.Kg is { } kg ? LotFormat.KgFine(kg)
+        : value.Plants == 0 ? LotFormat.KgFine(0m)
+        : LotFormat.Plants(value.Plants);
+
+    // $0 solo si se guardó el precio; sin peso o sin precio guardado no se inventa un importe.
+    private static string HarvestMoney(DestinationYield value, LotHarvestYield harvest) =>
+        value.Revenue is { } revenue ? LotFormat.Money(revenue, harvest.Prices.Currency)
+        : value.Plants == 0 ? "—"
+        : value.Kg is null ? "sin peso guardado"
+        : "sin precio guardado";
+
+    private bool IsHarvested => Overview.State.StatusName == HydroPilotWeb.Services.Forecasting.LotStatusNames.Cosechado;
+
+    /// <summary>Precios del día de la cosecha; si el lote se cerró sin guardarlos, se aclara (no se usan los de hoy).</summary>
+    private string HarvestPricesText(LotHarvestYield harvest)
+    {
+        var prices = harvest.Prices;
+        var when = Overview.ClosedCycle?.HarvestDate is { } date ? $" al {LotFormat.Day(date)}" : string.Empty;
+        if (prices.BabyLeafPerKg is null && prices.ConventionalPerKg is null && !harvest.Reference.IsComplete)
+            return "No se guardaron pesos ni precios al cosechar este lote.";
+        return $"Precios{when}: Baby Leaf {PricePerKg(prices.BabyLeafPerKg, prices.Currency)} · " +
+               $"Convencional {PricePerKg(prices.ConventionalPerKg, prices.Currency)}";
+    }
+
+    private string MoneyText(DestinationYield value) =>
+        value.Revenue is { } revenue ? LotFormat.Money(revenue, Yield.Prices.Currency)
+        : value.Kg is null ? "sin peso"
+        : "sin precio";
+
+    private string PricePerKg(decimal? value) => PricePerKg(value, Yield.Prices.Currency);
+
+    private static string PricePerKg(decimal? value, string currency) =>
+        value is { } v ? $"{LotFormat.Money(v, currency)}/kg" : "sin precio";
+
+    private static string Grams(decimal? grams) =>
+        grams is { } g ? g.ToString("0.#", LotFormat.Culture) + " g" : "peso sin definir";
+}

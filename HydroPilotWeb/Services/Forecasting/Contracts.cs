@@ -39,7 +39,15 @@ public sealed record FutureProjectionResult(
     IReadOnlyList<DailyGddPoint> Points,
     bool HasForecastData,
     bool ForecastIsStale,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    ForecastCorrection? Correction = null);
+
+/// <summary>
+/// Corrección del pronóstico (temperatura de AFUERA, OpenWeather) a la de ADENTRO del invernadero
+/// (sensor): cuánto GDD por día de más (o de menos) sumó adentro respecto del pronóstico guardado
+/// para esos mismos días. Se calibra con los últimos días que tienen las dos cosas.
+/// </summary>
+public sealed record ForecastCorrection(decimal OffsetPerDay, int CalibrationDays);
 
 /// <summary>
 /// Clasificación gruesa del resultado (F-01): Observed (solo sensor), Forecast
@@ -123,7 +131,9 @@ public sealed record ForecastResult(
     // --- Cierre del lote ---
     decimal? ActualYieldKg,
     DateOnly? ActualHarvestDate,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    // --- Pronóstico de afuera corregido a la temperatura de adentro (null = sin calibrar) ---
+    ForecastCorrection? ForecastCorrection = null);
 
 /// <summary>
 /// Nombres canónicos de los estados de lote (catálogo LotStatus).

@@ -1,0 +1,43 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Umbral de cosecha (% de aptas para cortar el lote completo). Hoy no se usa en la vista
+   Lotes: quedó comentado en Lotes.razor mientras se revisa si aporta valor. *@
+<section class="lot-card" aria-labelledby="lot-threshold-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-threshold-title">Aptas vs umbral de cosecha</h3>
+        @if (CanEdit)
+        {
+            <button class="lot-icon-btn" @onclick="OnEditObjectives" title="Editar umbral de cosecha" aria-label="Editar umbral de cosecha">✎</button>
+        }
+    </header>
+    @if (Overview.Objectives.HarvestThresholdPercent is { } threshold)
+    {
+        <p class="lot-card__big">@LotFormat.Pct(AptaPercent) <small class="lot-card__sub">de @LotFormat.Pct(threshold)</small></p>
+        <div class="lot-progress">
+            <div class="lot-progress__fill">
+                <div class="lot-progress__seg" style="width: @Css(Math.Min(100m, AptaPercent))%; background: @AptaColor;"></div>
+            </div>
+            <div class="lot-progress__marker" style="left: @Css(Math.Min(100m, threshold))%;"></div>
+        </div>
+        <p class="lot-card__sub">@Overview.Plants.Apta de @Overview.Plants.Active activas</p>
+    }
+    else
+    {
+        <p class="lot-card__big">@LotFormat.Pct(AptaPercent)</p>
+        <p class="lot-card__sub">Sin umbral definido.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public EventCallback OnEditObjectives { get; set; }
+
+    private static readonly string AptaColor = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta).Background;
+
+    private decimal AptaPercent => Overview.State.HarvestReadiness?.AptaPercent
+        ?? (Overview.Plants.Active > 0 ? Math.Round(Overview.Plants.Apta * 100m / Overview.Plants.Active, 1) : 0m);
+
+    private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+}

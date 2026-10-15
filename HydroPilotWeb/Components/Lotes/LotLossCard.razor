@@ -1,0 +1,91 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Meta del ciclo: pérdidas (plantas descartadas) contra el máximo tolerado. El máximo se edita con
+   el lápiz, que abre el modal de metas del ciclo. *@
+<section class="lot-card" aria-labelledby="lot-loss-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-loss-title">
+            Pérdidas <span class="lot-card__title-value">@LotFormat.Pct1(Goals.LossPercent)</span>
+            <span class="lot-card__title-note">(@Plants.Discarded de @Plants.TotalPlants descartadas)</span>
+        </h3>
+        <div class="lot-card__actions">
+            @if (Max is not null)
+            {
+                var (chipText, chipTone) = LossChip();
+                <span class="lot-chip lot-chip--@chipTone">@chipText</span>
+            }
+            @if (CanEdit)
+            {
+                <button class="lot-icon-btn" @onclick="OnEditObjectives" title="Editar metas del ciclo" aria-label="Editar metas del ciclo">✎</button>
+            }
+        </div>
+    </header>
+
+    <div>
+        <div class="lot-progress lot-progress--lg" role="img"
+             aria-label="@($"Pérdidas {LotFormat.Pct1(Goals.LossPercent)}{(Max is { } m ? $", máximo {LotFormat.Pct1(m)}" : string.Empty)}")">
+            <div class="lot-progress__fill">
+                <div class="lot-progress__seg" style="width: @Css(Share(Plants.Discarded))%; background: @DiscardedColor;" title="Descartadas: @Plants.Discarded"></div>
+                <div class="lot-progress__seg lot-seg--striped" style="width: @Css(Share(Plants.Risk))%; background-color: @RiskColor;" title="En riesgo: @Plants.Risk"></div>
+            </div>
+            @if (Max is { } max)
+            {
+                <div class="lot-progress__marker" style="left: @Css(Math.Min(100m, max))%;" title="Máximo @LotFormat.Pct1(max)"></div>
+            }
+        </div>
+        @if (Max is { } limit)
+        {
+            <div class="lot-bar-labels" aria-hidden="true">
+                <span class="lot-bar-labels__goal" style="--pos: @Css(Math.Min(100m, limit));">máx. @LotFormat.Pct1(limit)</span>
+            </div>
+        }
+    </div>
+
+    @if (Plants.Risk > 0)
+    {
+        <div class="lot-legend">
+            <span class="lot-legend__item">
+                <span class="lot-legend__dot lot-seg--striped" style="background-color: @RiskColor;"></span>
+                @LotFormat.Plants(Plants.Risk) en riesgo de descarte
+            </span>
+        </div>
+    }
+
+    @if (Max is null)
+    {
+        <p class="lot-card__sub">Sin máximo definido.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public EventCallback OnEditObjectives { get; set; }
+
+    private static readonly string RiskColor = CommercialStagePalette.ForStage(CommercialStageNames.RiesgoFueraDeVentana).Background;
+
+    // Descartadas: verde si están dentro del máximo, rojo si lo superan; gris si no hay máximo definido.
+    private string DiscardedColor => Goals.LossStatus switch
+    {
+        LossGoalStatus.Dentro or LossGoalStatus.EnRiesgo => "var(--accent)",
+        LossGoalStatus.Excedida => "var(--bs-danger)",
+        _ => "#8a94a0"
+    };
+
+    private LotGoalsRules.Result Goals => Overview.Goals;
+    private LotPlantBreakdown Plants => Overview.Plants;
+    private decimal? Max => Overview.Objectives.MaxLossPercent;
+
+    private decimal Share(int count) => Plants.TotalPlants > 0 ? count * 100m / Plants.TotalPlants : 0m;
+
+    private (string Text, string Tone) LossChip() => Goals.LossStatus switch
+    {
+        LossGoalStatus.Dentro => ("Dentro del máximo", "success"),
+        LossGoalStatus.EnRiesgo => ($"Se supera si se pierden las {Plants.Risk} en riesgo", "warning"),
+        LossGoalStatus.Excedida => ("Máximo superado", "danger"),
+        _ => ("Sin plantas en el lote", "info")
+    };
+
+    private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+}

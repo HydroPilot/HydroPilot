@@ -1,3 +1,4 @@
+@using HydroPilotWeb.Models
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
@@ -14,57 +15,26 @@
             @foreach (var cell in Cells)
             {
                 var style = CellStyleFor(cell);
+                var key = LotCellKeys.For(cell);
                 var selected = SelectedPosition == (cell.Row, cell.Column);
+                var harvested = cell.OperationalState == PlantOperationalState.Cosechada;
+                var css = "lot-cell"
+                          + (selected ? " lot-cell--selected" : null)
+                          + (key == LotCellKeys.Vacia ? " lot-cell--empty" : null)
+                          + (harvested ? " lot-cell--harvested" : null)
+                          + (HighlightKey is not null && key != HighlightKey ? " lot-cell--dim" : null);
                 <button type="button"
-                        class="lot-cell @(selected ? "lot-cell--selected" : null)"
-                        style="background: @style.Background; color: @style.Color;"
-                        title="@style.Title (@cell.Row-F@cell.Column)"
+                        class="@css"
+                        style="background: @(key == LotCellKeys.Vacia ? "transparent" : style.Background); color: @style.Color;"
+                        title="@TitleFor(cell, style)"
+                        aria-label="@TitleFor(cell, style)"
                         @onclick="() => OnCellSelected.InvokeAsync(cell)">
-                    <span class="lot-cell__label">@style.Label</span>
+                    <span class="lot-cell__label">@(harvested ? "✓" : style.Label)</span>
                 </button>
             }
         </div>
     }
 </div>
-
-<style>
-    .lot-map {
-        display: grid;
-        gap: 3px;
-        padding: 8px;
-        background: #f3f5f7;
-        border-radius: 8px;
-        border: 1px solid #dde3e9;
-        min-width: 0;
-    }
-    .lot-cell {
-        border: 1px solid rgba(0,0,0,0.15);
-        border-radius: 4px;
-        min-height: 34px;
-        padding: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        aspect-ratio: 1 / 1;
-        transition: transform 0.08s, box-shadow 0.08s;
-    }
-    .lot-cell:hover {
-        transform: scale(1.06);
-        z-index: 2;
-    }
-    .lot-cell--selected {
-        outline: 3px solid #1d4ed8;
-        outline-offset: 1px;
-        box-shadow: 0 0 0 2px #ffffff inset;
-    }
-    .lot-cell__label {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-        text-shadow: 0 1px 1px rgba(0,0,0,0.25);
-    }
-</style>
 
 @code {
     /// <summary>Filas configuradas del lote (sin dimensiones hardcodeadas).</summary>
@@ -74,10 +44,21 @@
     [Parameter] public (int Row, int Column)? SelectedPosition { get; set; }
     [Parameter] public EventCallback<PlantCellDto> OnCellSelected { get; set; }
 
+    /// <summary>Clave de LotCellKeys a resaltar; el resto de las celdas se atenúa. Null = sin filtro.</summary>
+    [Parameter] public string? HighlightKey { get; set; }
+
     private CommercialStagePalette.CellStyle CellStyleFor(PlantCellDto cell) => cell.CellKind switch
     {
         "empty" => CommercialStagePalette.Empty,
         "discarded" => CommercialStagePalette.Discarded,
         _ => CommercialStagePalette.ForStage(cell.CommercialStageName)
     };
+
+    private static string TitleFor(PlantCellDto cell, CommercialStagePalette.CellStyle style)
+    {
+        var state = cell.OperationalState == PlantOperationalState.Cosechada
+            ? $"Cosechada como {cell.CommercialStageName ?? "sin estado"}"
+            : style.Title;
+        return $"{state} (F{cell.Row}-C{cell.Column})";
+    }
 }

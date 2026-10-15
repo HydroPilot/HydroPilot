@@ -899,48 +899,19 @@ public class OptimizationService
         readings.Count > 0 ? (int)(nowUtc - readings.Max(r => r.ObservedAtUtc)).TotalMinutes : null;
 
     /// <summary>
-    /// Resuelve el catálogo vigente (hoy) con precedencia de scope:
-    /// lote específico &gt; cultivo &gt; global. Devuelve el SnapshotPriceCost
-    /// para el snapshot; los valores demo se conservan etiquetados.
+    /// Catálogo vigente (hoy) con precedencia lote &gt; cultivo &gt; global (CostPriceResolver),
+    /// como SnapshotPriceCost para el snapshot; los valores demo se conservan etiquetados.
     /// </summary>
     private static async Task<IReadOnlyList<SnapshotPriceCost>> ResolveActivePriceCostsAsync(
         HydroPilotDbContext context, Lot lot, CancellationToken ct)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var rows = await context.CostPriceCatalogs
-            .AsNoTracking()
-            .Where(c => c.ValidFrom <= today
-                        && (c.ValidUntil == null || c.ValidUntil >= today)
-                        && (c.CropTypeId == lot.CropTypeId || c.CropTypeId == null)
-                        && (c.LotId == lot.Id || c.LotId == null))
-            .ToListAsync(ct);
+        var rows = await CostPriceResolver.ResolveActiveAsync(context, lot, today, ct);
 
-        var lotSpecific = rows.Where(c => c.LotId == lot.Id).ToList();
-        var cropWide = rows.Where(c => c.LotId == null && c.CropTypeId == lot.CropTypeId).ToList();
-        var global = rows.Where(c => c.LotId == null && c.CropTypeId == null).ToList();
-
-        var result = new List<SnapshotPriceCost>();
-        foreach (var destination in new[] { OptimizationContractDestination.BabyLeaf, OptimizationContractDestination.Conventional })
-        {
-            foreach (var item in new[] {
-                OptimizationContractCostItem.PricePerKg,
-                OptimizationContractCostItem.SeedCostM2,
-                OptimizationContractCostItem.NutrientCostM2,
-                OptimizationContractCostItem.EnergyCostM2,
-                OptimizationContractCostItem.TransplantCostM2 })
-            {
-                var row = lotSpecific.FirstOrDefault(c => c.Destination == destination && c.Item == item)
-                       ?? cropWide.FirstOrDefault(c => c.Destination == destination && c.Item == item)
-                       ?? global.FirstOrDefault(c => c.Destination == destination && c.Item == item);
-                if (row is not null)
-                {
-                    result.Add(new SnapshotPriceCost(
-                        row.Destination, row.Item, row.Value, row.Currency, row.Source,
-                        row.ValidFrom, row.ValidUntil));
-                }
-            }
-        }
-
-        return result;
+        return rows
+            .Select(row => new SnapshotPriceCost(
+                row.Destination, row.Item, row.Value, row.Currency, row.Source,
+                row.ValidFrom, row.ValidUntil))
+            .ToList();
     }
 }

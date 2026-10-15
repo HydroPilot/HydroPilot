@@ -15,7 +15,7 @@
     </div>
 
     <div class="d-flex gap-2 mb-2">
-        <button class="btn btn-primary btn-sm" @onclick="Generate" disabled="@loading">
+        <button class="btn btn-success btn-sm" @onclick="Generate" disabled="@loading">
             @(loading ? "Generando..." : "Generar")
         </button>
     </div>
@@ -30,7 +30,7 @@
     {
         <div class="alert alert-danger">
             <strong>No se pudo generar el reporte.</strong> @error
-            <button class="btn btn-sm btn-outline-secondary ms-2" @onclick="Generate">Reintentar</button>
+            <button class="btn btn-sm hp-btn-secondary ms-2" @onclick="Generate">Reintentar</button>
         </div>
     }
     else if (result is not null)
@@ -90,7 +90,7 @@
                     </tbody>
                 </table>
             </div>
-            <button class="btn btn-outline-secondary btn-sm" @onclick="Download">⬇ CSV forecast vs cosecha</button>
+            <button class="btn btn-sm hp-btn-secondary" @onclick="Download">⬇ CSV forecast vs cosecha</button>
         }
     }
 </section>

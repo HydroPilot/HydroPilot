@@ -301,14 +301,92 @@ public class GddService
         int lastNDays = 7,
         CancellationToken ct = default)
     {
-        var daily = await GetDailyGddByDateAsync(lot, asOfDate, ct);
-        var effectiveToday = asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var history = await GetGddHistoryAsync(lot, asOfDate, ct);
+        return RecentAverageDailyGdd(history.Daily, asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow), lastNDays);
+    }
+
+    /// <summary>Promedio de los últimos N días observados de un historial ya calculado; null sin días.</summary>
+    public static decimal? RecentAverageDailyGdd(IEnumerable<DailyGddPoint> daily, DateOnly effectiveToday, int lastNDays = 7)
+    {
         var recent = daily
-            .Where(kv => kv.Key >= effectiveToday.AddDays(-lastNDays))
-            .Select(kv => kv.Value)
+            .Where(p => p.Date >= effectiveToday.AddDays(-lastNDays))
+            .Select(p => p.Gdd)
             .ToList();
 
         return recent.Count > 0 ? recent.Average() : (decimal?)null;
+    }
+
+    /// <summary>Días recientes (con lectura y pronóstico guardado) con los que se calibra la corrección.</summary>
+    public const int ForecastCorrectionDays = 14;
+
+    /// <summary>Mínimo de días calibrados para corregir el pronóstico (con menos, se usa sin corregir).</summary>
+    public const int ForecastCorrectionMinDays = 3;
+
+    /// <summary>
+    /// Corrección del pronóstico a la temperatura de adentro: promedio de (GDD medido − GDD del
+    /// pronóstico guardado) de los últimos <see cref="ForecastCorrectionDays"/> días completos (antes
+    /// de hoy) que tienen las dos cosas. null con menos de <see cref="ForecastCorrectionMinDays"/>.
+    /// </summary>
+    public static ForecastCorrection? ComputeForecastCorrection(
+        IEnumerable<DailyGddPoint> measured,
+        IReadOnlyDictionary<DateOnly, decimal> forecastGddByDate,
+        DateOnly today)
+    {
+        var differences = measured
+            .Where(p => p.Source == GddPointSource.Observed && p.Date < today && forecastGddByDate.ContainsKey(p.Date))
+            .OrderByDescending(p => p.Date)
+            .Take(ForecastCorrectionDays)
+            .Select(p => p.Gdd - forecastGddByDate[p.Date])
+            .ToList();
+
+        return differences.Count >= ForecastCorrectionMinDays
+            ? new ForecastCorrection(Math.Round(differences.Average(), 2), differences.Count)
+            : null;
+    }
+
+    /// <summary>GDD de un día de pronóstico corregido a la temperatura de adentro (nunca negativo).</summary>
+    public static decimal CorrectedForecastGdd(decimal forecastGdd, ForecastCorrection? correction) =>
+        correction is null ? forecastGdd : Math.Max(0m, forecastGdd + correction.OffsetPerDay);
+
+    /// <summary>
+    /// Corrección del pronóstico calibrada con un lote (sus lecturas y el pronóstico guardado de esos
+    /// días). Sin lote (escenario libre de Simulación): el lote abierto más reciente que la tenga,
+    /// porque todos miden el mismo invernadero.
+    /// </summary>
+    public async Task<ForecastCorrection?> GetForecastCorrectionAsync(
+        Lot? lot,
+        DateOnly today,
+        GddHistoryResult? history = null,
+        CancellationToken ct = default)
+    {
+        if (lot is not null)
+            return await CorrectionForAsync(lot, today, history ?? await GetGddHistoryAsync(lot, today, ct), ct);
+
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var openLots = await context.Lots.AsNoTracking()
+            .Include(l => l.CropType)
+            .Where(l => l.SowingDate < today && l.Status != null
+                        && (l.Status.Name == LotStatusNames.Activo || l.Status.Name == LotStatusNames.EnPausa))
+            .OrderByDescending(l => l.SowingDate)
+            .Take(3)
+            .ToListAsync(ct);
+
+        foreach (var candidate in openLots)
+        {
+            if (await CorrectionForAsync(candidate, today, await GetGddHistoryAsync(candidate, today, ct), ct) is { } correction)
+                return correction;
+        }
+        return null;
+    }
+
+    private async Task<ForecastCorrection?> CorrectionForAsync(Lot lot, DateOnly today, GddHistoryResult history, CancellationToken ct)
+    {
+        var baseTemp = lot.CropType?.BaseTemperature ?? 4.5m;
+        var rows = await _weatherService.GetForecastForDatesAsync(today.AddDays(-ForecastCorrectionDays), today.AddDays(-1), ct);
+        var forecastGdd = rows.ToDictionary(
+            r => r.Date,
+            r => DailyGdd(Math.Max(r.TempMin, r.TempMax), Math.Min(r.TempMin, r.TempMax), baseTemp));
+        return ComputeForecastCorrection(history.Daily, forecastGdd, today);
     }
 
     /// <summary>Compat: promedio de los últimos N días, 0 si no hay (uso legado).</summary>
@@ -321,15 +399,19 @@ public class GddService
 
     /// <summary>
     /// Proyección diaria de GDD futuro (F-03): DB primero; si faltan fechas, fetch
-    /// perezoso serializado contra el guard diario. Fechas sin dato → fallback con
-    /// promedio del sensor, informado como tal (nunca cero silencioso).
+    /// perezoso serializado contra el guard diario. El pronóstico (afuera) se corrige a la
+    /// temperatura de adentro con <see cref="GetForecastCorrectionAsync"/>. Fechas sin dato →
+    /// fallback con promedio del sensor, informado como tal (nunca cero silencioso).
     /// Respetar AsOfDate: no se usan lecturas posteriores a la fecha simulada.
+    /// <paramref name="history"/>: el historial a esa misma fecha si el llamador ya lo calculó
+    /// (evita volver a leer todas las lecturas de temperatura desde la siembra).
     /// </summary>
     public async Task<FutureProjectionResult> GetFutureGddProjectionAsync(
         Lot lot,
         DateOnly? asOfDate = null,
         int? horizonDays = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        GddHistoryResult? history = null)
     {
         var warnings = new List<string>();
         var baseTemp = lot.CropType?.BaseTemperature ?? 4.5m;
@@ -339,8 +421,8 @@ public class GddService
         var to = today.AddDays(horizon);
 
         // 1. GDD real por fecha respetando AsOfDate (sin fuga de datos futuros).
-        var realDaily = (await GetGddHistoryAsync(lot, asOfDate, ct)).Daily
-            .ToDictionary(p => p.Date, p => p.Gdd);
+        history ??= await GetGddHistoryAsync(lot, asOfDate, ct);
+        var realDaily = history.Daily.ToDictionary(p => p.Date, p => p.Gdd);
 
         // 2. Fechas sin lectura real → pronóstico climático (DB primero, fetch serializado).
         var missingDates = new List<DateOnly>();
@@ -397,8 +479,12 @@ public class GddService
             }
         }
 
-        // 3. Fallback: promedio de los últimos días observados (nunca cero silencioso).
-        var fallback = await GetRecentAverageDailyGddOrNullAsync(lot, asOfDate, ct: ct);
+        // 3. El pronóstico es de afuera del invernadero: se corrige con lo que midió el sensor de
+        //    adentro en los últimos días que tienen pronóstico guardado.
+        var correction = hasForecast ? await CorrectionForAsync(lot, today, history, ct) : null;
+
+        // 4. Fallback: promedio de los últimos días observados (nunca cero silencioso).
+        var fallback = RecentAverageDailyGdd(history.Daily, today);
         if (fallback is null)
         {
             warnings.Add("Sin promedio de días observados para fallback: los días sin pronóstico quedan sin valor de GDD (no se asume 0).");
@@ -413,7 +499,7 @@ public class GddService
             }
             else if (forecastByDate.TryGetValue(date, out var fc))
             {
-                projection.Add(new DailyGddPoint(date, Math.Round(fc.Gdd, 2), GddPointSource.Forecast));
+                projection.Add(new DailyGddPoint(date, Math.Round(CorrectedForecastGdd(fc.Gdd, correction), 2), GddPointSource.Forecast));
             }
             else if (fallback is { } avg)
             {
@@ -425,7 +511,7 @@ public class GddService
             }
         }
 
-        return new FutureProjectionResult(projection, hasForecast, stale, warnings);
+        return new FutureProjectionResult(projection, hasForecast, stale, warnings, correction);
     }
 
     /// <summary>

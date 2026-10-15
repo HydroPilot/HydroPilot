@@ -1,21 +1,18 @@
 @page "/simulation"
 @attribute [Authorize(Policy = "RequireAssigned")]
 
-@using System.Globalization
+@using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Simulation
 
 <PageTitle>Simulación</PageTitle>
 
-<div class="sim-banner" role="status">
-    ⚠ <strong>Entorno simulado</strong> — Los resultados son proyecciones what-if y no modifican lotes, lecturas, predicciones, nodos ni hardware.
-</div>
-
+@* What-if con la misma lógica que la vista Lotes: ventanas y óptimos de corte por GDD y
+   rendimiento por plantas × peso × precio. No escribe nada ni toca hardware. *@
 <section class="simulation-grid">
     <article class="panel">
         <div class="panel__header">
             <div>
                 <h3>Escenario</h3>
-                <p class="panel__subtitle">Elegí el contexto, el clima y los supuestos del what-if</p>
             </div>
         </div>
 
@@ -31,19 +28,22 @@
                     <option value="">— Escenario libre por cultivo —</option>
                     @foreach (var lot in options.Lots)
                     {
-                        <option value="@lot.Id">@lot.Name (@lot.CropTypeName — @lot.StatusName)</option>
+                        <option value="@lot.Id">@lot.Name (@lot.CropTypeName — @StatusLabel(lot.StatusName))</option>
                     }
                 </select>
 
                 @if (selectedLotId is null)
                 {
-                    <label class="sim-label">Cultivo</label>
-                    <select class="form-select" @bind="selectedCropId">
-                        @foreach (var crop in options.Crops)
-                        {
-                            <option value="@crop.Id">@crop.Name</option>
-                        }
-                    </select>
+                    @if (options.Crops.Count > 1)
+                    {
+                        <label class="sim-label">Cultivo</label>
+                        <select class="form-select" @bind="selectedCropId">
+                            @foreach (var crop in options.Crops)
+                            {
+                                <option value="@crop.Id">@crop.Name</option>
+                            }
+                        </select>
+                    }
 
                     <div class="sim-row">
                         <div>
@@ -51,29 +51,23 @@
                             <input type="date" class="form-control" @bind="sowingDate" />
                         </div>
                         <div>
-                            <label class="sim-label">Superficie (m²)</label>
-                            <input type="number" step="0.1" min="0.1" class="form-control" @bind="areaM2" />
+                            <label class="sim-label">Cantidad de plantas</label>
+                            <input type="number" step="1" min="1" class="form-control" placeholder="ej. 60" @bind="plantCount" />
                         </div>
                     </div>
+                    <div class="small text-muted">La siembra puede ser futura, para planificar.</div>
                 }
                 else
                 {
                     <div class="small text-muted mt-1 mb-2">
-                        Superficie, siembra, GDD base, etapa y grilla se toman del lote (solo lectura).
+                        La grilla, plantas, GDD base y etapa se toman del lote (solo lectura).
                     </div>
                 }
 
-                <label class="sim-label">Fecha de referencia (AsOfDate)</label>
-                <div class="sim-row">
-                    <input type="date" class="form-control" style="width: auto;" @bind="referenceDate" />
-                    <button class="btn btn-outline-secondary btn-sm" @onclick="ResetReferenceDate">Hoy</button>
-                </div>
-
                 <label class="sim-label">Clima del escenario</label>
                 <div class="sim-mode-row">
-                    <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Manual)" @onchange="() => mode = SimulationClimateMode.Manual" /> Manual</label>
-                    <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Historic)" @onchange="() => mode = SimulationClimateMode.Historic" /> Histórico</label>
                     <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Forecast)" @onchange="() => mode = SimulationClimateMode.Forecast" /> Pronóstico</label>
+                    <label class="sim-radio"><input type="radio" name="climateMode" checked="@(mode == SimulationClimateMode.Manual)" @onchange="() => mode = SimulationClimateMode.Manual" /> Manual</label>
                 </div>
 
                 @if (mode == SimulationClimateMode.Manual)
@@ -87,108 +81,74 @@
                             <label class="sim-label">Tmax (°C)</label>
                             <input type="number" step="0.1" class="form-control" @bind="tmax" />
                         </div>
-                        <div>
-                            <label class="sim-label">Humedad (%)</label>
-                            <input type="number" step="1" min="0" max="100" class="form-control" @bind="humidity" />
-                        </div>
                     </div>
-                    <div class="small text-muted">El GDD se calcula con Tmin/Tmax (núcleo de forecasting); la humedad se informa como contexto (no participa de las fórmulas vigentes).</div>
+                    <div class="small text-muted">@(selectedLotId is null ? "Desde la siembra" : "Desde mañana"), cada día suma el GDD de esas temperaturas.</div>
                 }
-                else if (mode == SimulationClimateMode.Historic)
+                else if (selectedLotId is null)
                 {
-                    <div class="small text-muted">Replay histórico: la proyección replica el promedio del GDD observado reciente del lote. Requiere contexto de lote.</div>
-                }
-                else
-                {
-                    <div class="small text-muted">Pronóstico climático persistido (guard diario del forecasting). La simulación lo consulta por corrida, no por movimiento de slider.</div>
+                    <div class="small text-muted">El pronóstico guardado desde la siembra (los días sin pronóstico no suman) y después, el último día. Para fechas lejanas, usá clima manual.</div>
                 }
 
-                <label class="sim-label">Solución nutritiva del escenario (informativo)</label>
+                <hr />
+
+                <label class="sim-label">Estrategia</label>
+                <div class="sim-strategy">
+                    <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.MaxBabyLeaf)" @onchange="() => strategy = SimulationStrategyKind.MaxBabyLeaf" /> Máximo Baby Leaf</label>
+                    <div class="sim-strategy__goal">
+                        <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.BabyLeafGoal)" @onchange="() => strategy = SimulationStrategyKind.BabyLeafGoal" /> Meta Baby Leaf máxima</label>
+                        <input type="number" step="1" min="0" max="100" class="form-control form-control-sm" aria-label="Meta Baby Leaf máxima (%)"
+                               @bind="babyLeafGoal" @onfocus="() => strategy = SimulationStrategyKind.BabyLeafGoal" />
+                        <span class="small">%</span>
+                    </div>
+                    <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.AllConventional)" @onchange="() => strategy = SimulationStrategyKind.AllConventional" /> Todo convencional</label>
+                </div>
+                <div class="small text-muted">@StrategyHint</div>
+
+                <label class="sim-label">Pesos y precios</label>
                 <div class="sim-row">
                     <div>
-                        <label class="sim-label">pH</label>
-                        <input type="number" step="0.1" min="0" max="14" class="form-control" @bind="phOverride" />
+                        <label class="sim-label">Peso Baby Leaf (g/planta)</label>
+                        <input type="number" step="0.1" min="0" class="form-control" @bind="babyLeafGrams" />
                     </div>
                     <div>
-                        <label class="sim-label">EC (mS/cm)</label>
-                        <input type="number" step="0.1" min="0" class="form-control" @bind="ecOverride" />
+                        <label class="sim-label">Peso convencional (g/planta)</label>
+                        <input type="number" step="0.1" min="0" class="form-control" @bind="conventionalGrams" />
+                    </div>
+                </div>
+                <div class="sim-row">
+                    <div>
+                        <label class="sim-label">Precio Baby Leaf ($/kg)</label>
+                        <input type="number" step="0.01" min="0" class="form-control" @bind="babyLeafPrice" />
+                    </div>
+                    <div>
+                        <label class="sim-label">Precio convencional ($/kg)</label>
+                        <input type="number" step="0.01" min="0" class="form-control" @bind="conventionalPrice" />
                     </div>
                 </div>
 
                 <hr />
 
-                <label class="sim-label">Estrategias de cosecha (SIM-09)</label>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="blEnabled" @bind="enableBabyLeaf" />
-                    <label class="form-check-label" for="blEnabled">Simular Baby Leaf</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="convEnabled" @bind="enableConvencional" />
-                    <label class="form-check-label" for="convEnabled">Simular convencional</label>
-                </div>
-
-                @if (enableBabyLeaf)
-                {
-                    <label class="sim-label">% de aptas esperado (HIPÓTESIS del usuario)</label>
-                    <input type="number" step="1" min="0" max="100" placeholder="Usar evaluaciones reales del lote" class="form-control" @bind="hypothesisAptaPercent" />
-
-                    <label class="sim-label">Umbral objetivo de aptas (%)</label>
-                    <input type="number" step="1" min="0" max="100" placeholder="Decisión pendiente si queda vacío" class="form-control" @bind="requiredTargetPercent" />
-                    <div class="small text-muted">La simulación nunca inventa evaluaciones visuales: sin hipótesis ni evaluaciones reales, la decisión queda pendiente.</div>
-                }
-
-                <hr />
-
-                <label class="sim-label">Costos (SIM-05)</label>
-                <div class="sim-row">
-                    <div>
-                        <label class="sim-label">Moneda</label>
-                        <input type="text" maxlength="3" class="form-control" style="width: 90px;" @bind="currencyCode" />
-                    </div>
-                </div>
+                <label class="sim-label">Gastos del sistema (@options.Parameters.Currency)</label>
                 <div class="sim-cost-block">
                     <div class="sim-row">
                         <div>
-                            <label class="sim-label">Precio semilla</label>
+                            <label class="sim-label">Precio por semilla</label>
                             <input type="number" step="0.01" min="0" class="form-control" @bind="seedPrice" />
                         </div>
                         <div>
-                            <label class="sim-label">Cantidad de semillas</label>
-                            <input type="number" step="1" min="0" class="form-control" @bind="seedCount" />
-                        </div>
-                    </div>
-                    <div class="sim-row">
-                        <div>
                             <label class="sim-label">Precio nutrientes ($/L)</label>
-                            <input type="number" step="0.01" min="0" class="form-control" @bind="nutrientPrice" />
-                        </div>
-                        <div>
-                            <label class="sim-label">Litros/día</label>
-                            <input type="number" step="0.1" min="0" class="form-control" @bind="litersPerDay" />
-                        </div>
-                    </div>
-                    <div class="sim-row">
-                        <div>
-                            <label class="sim-label">Precio energía ($/kWh)</label>
-                            <input type="number" step="0.01" min="0" class="form-control" @bind="energyPrice" />
-                        </div>
-                        <div>
-                            <label class="sim-label">kWh/día</label>
-                            <input type="number" step="0.1" min="0" class="form-control" @bind="kwhPerDay" />
+                            <input type="number" step="0.01" min="0" class="form-control" placeholder="Sin definir" @bind="nutrientPrice" />
                         </div>
                     </div>
                 </div>
 
                 <div class="sim-actions">
-                    <button class="btn btn-primary" @onclick="Simulate" disabled="@running">
+                    <button class="btn btn-success" @onclick="Simulate" disabled="@running">
                         @if (running)
                         {
                             <span class="spinner-border spinner-border-sm me-1"></span>
                         }
                         Simular
-                    </button>
-                    <button class="btn btn-outline-secondary" disabled title="La persistencia de escenarios (SimulationRun) llega en la próxima entrega (SIM-06).">
-                        Guardar escenario (próxima entrega)
                     </button>
                 </div>
             </div>
@@ -217,191 +177,230 @@
                     <div>
                         <h3>Resultado del escenario</h3>
                         <p class="panel__subtitle">
-                            Contexto: <strong>@result.Context.CropTypeName</strong> (@result.Context.ContextKind) · Referencia @result.Context.SowingDate?.ToString("d") · Simulación <code>@result.SimulationId</code>
+                            @(result.Context.LotName ?? $"Escenario libre ({result.Context.CropTypeName})") ·
+                            siembra @LotFormat.Short(result.Context.SowingDate) · @LotFormat.Plants(result.Context.Plants)
+                            @(result.Lot is not null ? "activas" : null)
                         </p>
                     </div>
                     <div class="chip-row">
-                        <span class="badge text-bg-info">clima: @result.Gdd.ProviderName</span>
-                        @if (result.Gdd.CoveragePercent is { } coverage)
+                        <span class="badge text-bg-info">clima: @ProviderLabel(result.Gdd.ProviderName)</span>
+                        @if (result.Gdd.ProviderName != "manual" && result.Gdd.CoveragePercent is { } coverage)
                         {
-                            <span class="badge text-bg-light">cobertura @coverage.ToString("0.#", CultureInfo.InvariantCulture)%</span>
+                            <span class="badge text-bg-light">cobertura @LotFormat.Pct1(coverage)</span>
+                        }
+                        @if (result.Gdd.Correction is { } correction)
+                        {
+                            <span class="badge text-bg-light" title="@($"Pronóstico de afuera corregido a la temperatura de adentro (calibrado con {LotFormat.Days(correction.CalibrationDays)})")">pronóstico corregido @LotFormat.SignedNum(correction.OffsetPerDay) GDD/día</span>
                         }
                         @if (result.Gdd.UsedFallback)
                         {
-                            <span class="badge text-bg-warning">fallback</span>
-                        }
-                        @if (result.Gdd.IsExtrapolation)
-                        {
-                            <span class="badge text-bg-warning">extrapolación</span>
+                            <span class="badge text-bg-warning">promedio de respaldo</span>
                         }
                     </div>
                 </div>
 
-                <div class="mini-grid">
-                    <div class="mini-card"><span>GDD acumulado</span><strong>@result.Gdd.Accumulated.ToString("0.#", CultureInfo.InvariantCulture) / @result.Gdd.GddTarget.ToString("0.#", CultureInfo.InvariantCulture)</strong></div>
-                    <div class="mini-card"><span>Cosecha estimada</span><strong>@FormatDate(result.Gdd.EstimatedHarvestDate)</strong></div>
-                    <div class="mini-card"><span>Días restantes</span><strong>@(result.Gdd.DaysRemaining is { } d ? $"{d} d" : "—")</strong></div>
-                </div>
-
-                @if (result.Gdd.Projection.Count > 0)
+                <h4 class="sim-section">Ventanas y cortes</h4>
+                @if (result.Timeline is { } timeline)
                 {
-                    <SimpleLineChart Data="ChartData" XLabels="ChartLabels" ShowGrid="true" RotateXLabels="true" TargetValue="(double)result.Gdd.GddTarget" Height="240" />
-                    <div class="chart-legend small text-muted">GDD diario proyectado del escenario (fuente: @result.Gdd.ProviderName).</div>
+                    <LotCycleTimeline Timeline="timeline" />
+                    <div class="small text-muted mt-2">
+                        @if (result.Context.SowingDate > result.Today)
+                        {
+                            <text>Todavía no se sembró (Tbase @LotFormat.Num(result.Gdd.BaseTemperature) °C).</text>
+                        }
+                        else
+                        {
+                            <text>GDD hoy: <strong>@LotFormat.Num(result.Gdd.Accumulated)</strong> (Tbase @LotFormat.Num(result.Gdd.BaseTemperature) °C).</text>
+                        }
+                        Baby Leaf: ventana @LotFormat.Num(timeline.BabyLeafOpens.Gdd)–@LotFormat.Num(timeline.BabyLeafCloses.Gdd), óptimo @LotFormat.Num(timeline.BabyLeafOptimum.Gdd).
+                        Convencional: óptimo @LotFormat.Num(timeline.ConventionalOptimum.Gdd), sobremadurez @LotFormat.Num(timeline.Overmaturity.Gdd).
+                    </div>
                 }
                 else
                 {
-                    <div class="alert alert-warning mb-0 small">Sin datos climáticos para proyectar: la fecha por GDD no puede estimarse (no se asume un valor).</div>
+                    <div class="alert alert-warning small mb-0">Sin configuración del cultivo: no se pueden calcular las ventanas ni los cortes.</div>
+                }
+
+                @if (result.Timeline is not null)
+                {
+                    var outlook = result.Outlook;
+                    <h4 class="sim-section">Previsión de Baby Leaf y pérdidas</h4>
+                    <div class="mini-grid">
+                        <div class="mini-card"><span>Aptas a Baby Leaf en el óptimo</span><strong>@Rate(outlook.AptRate)</strong></div>
+                        <div class="mini-card"><span>Pérdidas hasta el corte Baby Leaf</span><strong>@LossRate(outlook.RemainingEarlyLossRate, outlook.History.EarlyLossRate)</strong></div>
+                        <div class="mini-card"><span>Pérdidas esperando al convencional</span><strong>@LossRate(outlook.RemainingLateLossRate, outlook.History.LateLossRate)</strong></div>
+                    </div>
+                    <div class="small text-muted my-2">@OutlookText(outlook, result.Lot is not null)</div>
+                    @if (outlook.History.Lots.Count > 0)
+                    {
+                        <details class="sim-details">
+                            <summary>Lotes usados (@outlook.History.Lots.Count)</summary>
+                            <div class="table-responsive hp-table-card mt-2">
+                                <table class="table table-sm hp-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Lote</th>
+                                            <th>Siembra</th>
+                                            <th>Aptas Baby Leaf</th>
+                                            <th>Pérdidas tempranas</th>
+                                            <th>Pérdidas tardías</th>
+                                            <th>GDD/día</th>
+                                            <th>Peso</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var used in outlook.History.Lots)
+                                        {
+                                            var cycle = used.Outcome;
+                                            <tr>
+                                                <td>@cycle.Name @(cycle.IsManual ? "(cargado)" : null)</td>
+                                                <td>@cycle.SowingDate.ToString("dd/MM/yy", LotFormat.Culture)</td>
+                                                <td>@Rate(cycle.AptRate)</td>
+                                                <td>@Rate(cycle.EarlyLossRate)</td>
+                                                <td>@Rate(cycle.LateLossRate)</td>
+                                                <td>@(cycle.AverageDailyGdd is { } gdd ? LotFormat.Num(gdd) : "—")</td>
+                                                <td title="@($"temporada {LotFormat.Num(used.SeasonWeight)} × clima {LotFormat.Num(used.ClimateWeight)}")">@LotFormat.Num(used.Weight)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </details>
+                    }
+                }
+
+                @if (Chosen is { } chosen)
+                {
+                    <h4 class="sim-section">Estrategia elegida: @chosen.Name</h4>
+                    <div class="small text-muted">@PlantsText(chosen) · @(chosen.Available ? Days(chosen.Costs.CycleDays) + " de ciclo" : "sin fecha")</div>
+                    @if (!chosen.Available)
+                    {
+                        <div class="alert alert-warning small mt-2 mb-0">No se puede calcular: @string.Join(" ", chosen.Warnings)</div>
+                    }
+                    <div class="mini-grid">
+                        <div class="mini-card"><span>Corte Baby Leaf</span><strong>@CutText(chosen.BabyLeafCut)</strong></div>
+                        <div class="mini-card"><span>Corte convencional</span><strong>@CutText(chosen.ConventionalCut)</strong></div>
+                        <div class="mini-card"><span>Kg</span><strong>@(chosen.TotalKg is { } kg ? LotFormat.KgFine(kg) : "—")</strong></div>
+                        <div class="mini-card"><span>Ingresos</span><strong>@Money(chosen.Revenue, result.Reference.Prices.Currency)</strong></div>
+                        <div class="mini-card"><span>Gastos del sistema</span><strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong></div>
+                        <div class="mini-card"><span>Margen sobre gastos del sistema</span><strong class="@(chosen.Margin < 0 ? "text-danger" : null)">@Money(chosen.Margin, result.Reference.Prices.Currency)</strong></div>
+                    </div>
+                    <div class="small text-muted mt-2">
+                        Pesos y precios: Baby Leaf @Grams(result.Reference.Weights.BabyLeafGramsPerPlant) · @PricePerKg(result.Reference.Prices.BabyLeafPerKg) ·
+                        Convencional @Grams(result.Reference.Weights.ConventionalGramsPerPlant) · @PricePerKg(result.Reference.Prices.ConventionalPerKg)
+                        (@(result.Reference.HasScenarioOverrides ? "con cambios del escenario" : "de Ajustes > Parámetros")).
+                    </div>
+
+                    <div class="table-responsive hp-table-card mt-3">
+                        <table class="table table-sm hp-table">
+                            <thead>
+                                <tr>
+                                    <th>Gasto del sistema</th>
+                                    <th>Fórmula</th>
+                                    <th>Monto</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var component in chosen.Costs.Components)
+                                {
+                                    <tr>
+                                        <td>@component.Name</td>
+                                        <td class="small text-muted">@CostFormula(component, chosen.Costs)</td>
+                                        <td title="@component.NotCalculableReason">@Money(component.Amount, chosen.Costs.CurrencyCode)</td>
+                                    </tr>
+                                }
+                                <tr class="hp-table__total">
+                                    <td><strong>Total</strong></td>
+                                    <td class="small text-muted">días del ciclo: de la siembra al último corte</td>
+                                    <td><strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong></td>
+                                </tr>
+                                <tr>
+                                    <td>Costo por kg</td>
+                                    <td class="small text-muted">total / kg cosechados</td>
+                                    <td>@(chosen.CostPerKg is { } perKg ? $"{LotFormat.Money(perKg, chosen.Costs.CurrencyCode)}/kg" : "—")</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @if (result.Strategies.Count > 1)
+                {
+                    <h4 class="sim-section">Comparación de estrategias</h4>
+                    <div class="table-responsive hp-table-card">
+                        <table class="table table-sm hp-table">
+                            <thead>
+                                <tr>
+                                    <th>Estrategia</th>
+                                    <th>Corte Baby Leaf</th>
+                                    <th>Corte convencional</th>
+                                    <th>Días de ciclo</th>
+                                    <th>Kg</th>
+                                    <th>Margen sobre gastos del sistema</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var strategy in result.Strategies)
+                                {
+                                    <tr class="@(strategy == Chosen ? "hp-table__row--selected" : null)">
+                                        <td>
+                                            <strong>@strategy.Name</strong>
+                                            @if (strategy == Chosen)
+                                            {
+                                                <span class="badge text-bg-primary ms-1">elegida</span>
+                                            }
+                                            @if (strategy == BestStrategy)
+                                            {
+                                                <span class="badge text-bg-success ms-1">mejor margen</span>
+                                            }
+                                            <div class="small text-muted">@PlantsText(strategy)</div>
+                                        </td>
+                                        <td>@CutText(strategy.BabyLeafCut)</td>
+                                        <td>@CutText(strategy.ConventionalCut)</td>
+                                        <td>@(strategy.Available ? strategy.Costs.CycleDays.ToString() : "—")</td>
+                                        <td>@(strategy.TotalKg is { } kg ? LotFormat.KgFine(kg) : "—")</td>
+                                        <td class="@(strategy.Margin < 0 ? "text-danger" : null)">@Money(strategy.Margin, result.Reference.Prices.Currency)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @if (result.Curve is { } curve && result.Timeline is { } curveTimeline)
+                {
+                    <h4 class="sim-section">GDD acumulado</h4>
+                    <LotGddChart Curve="curve" Timeline="curveTimeline"
+                                 MeasuredLabel="@(result.Lot is null ? $"{ProviderLabel(result.Gdd.ProviderName)} hasta hoy" : "medido")"
+                                 MeasuredSourceLabel="@(result.Lot is null ? ProviderLabel(result.Gdd.ProviderName) : null)"
+                                 ProjectedSourceLabel="@ProviderLabel(result.Gdd.ProviderName)" />
                 }
 
                 @if (result.Gdd.ForecastFetchedAtUtc is { } fetched)
                 {
-                    <div class="small text-muted">Pronóstico obtenido el @fetched.ToLocalTime().ToString("yyyy-MM-dd HH:mm") (hora local del servidor).</div>
+                    <div class="small text-muted mt-2">Pronóstico obtenido el @fetched.ToLocalTime().ToString("dd/MM/yyyy HH:mm").</div>
                 }
-
-                <div class="mini-grid">
-                    <div class="mini-card"><span>Rendimiento conservador</span><strong>@result.Yield.Conservative.ToString("0.##", CultureInfo.InvariantCulture) kg</strong></div>
-                    <div class="mini-card"><span>Rendimiento base</span><strong>@result.Yield.Base.ToString("0.##", CultureInfo.InvariantCulture) kg</strong></div>
-                    <div class="mini-card"><span>Rendimiento optimista</span><strong>@result.Yield.Optimistic.ToString("0.##", CultureInfo.InvariantCulture) kg</strong></div>
-                </div>
-                <div class="small text-muted">Confianza heurística: @result.Yield.ConfidencePercent% @(result.Yield.HistoryCycles == 0 ? "(sin ciclos cerrados del historial)" : $"({result.Yield.HistoryCycles} ciclos cerrados)")</div>
-
-                @if (result.Harvest is { } harvest)
-                {
-                    <hr />
-                    <h4>Decisión de cosecha simulada (regla híbrida)</h4>
-                    <table class="table table-sm sim-table">
-                        <tbody>
-                            <tr><td>GDD en ventana Baby Leaf</td><td>@(harvest.GddInWindow ? "Sí" : harvest.HasBabyLeafConfig ? "No" : "Sin configuración Baby Leaf") @(harvest.WindowMin is { } wMin ? $"({wMin.ToString("0.#", CultureInfo.InvariantCulture)}–{harvest.WindowMax?.ToString("0.#", CultureInfo.InvariantCulture)} GDD)" : "")</td></tr>
-                            <tr><td>% de aptas usado en la regla</td><td>@(harvest.AptaPercentUsed is { } p ? $"{p.ToString("0.#", CultureInfo.InvariantCulture)}% {(harvest.AptaPercentIsHypothesis ? "(hipótesis del usuario)" : "(evaluaciones reales)")}" : "—")</td></tr>
-                            <tr><td>Umbral objetivo</td><td>@(harvest.RequiredPercent is { } r ? $"{r.ToString("0.#", CultureInfo.InvariantCulture)}%" : "pendiente de decisión")</td></tr>
-                            <tr><td>Listo para Baby Leaf</td><td>@(harvest.IsReady is { } ready ? (ready ? "Sí" : "No") : "Decisión pendiente")</td></tr>
-                        </tbody>
-                    </table>
-                    @if (harvest.DecisionReason is { } reason)
-                    {
-                        <div class="alert alert-secondary small mb-2">@reason</div>
-                    }
-                    <div class="small text-muted">
-                        Entrada a ventana Baby Leaf: @FormatDate(harvest.BabyLeafEntryDate) · Entrada convencional (GddTarget): @FormatDate(harvest.ConventionalEntryDate) ·
-                        madurez convencional: @(harvest.ConventionalHasMaturityData ? "con análisis de imagen" : "pendiente (análisis de imagen en fase futura)").
-                        Qué parte es GDD y qué parte es hipótesis de score queda indicado en la fila "% de aptas usado".
-                    </div>
-                }
-
-                <hr />
-                <h4>Comparación de estrategias</h4>
-                <table class="table table-sm sim-table">
-                    <thead>
-                        <tr><th>Estrategia</th><th>Cosecha estimada</th><th>Días</th><th>Estado</th><th>Base de decisión</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var alt in result.Alternatives.Alternatives)
-                        {
-                            <tr>
-                                <td>@alt.Strategy</td>
-                                <td>@FormatDate(alt.HarvestDate)</td>
-                                <td>@(alt.DaysRemaining is { } ad ? $"{ad} d" : "—")</td>
-                                <td>@(alt.IsReady is { } ready ? (ready ? "Listo" : "No listo") : "Pendiente")</td>
-                                <td>@alt.DecisionBasis</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-                @if (result.Alternatives.HypothesesUsed.Count > 0)
-                {
-                    <div class="small">
-                        <strong>Supuestos del cálculo:</strong>
-                        <ul class="mb-1">
-                            @foreach (var hypothesis in result.Alternatives.HypothesesUsed)
-                            {
-                                <li>@hypothesis</li>
-                            }
-                        </ul>
-                    </div>
-                }
-
-                <hr />
-                <h4>Costos del escenario</h4>
-                <table class="table table-sm sim-table">
-                    <thead>
-                        <tr><th>Componente</th><th>Fórmula</th><th>Importe</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var component in result.Costs.Components)
-                        {
-                            <tr>
-                                <td>@component.Name</td>
-                                <td class="small text-muted">@component.Formula</td>
-                                <td>
-                                    @if (component.Amount is { } amount)
-                                    {
-                                        <span>@amount.ToString("0.##", CultureInfo.InvariantCulture) @result.Costs.CurrencyCode</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="text-muted">No calculable — @component.NotCalculableReason</span>
-                                    }
-                                </td>
-                            </tr>
-                        }
-                        <tr>
-                            <td><strong>Total</strong></td>
-                            <td class="small text-muted">días proyectados: @result.Costs.ProjectedDays</td>
-                            <td>
-                                @if (result.Costs.Total is { } total)
-                                {
-                                    <strong>@total.ToString("0.##", CultureInfo.InvariantCulture) @result.Costs.CurrencyCode</strong>
-                                }
-                                else
-                                {
-                                    <span class="text-muted">No calculable</span>
-                                }
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><strong>Costo por kg</strong></td>
-                            <td class="small text-muted">total / rendimiento base</td>
-                            <td>
-                                @if (result.Costs.CostPerKg is { } perKg)
-                                {
-                                    <span>@perKg.ToString("0.##", CultureInfo.InvariantCulture) @result.Costs.CurrencyCode / kg</span>
-                                }
-                                else
-                                {
-                                    <span class="text-muted">No calculable — falta precio, rendimiento válido o ambos</span>
-                                }
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
 
                 @if (result.Lot is { } lot)
                 {
-                    <hr />
-                    <h4>Contexto del lote (solo lectura)</h4>
+                    <h4 class="sim-section">Contexto del lote (solo lectura)</h4>
                     <div class="mini-grid">
-                        <div class="mini-card"><span>GDD base del lote</span><strong>@lot.GddAccumulated.ToString("0.#", CultureInfo.InvariantCulture)</strong></div>
                         <div class="mini-card"><span>Etapa fenológica</span><strong>@(lot.PhenologicalStageName ?? "—")</strong></div>
                         <div class="mini-card"><span>Plantas activas</span><strong>@lot.ActivePlants / @lot.TotalPlants</strong></div>
                     </div>
-                    <div class="small text-muted mb-1">
-                        Cosechadas: @lot.HarvestedPlants · Descartadas: @lot.DiscardedPlants · Posiciones vacías: @lot.EmptyPositions.
-                        La grilla muestra el estado ACTUAL del lote; la simulación no crea ni modifica plantas.
+                    <div class="small text-muted my-2">
+                        Cosechadas: @lot.HarvestedPlants · Descartadas: @lot.DiscardedPlants.
+                        El escenario usa las plantas activas; la grilla muestra el estado actual del lote.
                     </div>
                     @if (lot.GridRows > 0 && lot.GridColumns > 0)
                     {
                         <LotMap Rows="@lot.GridRows" Columns="@lot.GridColumns" Cells="@lot.Grid" />
                     }
-                    else
-                    {
-                        <div class="alert alert-warning small">Grilla no configurada para este lote.</div>
-                    }
                 }
 
                 @if (result.Warnings.Count > 0)
                 {
-                    <hr />
-                    <h4>Advertencias y fuente de los datos</h4>
+                    <h4 class="sim-section">Advertencias y fuente de los datos</h4>
                     <div class="alert alert-warning small mb-0">
                         <ul class="mb-0">
                             @foreach (var warning in result.Warnings)
@@ -411,10 +410,6 @@
                         </ul>
                     </div>
                 }
-                else
-                {
-                    <div class="alert alert-success small mb-0 mt-3">Datos completos: sin advertencias de cobertura ni fallback.</div>
-                }
             </article>
         }
         else
@@ -422,7 +417,7 @@
             <article class="panel">
                 <div class="panel__callout">
                     <h3>Proyección simulada</h3>
-                    <p>Configurá el escenario y presioná <strong>Simular</strong>. La simulación es un entorno what-if: nada de lo que calcula toca la producción ni el hardware.</p>
+                    <p>Configurá el escenario y presioná <strong>Simular</strong>.</p>
                 </div>
             </article>
         }
@@ -430,19 +425,6 @@
 </section>
 
 <style>
-    .sim-banner {
-        position: sticky;
-        top: 0;
-        z-index: 50;
-        background: linear-gradient(135deg, #ffedd5 0%, #fed7aa 100%);
-        border: 1px solid #f59e0b;
-        border-radius: 10px;
-        padding: 10px 14px;
-        margin-bottom: 16px;
-        color: #7c2d12;
-        font-size: 0.88rem;
-        box-shadow: 0 2px 10px rgba(245, 158, 11, 0.25);
-    }
     .sim-form { display: flex; flex-direction: column; gap: 10px; }
     .sim-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #5b6b7b; margin-top: 4px; }
     .sim-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
@@ -452,8 +434,13 @@
     .sim-cost-block { display: flex; flex-direction: column; gap: 8px; }
     .sim-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
     .sim-results-col { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
-    .sim-table td, .sim-table th { font-size: 0.86rem; }
-    .chart-legend { margin-top: 4px; }
+    .sim-section { margin: 22px 0 10px; font-size: 1rem; font-weight: 700; }
+    .sim-strategy { display: flex; flex-direction: column; gap: 6px; }
+    .sim-strategy__goal { display: flex; align-items: center; gap: 8px; }
+    .sim-strategy__goal .sim-radio { flex: none; white-space: nowrap; }
+    .sim-strategy__goal input[type=number] { flex: none; width: 80px; }
+    .sim-radio input { flex: none; margin: 0; }
+    .sim-details summary { cursor: pointer; font-size: 0.86rem; color: var(--text-muted); }
 </style>
 
 @code {
@@ -466,71 +453,63 @@
     private int? selectedLotId;
     private int? selectedCropId;
     private DateOnly? sowingDate;
-    private decimal? areaM2;
+    private int? plantCount;
 
-    private SimulationClimateMode mode = SimulationClimateMode.Manual;
+    // Por defecto, el clima de Lotes; manual queda para el what-if ("¿y si hace más frío?").
+    private SimulationClimateMode mode = SimulationClimateMode.Forecast;
     private decimal? tmin = 16m;
     private decimal? tmax = 26m;
-    private int? humidity = 65;
 
-    private bool enableBabyLeaf = true;
-    private bool enableConvencional = true;
-    private decimal? hypothesisAptaPercent;
-    private decimal? requiredTargetPercent;
+    private SimulationStrategyKind strategy = SimulationStrategyKind.MaxBabyLeaf;
+    private decimal? babyLeafGoal;
+    private decimal? babyLeafGrams;
+    private decimal? conventionalGrams;
+    private decimal? babyLeafPrice;
+    private decimal? conventionalPrice;
 
-    private string currencyCode = "ARS";
     private decimal? seedPrice = 2.5m;
-    private int? seedCount = 600;
-    private decimal? nutrientPrice = 5m;
-    private decimal litersPerDay = 5m;
-    private decimal? energyPrice = 30m;
-    private decimal kwhPerDay = 1.5m;
+    private decimal? nutrientPrice;
 
-    private decimal? phOverride;
-    private decimal? ecOverride;
-    private DateOnly referenceDate = DateOnly.FromDateTime(DateTime.UtcNow);
     private bool running;
-
-    private IReadOnlyList<double> ChartData => (result?.Gdd.Projection ?? [])
-        .Select(p => (double)p.Gdd).ToArray();
-    private IReadOnlyList<string> ChartLabels => (result?.Gdd.Projection ?? [])
-        .Select(p => p.Date.ToString("dd/MM")).ToArray();
 
     protected override async Task OnInitializedAsync()
     {
         options = await SimulationSvc.GetContextOptionsAsync();
         selectedCropId = options.Crops.FirstOrDefault()?.Id;
+
+        // Pesos y precios precargados con los parámetros del sistema (editables solo para el escenario).
+        babyLeafGrams = Trim(options.Parameters.BabyLeafGrams);
+        conventionalGrams = Trim(options.Parameters.ConventionalGrams);
+        babyLeafPrice = Trim(options.Parameters.BabyLeafPricePerKg);
+        conventionalPrice = Trim(options.Parameters.ConventionalPricePerKg);
+        nutrientPrice = Trim(options.NutrientPricePerLiter);
+
         if (options.Lots.Count > 0)
         {
             selectedLotId = options.Lots[0].Id;
-            RequiredTargetFromSelectedLot();
+            OnLotChanged();
         }
     }
 
+    /// <summary>
+    /// Con un lote: la meta Baby Leaf máxima arranca en la meta del ciclo (y se elige esa estrategia si
+    /// la tiene) y las semillas en las plantas del lote.
+    /// </summary>
     private void OnLotChanged()
     {
-        if (selectedLotId is { } lotId)
+        if (selectedLotId is { } lotId && options?.Lots.FirstOrDefault(l => l.Id == lotId) is { } lot)
         {
-            var lot = options?.Lots.FirstOrDefault(l => l.Id == lotId);
-            if (lot is { } found)
-            {
-                requiredTargetPercent = found.RequiredTargetPercent ?? requiredTargetPercent;
-                sowingDate = null;
-                areaM2 = null;
-                selectedCropId = null;
-            }
+            babyLeafGoal = Trim(lot.BabyLeafGoalPercent);
+            strategy = babyLeafGoal is null ? SimulationStrategyKind.MaxBabyLeaf : SimulationStrategyKind.BabyLeafGoal;
+        }
+        else
+        {
+            selectedCropId ??= options?.Crops.FirstOrDefault()?.Id;
         }
     }
 
-    private void RequiredTargetFromSelectedLot()
-    {
-        if (selectedLotId is { } lotId)
-        {
-            requiredTargetPercent = options?.Lots.FirstOrDefault(l => l.Id == lotId)?.RequiredTargetPercent;
-        }
-    }
-
-    private void ResetReferenceDate() => referenceDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    // Los decimal de la base vienen con su escala (2600.0000, 80.00): se quitan los ceros de más.
+    private static decimal? Trim(decimal? value) => value / 1.0000000000000000000000000000m;
 
     private async Task Simulate()
     {
@@ -547,23 +526,138 @@
 
     private SimulationRequest BuildRequest()
     {
+        var system = options?.Parameters;
+        // Solo viaja como cambio del escenario lo que difiere del parámetro del sistema.
+        static decimal? Override(decimal? value, decimal? systemValue) => value == systemValue ? null : value;
+
         return new SimulationRequest(
             LotId: selectedLotId,
             CropTypeId: selectedLotId is null ? selectedCropId : null,
             SowingDate: selectedLotId is null ? sowingDate : null,
-            AreaM2: selectedLotId is null ? areaM2 : null,
-            ReferenceDate: referenceDate,
-            Climate: new SimulationClimateInput(mode, tmin, tmax, humidity, ForecastHorizonDays: 7),
-            Agronomic: new SimulationAgronomicInput(phOverride, ecOverride),
-            Costs: new SimulationCostsInput(
-                currencyCode?.Trim().ToUpperInvariant() ?? "ARS",
-                new SimulationSeedCostsInput(seedPrice, seedCount),
-                new SimulationNutrientCostsInput(nutrientPrice, litersPerDay),
-                new SimulationEnergyCostsInput(energyPrice, kwhPerDay)),
-            Harvest: new SimulationHarvestInput(enableBabyLeaf, enableConvencional, hypothesisAptaPercent, requiredTargetPercent),
-            SaveScenario: false);
+            PlantCount: selectedLotId is null ? plantCount : null,
+            Climate: new SimulationClimateInput(mode, tmin, tmax, ForecastHorizonDays: 7),
+            Costs: new SimulationCostsInput(seedPrice, nutrientPrice),
+            Harvest: new SimulationHarvestInput(strategy, babyLeafGoal),
+            Yield: new SimulationYieldInput(
+                Override(babyLeafGrams, system?.BabyLeafGrams),
+                Override(conventionalGrams, system?.ConventionalGrams),
+                Override(babyLeafPrice, system?.BabyLeafPricePerKg),
+                Override(conventionalPrice, system?.ConventionalPricePerKg)));
     }
 
-    private static string FormatDate(DateOnly? date) =>
-        date is { } d ? d.ToString("dd/MM/yyyy") : "—";
+    /// <summary>La estrategia con mayor margen (si hay al menos dos con margen calculado).</summary>
+    private SimulationStrategyOutcome? BestStrategy
+    {
+        get
+        {
+            var withMargin = result?.Strategies.Where(s => s.Margin is not null).ToList() ?? [];
+            return withMargin.Count > 1 ? withMargin.MaxBy(s => s.Margin) : null;
+        }
+    }
+
+    private SimulationStrategyOutcome? Chosen =>
+        result?.Strategies.FirstOrDefault(s => s.Kind == result.Request.Harvest.Strategy);
+
+    private string StrategyHint => strategy switch
+    {
+        SimulationStrategyKind.MaxBabyLeaf => "Corta como Baby Leaf todas las que se prevén aptas en el óptimo; el resto sigue hasta el corte convencional.",
+        SimulationStrategyKind.BabyLeafGoal => "Corta como Baby Leaf hasta ese % de las plantas (por más de que haya más Baby Leafs aptas); el resto sigue hasta el corte convencional.",
+        _ => "Todas siguen hasta el corte convencional."
+    };
+
+    /// <summary>"12 Baby Leaf + 6 convencionales · 1 pérdida prevista".</summary>
+    private static string PlantsText(SimulationStrategyOutcome s)
+    {
+        var destinations = new List<string>();
+        if (s.BabyLeaf.Plants > 0)
+            destinations.Add($"{s.BabyLeaf.Plants} Baby Leaf");
+        if (s.Conventional.Plants > 0)
+            destinations.Add(LotFormat.Count(s.Conventional.Plants, "convencional", "convencionales"));
+        var text = destinations.Count > 0 ? string.Join(" + ", destinations) : "Ninguna para cosechar";
+        return s.LostPlants > 0
+            ? $"{text} · {LotFormat.Count(s.LostPlants, "pérdida prevista", "pérdidas previstas")}"
+            : text;
+    }
+
+    private static string Rate(decimal? rate) => rate is { } r ? LotFormat.Pct(r * 100m) : "sin datos";
+
+    /// <summary>Pérdidas que faltan; "sin historial" si no hay lotes con ese dato.</summary>
+    private static string LossRate(decimal remaining, decimal? history) =>
+        history is null ? "sin historial" : LotFormat.Pct1(remaining * 100m);
+
+    private static string Days(int days) => LotFormat.Days(days);
+
+    /// <summary>Fórmula con las cantidades que calculó el sistema (semillas, litros, días).</summary>
+    private static string CostFormula(SimulationCostComponent component, SimulationCostBreakdown costs) => component.Name switch
+    {
+        "Semillas" => $"precio por semilla × {LotFormat.Count(costs.Seeds, "semilla", "semillas")}",
+        "Nutrientes" when costs.Usage is { } usage =>
+            $"{usage.NutrientLiters.ToString("0.##", LotFormat.Culture)} L de nutrientes × precio por litro · " +
+            $"{usage.WaterLiters.ToString("N1", LotFormat.Culture)} L de agua (según plantas vivas y etapa)",
+        _ => component.Formula
+    };
+
+    /// <summary>De dónde sale la previsión: estado actual del lote, histórico de lotes parecidos o nada.</summary>
+    private static string OutlookText(BabyLeafOutlook outlook, bool withLot)
+    {
+        var history = outlook.History;
+        var lots = history.UsedAllLots
+            ? $"los {history.Lots.Count} lotes cerrados (ninguno de temporada o clima parecido)"
+            : LotFormat.Count(history.Lots.Count, "lote parecido", "lotes parecidos");
+        var noEvaluations = withLot && !outlook.LotHasEvaluations
+            ? " El lote no tiene evaluaciones de plantas: no se usa su estado actual."
+            : string.Empty;
+
+        if (outlook.CurrentAptRate is { } current && outlook.CurrentWeight > 0)
+        {
+            return history.AptRate is { } past
+                ? $"Combina el estado actual del lote ({Rate(current)} de las activas aptas o candidatas, pesa {Rate(outlook.CurrentWeight)}) con el histórico de {lots} ({Rate(past)})."
+                : $"Según el estado actual del lote ({Rate(current)} de las activas aptas o candidatas); no hay lotes cerrados con datos.";
+        }
+        if (history.AptRate is not null)
+        {
+            var notYet = outlook.CurrentAptRate is not null
+                ? " El lote todavía no llegó al fin del establecimiento: su estado actual no pesa."
+                : noEvaluations;
+            return $"Según el histórico de {lots}.{notYet} Las pérdidas son las que faltan según la etapa.";
+        }
+        return "Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas llegan aptas y sin pérdidas." + noEvaluations;
+    }
+
+    private string CutText(SimulationCut? cut)
+    {
+        if (cut is null)
+            return "—";
+        if (cut.Date is not { } date)
+            return cut.IsOverdue ? "ventana cerrada" : "sin fecha";
+        if (cut.IsNow)
+            return cut.IsOverdue ? $"ahora ({LotFormat.Short(date)}, pasado de cosecha)" : $"ahora ({LotFormat.Short(date)})";
+        var days = GddCalculator.DaysRemaining(result!.Today, date);
+        return $"{(cut.IsExtrapolated ? "≈ " : null)}{LotFormat.Short(date)}{(days is > 0 ? $" (en {LotFormat.Days(days.Value)})" : null)}";
+    }
+
+    private static string Money(decimal? value, string currency) =>
+        value is { } v ? LotFormat.Money(v, currency) : "—";
+
+    private string PricePerKg(decimal? value) =>
+        value is { } v ? $"{LotFormat.Money(v, result!.Reference.Prices.Currency)}/kg" : "sin precio";
+
+    private static string Grams(decimal? grams) =>
+        grams is { } g ? g.ToString("0.#", LotFormat.Culture) + " g" : "sin peso";
+
+    private static string ProviderLabel(string provider) => provider switch
+    {
+        "manual" => "clima manual",
+        "pronostico" => "pronóstico del clima",
+        _ => provider
+    };
+
+    private static string StatusLabel(string? status) => status switch
+    {
+        "ACTIVO" => "Activo",
+        "EN_PAUSA" => "En pausa",
+        "COSECHADO" => "Cosechado",
+        "DESCARTADO" => "Descartado",
+        _ => status ?? "Sin estado"
+    };
 }

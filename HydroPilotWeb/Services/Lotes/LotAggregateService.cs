@@ -70,8 +70,10 @@ public class LotAggregateService
         if (lot is null)
             return null;
 
-        var gdd = lot.AccumulatedGdd
-                  ?? await _gddService.GetAccumulatedGddAsync(lot, asOfDate, ct);
+        // El snapshot persistido es del día de hoy: con fecha simulada se recalcula a esa fecha.
+        var gdd = asOfDate is null && lot.AccumulatedGdd is { } snapshot
+            ? snapshot
+            : await _gddService.GetAccumulatedGddAsync(lot, asOfDate, ct);
 
         var plants = await context.Plants
             .Include(p => p.CommercialStage)
@@ -82,7 +84,7 @@ public class LotAggregateService
 
         // Ética de datos: si no hay evaluación/imagen, no se muestran valores inventados.
         var warnings = new List<string>();
-        if (gdd == 0 && !lot.AccumulatedGdd.HasValue)
+        if (gdd == 0 && (asOfDate is not null || !lot.AccumulatedGdd.HasValue))
             warnings.Add("No hay lecturas de temperatura para calcular GDD: se muestra 0.");
 
         if (lot.GridRows is not int rows || lot.GridColumns is not int columns
@@ -245,16 +247,17 @@ public class LotAggregateService
             .Select(i => new { i.Path, i.FileName })
             .FirstOrDefaultAsync(ct);
 
-        var history = await context.PlantStageHistories
-            .Where(h => h.PlantId == plantId)
-            .OrderByDescending(h => h.ChangedAtUtc)
-            .Select(h => new PlantHistoryEntryDto(
-                h.ChangedAtUtc,
-                h.Source,
-                h.PreviousCommercialStageId.HasValue ? h.PreviousCommercialStageId.Value.ToString() : h.PreviousOperationalState,
-                h.NewCommercialStageId.HasValue ? h.NewCommercialStageId.Value.ToString() : h.NewOperationalState,
-                h.Reason))
-            .ToListAsync(ct);
+        var stageNames = await context.CommercialStages
+            .AsNoTracking()
+            .ToDictionaryAsync(s => s.Id, s => s.Name, ct);
+
+        var history = (await context.PlantStageHistories
+                .AsNoTracking()
+                .Where(h => h.PlantId == plantId)
+                .OrderByDescending(h => h.ChangedAtUtc)
+                .ToListAsync(ct))
+            .Select(h => DescribeChange(h, stageNames))
+            .ToList();
 
         var warnings = new List<string>();
         if (lastEvaluation is null)
@@ -285,5 +288,27 @@ public class LotAggregateService
             lastImage?.FileName,
             history,
             warnings);
+    }
+
+    /// <summary>
+    /// Cambio legible: si cambió el estado operativo (cosecha/descarte) se muestra ese
+    /// cambio (el comercial queda congelado); si no, los nombres de las etapas comerciales.
+    /// </summary>
+    private static PlantHistoryEntryDto DescribeChange(PlantStageHistory h, IReadOnlyDictionary<int, string> stageNames)
+    {
+        string? Stage(int? id) => id is { } value && stageNames.TryGetValue(value, out var name) ? name : null;
+
+        var operationalChanged = h.PreviousOperationalState is not null
+            && h.NewOperationalState is not null
+            && h.PreviousOperationalState != h.NewOperationalState;
+
+        return operationalChanged
+            ? new PlantHistoryEntryDto(h.ChangedAtUtc, h.Source, h.PreviousOperationalState, h.NewOperationalState, h.Reason)
+            : new PlantHistoryEntryDto(
+                h.ChangedAtUtc,
+                h.Source,
+                Stage(h.PreviousCommercialStageId) ?? h.PreviousOperationalState,
+                Stage(h.NewCommercialStageId) ?? h.NewOperationalState,
+                h.Reason);
     }
 }

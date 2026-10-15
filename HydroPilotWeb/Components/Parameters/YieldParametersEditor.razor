@@ -1,0 +1,101 @@
+@using HydroPilotWeb.Services
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Parameters
+
+@* Pesos por planta y precios por kg del sistema. Se usa en Ajustes > Parámetros y como atajo desde
+   la card de rendimiento de Lotes. Un campo vacío deja el valor sin definir. *@
+<div class="lot-editor">
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="param-babyleaf-grams">Peso planta Baby Leaf (gramos)</label>
+        <input id="param-babyleaf-grams" type="number" class="form-control" min="1" max="@YieldReferenceRules.MaxGramsPerPlant" step="1"
+               @bind="babyLeafGrams" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
+        <p class="lot-editor__help">Peso promedio de una planta cosechada como baby leaf.</p>
+    </div>
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="param-conventional-grams">Peso lechuga convencional (gramos)</label>
+        <input id="param-conventional-grams" type="number" class="form-control" min="1" max="@YieldReferenceRules.MaxGramsPerPlant" step="1"
+               @bind="conventionalGrams" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
+        <p class="lot-editor__help">Peso promedio de una planta cosechada como lechuga convencional.</p>
+    </div>
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="param-babyleaf-price">Precio Baby Leaf ($ por kg)</label>
+        <input id="param-babyleaf-price" type="number" class="form-control" min="1" step="1"
+               @bind="babyLeafPrice" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
+    </div>
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="param-conventional-price">Precio convencional ($ por kg)</label>
+        <input id="param-conventional-price" type="number" class="form-control" min="1" step="1"
+               @bind="conventionalPrice" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
+    </div>
+</div>
+
+@if (!ReadOnly)
+{
+    <p class="lot-editor__help mt-2">Dejá un campo vacío para dejarlo sin definir.</p>
+}
+
+@if (Errors.Count > 0)
+{
+    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+        <ul class="mb-0">
+            @foreach (var error in Errors)
+            {
+                <li>@error</li>
+            }
+        </ul>
+    </div>
+}
+
+@if (!ReadOnly)
+{
+    <div class="lot-editor__actions">
+        @if (!string.IsNullOrEmpty(SavedMessage))
+        {
+            <span class="lot-muted mt-0 me-auto">@SavedMessage</span>
+        }
+        @if (OnCancel.HasDelegate)
+        {
+            <button class="btn btn-outline-secondary btn-sm" @onclick="OnCancel" disabled="@Saving">Cancelar</button>
+        }
+        <button class="btn btn-success btn-sm" @onclick="SaveAsync" disabled="@Saving">
+            @(Saving ? "Guardando…" : "Guardar parámetros")
+        </button>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public YieldParameters Current { get; set; } = null!;
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public bool Saving { get; set; }
+    [Parameter] public IReadOnlyList<string> Errors { get; set; } = [];
+    [Parameter] public string? SavedMessage { get; set; }
+    [Parameter] public EventCallback<YieldReferenceInput> OnSave { get; set; }
+
+    /// <summary>Si se pasa, muestra "Cancelar" (uso como atajo desde la card).</summary>
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private decimal? babyLeafGrams;
+    private decimal? conventionalGrams;
+    private decimal? babyLeafPrice;
+    private decimal? conventionalPrice;
+    private YieldParameters? loadedFrom;
+
+    protected override void OnParametersSet()
+    {
+        // Carga los valores vigentes al abrir, sin pisar lo que se está escribiendo.
+        if (!Equals(loadedFrom, Current))
+        {
+            babyLeafGrams = Trim(Current.BabyLeafGrams);
+            conventionalGrams = Trim(Current.ConventionalGrams);
+            babyLeafPrice = Trim(Current.BabyLeafPricePerKg);
+            conventionalPrice = Trim(Current.ConventionalPricePerKg);
+            loadedFrom = Current;
+        }
+    }
+
+    // La base guarda decimal(18,4): sin esto el campo muestra "2600.0000".
+    private static decimal? Trim(decimal? value) => value / 1.0000000000000000000000000000m;
+
+    private Task SaveAsync() =>
+        OnSave.InvokeAsync(new YieldReferenceInput(babyLeafGrams, conventionalGrams, babyLeafPrice, conventionalPrice));
+}

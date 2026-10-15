@@ -9,42 +9,36 @@ namespace HydroPilotWeb.Services.Simulation;
 // La simulación es un motor WHAT-IF puro: recibe inputs del escenario y devuelve
 // un resultado calculado. NUNCA escribe producción (lotes, plantas, lecturas,
 // predicciones, nodos, configuración de cultivo) y NUNCA invoca hardware.
-// Los overrides (clima, % apto, costos) se aplican al escenario, no al dominio.
-// La persistencia (SimulationRun) queda para una entrega posterior; en esta
-// entrega el endpoint es PREVIEW sin persistencia (SIM-06).
+// Los overrides (clima, % Baby Leaf, pesos, precios, costos) se aplican al
+// escenario, no al dominio. El endpoint es PREVIEW sin persistencia (SIM-06).
+//
+// Usa la MISMA lógica que la vista Lotes (gana Lotes): ventanas y óptimos de corte
+// por GDD (CycleTimelineLogic) y rendimiento por plantas × peso × precio (sin m²).
 // ============================================================================
 
 /// <summary>
-/// Modo climático del escenario (SIM-03): manual (temperaturas del usuario),
-/// histórico (replay del promedio observado) o pronóstico (persistido en DB por
-/// WeatherService, con fetch perezoso serializado/guard diario del forecasting).
+/// Clima del escenario (SIM-03): manual (Tmin/Tmax del usuario, el what-if) o pronóstico
+/// (persistido en DB por WeatherService; con lote, el mismo que usa la vista Lotes).
 /// </summary>
 public enum SimulationClimateMode
 {
     Manual,
-    Historic,
     Forecast
 }
 
 /// <summary>
-/// Fuente de un punto diario de GDD DENTRO de la simulación. No reutiliza
-/// <see cref="GddPointSource"/> (contrato de forecasting) porque las semánticas
-/// difieren: "Manual" solo existe en el escenario y "HistoricReplay" es un
-/// promedio observado proyectado, no un pronóstico. Los valores numéricos sí
-/// se calculan SIEMPRE con <see cref="GddService.DailyGdd"/> (núcleo compartido).
+/// Fuente de un punto diario de GDD DENTRO de la simulación. "Manual" solo existe en el
+/// escenario. Los valores numéricos se calculan SIEMPRE con <see cref="GddService.DailyGdd"/>.
 /// </summary>
 public enum SimulationGddSource
 {
     /// <summary>Temperatura manual del usuario aplicada al escenario (SIM-03).</summary>
     Manual,
 
-    /// <summary>Promedio del GDD observado reciente proyectado hacia adelante (replay, SIM-03).</summary>
-    HistoricReplay,
-
     /// <summary>GDD derivado del pronóstico climático persistido (SIM-03).</summary>
     Forecast,
 
-    /// <summary>GDD de respaldo cuando no hay dato directo para la fecha (informado, nunca silencioso).</summary>
+    /// <summary>Día sin pronóstico: promedio de los últimos 7 días medidos del lote (como en Lotes, informado).</summary>
     Fallback
 }
 
@@ -56,64 +50,65 @@ public sealed record SimulationClimateInput(
     SimulationClimateMode Mode,
     decimal? ManualTempMinC,
     decimal? ManualTempMaxC,
-    int? ManualHumidityPercent, // contexto informativo; no participa de las fórmulas vigentes (GDD usa Tmin/Tmax)
     int? ForecastHorizonDays);
 
-/// <summary>Overrides de solución nutritiva del escenario (informativo, no modifica el lote).</summary>
-public sealed record SimulationAgronomicInput(
-    decimal? PhOverride,
-    decimal? EcOverride);
-
-/// <summary>Costo de semillas: precio por semilla × cantidad (fórmula SIM-05).</summary>
-public sealed record SimulationSeedCostsInput(decimal? PricePerSeed, int? SeedCount);
-
-/// <summary>Costo de nutrientes: precio por litro × litros/día × días proyectados (fórmula SIM-05).</summary>
-public sealed record SimulationNutrientCostsInput(decimal? PricePerLiter, decimal LitersPerDay);
-
-/// <summary>Costo de energía: precio por kWh × kWh/día × días proyectados (fórmula SIM-05).</summary>
-public sealed record SimulationEnergyCostsInput(decimal? PricePerKwh, decimal KwhPerDay);
-
 /// <summary>
-/// Costos del escenario (SIM-05). CurrencyCode es un código ISO 4217 (ej. "ARS").
-/// Si falta un precio, el componente muestra "No calculable" (nunca se inventa).
+/// Gastos del sistema del escenario (SIM-05): solo lo que el sistema sabe calcular (semillas =
+/// plantas del lote o del escenario; litros de nutrientes según plantas vivas y etapa). Los demás
+/// costos (mano de obra, energía, etc.) los arma el contador, fuera del sistema. Se cargan solo los
+/// precios, en la moneda de Ajustes &gt; Parámetros. NutrientPricePerLiter null = el de Ajustes &gt;
+/// Parámetros. Si falta un precio, el componente es "No calculable".
 /// </summary>
 public sealed record SimulationCostsInput(
-    string CurrencyCode,
-    SimulationSeedCostsInput Seeds,
-    SimulationNutrientCostsInput Nutrients,
-    SimulationEnergyCostsInput Energy);
+    decimal? PricePerSeed,
+    decimal? NutrientPricePerLiter);
+
+/// <summary>Estrategia de cosecha que se elige para el escenario.</summary>
+public enum SimulationStrategyKind
+{
+    /// <summary>Corta como Baby Leaf todas las que se prevén aptas en el óptimo; el resto sigue a convencional.</summary>
+    MaxBabyLeaf,
+
+    /// <summary>Corta como Baby Leaf hasta la meta (sin pasar las previstas aptas); el resto sigue a convencional.</summary>
+    BabyLeafGoal,
+
+    /// <summary>Todas siguen hasta el corte convencional.</summary>
+    AllConventional
+}
 
 /// <summary>
-/// Hipótesis de cosecha del escenario (SIM-08/SIM-09). HypothesisAptaPercent es
-/// la HIPÓTESIS EXPLÍCITA del usuario sobre el % de plantas activas que llegarán
-/// a "Baby Leaf apta": la simulación no inventa evaluaciones visuales por planta.
-/// RequiredTargetPercent es el umbral objetivo (prefijado con el del lote cuando
-/// hay contexto de lote; editable solo para el escenario).
+/// Estrategia elegida y meta Baby Leaf máxima (% de las plantas vivas en el óptimo). La meta es
+/// obligatoria con <see cref="SimulationStrategyKind.BabyLeafGoal"/>; con otra estrategia, si viene,
+/// esa opción también se calcula para comparar.
 /// </summary>
-public sealed record SimulationHarvestInput(
-    bool EnableBabyLeaf,
-    bool EnableConvencional,
-    decimal? HypothesisAptaPercent,
-    decimal? RequiredTargetPercent);
+public sealed record SimulationHarvestInput(SimulationStrategyKind Strategy, decimal? BabyLeafGoalPercent);
 
 /// <summary>
-/// Escenario de simulación (SIM-01). NO se aceptan desde el cliente resultado
-/// calculado, usuario autenticado de destino ni comandos físicos.
-/// SaveScenario es una marca explícita de guardar: en esta entrega la persistencia
-/// no está disponible y la marca se informa como advertencia (SIM-06), nunca se
-/// persiste silenciosamente.
+/// Pesos por planta y precios por kg del escenario. Null = el valor de Ajustes &gt; Parámetros
+/// (con el precio propio del lote si lo tiene).
+/// </summary>
+public sealed record SimulationYieldInput(
+    decimal? BabyLeafGramsPerPlant,
+    decimal? ConventionalGramsPerPlant,
+    decimal? BabyLeafPricePerKg,
+    decimal? ConventionalPricePerKg);
+
+/// <summary>
+/// Escenario de simulación (SIM-01), siempre desde hoy. Con lote (abierto): siembra, GDD medido
+/// hasta hoy y plantas activas salen del lote; desde mañana, el clima elegido. Sin lote (escenario
+/// libre): cultivo, siembra (pasada, hoy o futura, para planificar) y cantidad de plantas los pone
+/// el usuario, y el GDD se cuenta desde la siembra con el clima elegido. Solo viajan datos que
+/// entran en algún cálculo. NO se aceptan desde el cliente resultado calculado ni comandos físicos.
 /// </summary>
 public sealed record SimulationRequest(
     int? LotId,
     int? CropTypeId,
     DateOnly? SowingDate,
-    decimal? AreaM2,
-    DateOnly ReferenceDate,
+    int? PlantCount,
     SimulationClimateInput Climate,
-    SimulationAgronomicInput? Agronomic,
     SimulationCostsInput Costs,
     SimulationHarvestInput Harvest,
-    bool SaveScenario);
+    SimulationYieldInput? Yield);
 
 /// <summary>Resumen del contexto del escenario: lote real o cultivo + parámetros libres.</summary>
 public sealed record SimulationContextInfo(
@@ -121,82 +116,57 @@ public sealed record SimulationContextInfo(
     int? LotId,
     string? LotName,
     string CropTypeName,
-    DateOnly? SowingDate,
-    decimal? AreaM2,
-    decimal BaseTemperature,
-    decimal GddTarget);
+    DateOnly SowingDate,
+    int Plants, // plantas que se simulan: activas del lote o las del escenario libre
+    decimal BaseTemperature);
 
 /// <summary>
-/// Resultado del cálculo de GDD del escenario (SIM-04). El GDD base es siempre
-/// un valor RESPETANDO AsOfDate (ReferenceDate): lecturas posteriores a la fecha
-/// simulada quedan excluidas. Los escenarios de rendimiento conservador/base/
-/// optimista los provee el núcleo de forecasting (YieldEstimate).
+/// GDD del escenario (SIM-04): el acumulado hasta hoy (lecturas reales del lote, o el clima elegido
+/// desde la siembra en el escenario libre) y la proyección del clima elegido.
 /// </summary>
 public sealed record SimulationGdd(
     decimal Accumulated,
-    decimal GddTarget,
     decimal BaseTemperature,
     IReadOnlyList<SimulationGddPoint> Projection,
     int HorizonDays,
     int CoveredDays,
     int MissingDays,
     decimal? CoveragePercent,
-    DateOnly? EstimatedHarvestDate,
-    int? DaysRemaining,
-    string ProviderName, // "manual" | "historico" | "pronostico"
+    string ProviderName, // "manual" | "pronostico"
     DateTime? ForecastFetchedAtUtc,
     bool UsedFallback,
-    bool IsExtrapolation, // fecha más allá del horizonte: extrapolación con el último GDD diario
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    ForecastCorrection? Correction); // pronóstico de afuera corregido a la temperatura de adentro
 
 /// <summary>
-/// Información del lote real usada como contexto (SIM-08): GDD base, etapa
-/// fenológica, plantas activas/cosechadas/descartadas, grilla configurada y
-/// celdas reales. Todo SOLO LECTURA: la simulación nunca escribe el lote.
+/// Información del lote real usada como contexto (SIM-08): etapa, plantas y grilla (nombre,
+/// siembra y GDD están en el contexto y el GDD del resultado). SOLO LECTURA: nunca escribe el lote.
 /// </summary>
 public sealed record SimulationLotInfo(
     int LotId,
-    string? LotName,
-    string CropTypeName,
-    DateOnly SowingDate,
-    decimal AreaM2,
-    decimal GddAccumulated,
     string? PhenologicalStageName,
-    int? PhenologicalStageOrder,
     int GridRows,
     int GridColumns,
     int TotalPlants,
     int ActivePlants,
     int HarvestedPlants,
     int DiscardedPlants,
-    int EmptyPositions,
     IReadOnlyList<PlantCellDto> Grid);
 
+/// <summary>Pesos y precios con los que se valoriza el escenario (y si alguno vino del escenario).</summary>
+public sealed record SimulationYieldReference(YieldReference Weights, YieldPrices Prices, bool HasScenarioOverrides);
+
 /// <summary>
-/// Resultado de la regla híbrida de cosecha simulada (SIM-09). La regla es la
-/// misma de producción (HarvestReadinessRules, reutilizada): entrada en ventana
-/// GDD Y porcentaje de aptas sobre el umbral. La diferencia: el % de aptas puede
-/// ser una HIPÓTESIS del usuario (AptaPercentIsHypothesis=true), nunca una
-/// evaluación visual inventada. La salida indica qué parte decidió el GDD y qué
-/// parte es hipótesis de score.
+/// Corte de un destino según la lógica de Lotes. Date null = no se puede cortar (ventana Baby Leaf
+/// ya cerrada, o sin proyección para estimar). IsNow = ya pasó el óptimo: se corta hoy.
+/// IsOverdue = pasada la ventana (Baby Leaf: ya no se puede; convencional: sobremadurez).
 /// </summary>
-public sealed record SimulationHarvestOutcome(
-    bool Enabled,
-    bool HasBabyLeafConfig, // sin configuración activa no se puede evaluar ventana
-    decimal? WindowMin,
-    decimal? WindowMax,
-    bool GddInWindow,
-    decimal? RequiredPercent,
-    int RealAptaCount,
-    int TotalActivePlants,
-    decimal? AptaPercentUsed,
-    bool AptaPercentIsHypothesis,
-    bool? IsReady, // null = decisión pendiente
-    string? DecisionReason,
-    DateOnly? BabyLeafEntryDate,
-    DateOnly? ConventionalEntryDate,
-    bool ConventionalHasMaturityData, // análisis de imagen (fase futura)
-    IReadOnlyList<string> Warnings);
+public sealed record SimulationCut(
+    HarvestDestination Destination,
+    DateOnly? Date,
+    bool IsNow,
+    bool IsExtrapolated,
+    bool IsOverdue);
 
 /// <summary>Componente de costo con fórmula transparente (SIM-05).</summary>
 public sealed record SimulationCostComponent(
@@ -207,49 +177,54 @@ public sealed record SimulationCostComponent(
     string Unit);
 
 /// <summary>
-/// Desglose de costos (SIM-05). Total null = "No calculable" (faltan precios).
-/// CostPerKg solo si total y rendimiento > 0; nunca se inventa rentabilidad.
+/// Desglose de costos de una estrategia (SIM-05). Total null = "No calculable" (faltan precios).
 /// </summary>
 public sealed record SimulationCostBreakdown(
     string CurrencyCode,
     IReadOnlyList<SimulationCostComponent> Components,
     decimal? Total,
     string? TotalNotCalculableReason,
-    decimal? CostPerKg,
-    int ProjectedDays, // días usados para nutrientes/energía (días al cierre o horizonte con advertencia)
-    IReadOnlyList<string> Warnings);
-
-/// <summary>Resultado de una estrategia dentro de la comparación (ALTERNATIVAS).</summary>
-public sealed record SimulationAlternativeOutcome(
-    string Strategy, // "Baby Leaf" | "Convencional"
-    DateOnly? HarvestDate,
-    int? DaysRemaining,
-    bool? IsReady,
-    string DecisionBasis, // "gdd" | "gdd + hipótesis de score" | "gdd + madurez (análisis de imagen)" | "pendiente"
+    int CycleDays, // días de la siembra al último corte de la estrategia
+    int Seeds,     // plantas del lote (todas) o del escenario
+    NutrientUsage? Usage, // agua y nutrientes del ciclo; null = sin fecha de corte
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Comparación de estrategias (SIM-09): Baby Leaf vs convencional con sus
-/// umbrales separados (ventana Baby Leaf configurada vs GddTarget del cultivo).
-/// Incluye las hipótesis usadas para que el productor sepa qué supuso el cálculo.
+/// Resultado de una estrategia: cuántas plantas van a cada destino y cuántas se prevé perder,
+/// cuándo se cortan, kg, ingresos, costos del ciclo y margen. Available = false si algún destino
+/// con plantas no se puede cortar.
 /// </summary>
-public sealed record SimulationAlternativeComparison(
-    IReadOnlyList<SimulationAlternativeOutcome> Alternatives,
-    IReadOnlyList<string> HypothesesUsed,
+public sealed record SimulationStrategyOutcome(
+    SimulationStrategyKind Kind,
+    string Name, // "Máximo Baby Leaf" | "Meta Baby Leaf (X %)" | "Todo convencional"
+    bool Available,
+    SimulationCut? BabyLeafCut,
+    SimulationCut? ConventionalCut,
+    DateOnly? EndDate,
+    DestinationYield BabyLeaf,
+    DestinationYield Conventional,
+    int LostPlants, // pérdidas previstas (tempranas + tardías)
+    decimal? TotalKg,
+    decimal? Revenue,
+    SimulationCostBreakdown Costs,
+    decimal? Margin,
+    decimal? CostPerKg,
     IReadOnlyList<string> Warnings);
 
 /// <summary>Resultado completo de una simulación preview (SIM-02: un único resultado por corrida).</summary>
 public sealed record SimulationResult(
-    string SimulationId, // determinista: misma entrada → mismo id/resultado (repetibilidad)
+    string SimulationId, // determinista: misma entrada el mismo día → mismo id/resultado (repetibilidad)
     SimulationRequest Request,
-    bool IsSimulated, // true: entorno simulado (banner permanente)
+    DateOnly Today,      // el "hoy" del escenario: hasta acá lo medido; desde mañana, el clima elegido
+    bool IsSimulated,
     SimulationContextInfo Context,
     SimulationLotInfo? Lot,
     SimulationGdd Gdd,
-    YieldEstimate Yield,
-    SimulationHarvestOutcome? Harvest,
-    SimulationAlternativeComparison Alternatives,
-    SimulationCostBreakdown Costs,
+    CycleTimeline? Timeline, // ventanas y óptimos de corte (como la línea de tiempo de Lotes)
+    GddCurve? Curve,         // GDD acumulado: hasta hoy + proyección del escenario
+    SimulationYieldReference Reference,
+    BabyLeafOutlook Outlook, // previsión de aptas a Baby Leaf y pérdidas (histórico + estado del lote)
+    IReadOnlyList<SimulationStrategyOutcome> Strategies,
     IReadOnlyList<string> Warnings);
 
 /// <summary>Respuesta del preview: validación + resultado (la UI y la API ven lo mismo).</summary>
@@ -258,14 +233,25 @@ public sealed record SimulationPreview(
     IReadOnlyList<string> ValidationErrors,
     SimulationResult? Result);
 
-/// <summary>Opciones de contexto para los selectores de la UI (sin acceso a EF desde la vista).</summary>
-public sealed record SimulationLotOption(int Id, string Name, string CropTypeName, string StatusName, DateOnly SowingDate, decimal AreaM2, decimal? RequiredTargetPercent);
+/// <summary>Lote para el selector de contexto, con lo que la vista usa para precargar el formulario.</summary>
+public sealed record SimulationLotOption(
+    int Id,
+    string Name,
+    string CropTypeName,
+    string StatusName,
+    DateOnly SowingDate,
+    int TotalPlants,
+    int ActivePlants,
+    decimal? BabyLeafGoalPercent);
 
-public sealed record SimulationCropOption(int Id, string Name, decimal GddTarget, decimal BaseTemperature, decimal? YieldPerM2);
+public sealed record SimulationCropOption(int Id, string Name, decimal BaseTemperature);
 
+/// <summary>Opciones de contexto para la UI (sin acceso a EF desde la vista), con los parámetros del sistema.</summary>
 public sealed record SimulationContextOptions(
     IReadOnlyList<SimulationLotOption> Lots,
-    IReadOnlyList<SimulationCropOption> Crops);
+    IReadOnlyList<SimulationCropOption> Crops,
+    YieldParameters Parameters,
+    decimal? NutrientPricePerLiter); // de Ajustes > Parámetros; null = sin definir
 
-/// <summary>Problema de validación devuelto por la API (SIM-05: negativos/moneda/texto validados en servidor).</summary>
+/// <summary>Problema de validación devuelto por la API (SIM-05: negativos y rangos validados en servidor).</summary>
 public sealed record SimulationValidationProblem(IReadOnlyList<string> Errors);

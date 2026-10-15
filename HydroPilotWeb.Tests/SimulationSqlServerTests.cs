@@ -1,17 +1,18 @@
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Simulation;
 using Microsoft.EntityFrameworkCore;
 
 namespace HydroPilotWeb.Tests.Integration;
 
 /// <summary>
-/// Pruebas de integración del módulo de simulación (SIM-01..SIM-10) sobre SQL
-/// Server real con las MIGRACIONES y el SEED del producto. Cubren: contexto lote/
-/// cultivo, AsOfDate sin fuga de lecturas futuras, costos (No calculable),
-/// validación de negativos, ausencia de datos climáticos, repetibilidad,
-/// regla híbrida con hipótesis explícita, AISLAMIENTO (cero invocaciones a
-/// hardware y cero modificaciones de entidades productivas) y grilla opcional.
+/// Pruebas de integración del módulo de simulación sobre SQL Server real con las MIGRACIONES y el
+/// SEED del producto. Cubren: contexto lote/cultivo (siempre desde hoy, siembra futura para
+/// planificar, lotes cerrados fuera), pronóstico igual al de Lotes, cortes por GDD con la lógica
+/// de Lotes, plantas del lote, pesos y precios de Parámetros u override,
+/// costos (No calculable), validación, ausencia de datos climáticos, repetibilidad y AISLAMIENTO
+/// (cero invocaciones a hardware y cero modificaciones de entidades productivas).
 /// </summary>
 [Collection("simulation-sql")]
 public class SimulationSqlServerTests
@@ -29,39 +30,87 @@ public class SimulationSqlServerTests
 
     private HydroPilotDbContext NewContext() => _fixture.Factory.CreateDbContext();
 
-    private static SimulationCostsInput FullCosts() => new(
-        "ARS",
-        new SimulationSeedCostsInput(PricePerSeed: 2.5m, SeedCount: 600),
-        new SimulationNutrientCostsInput(PricePerLiter: 5m, LitersPerDay: 5m),
-        new SimulationEnergyCostsInput(PricePerKwh: 30m, KwhPerDay: 1.5m));
+    private static SimulationCostsInput FullCosts() => new(PricePerSeed: 2.5m, NutrientPricePerLiter: 5m);
+
+    /// <summary>Pesos y precios propios del escenario (no dependen de los parámetros del sistema).</summary>
+    private static SimulationYieldInput ScenarioYield() => new(30m, 200m, 3000m, 2000m);
 
     private static SimulationRequest ManualLotRequest(
         int lotId,
         SimulationCostsInput? costs = null,
-        SimulationHarvestInput? harvest = null,
-        DateOnly? referenceDate = null,
+        decimal? babyLeafGoal = null,
+        SimulationClimateMode mode = SimulationClimateMode.Manual,
         decimal tmin = 16m,
         decimal tmax = 26m) => new(
         LotId: lotId,
         CropTypeId: null,
         SowingDate: null,
-        AreaM2: null,
-        ReferenceDate: referenceDate ?? Today,
-        Climate: new SimulationClimateInput(SimulationClimateMode.Manual, tmin, tmax, 65, ForecastHorizonDays: 7),
-        Agronomic: new SimulationAgronomicInput(6.0m, 1.5m),
+        PlantCount: null,
+        Climate: new SimulationClimateInput(mode, mode == SimulationClimateMode.Manual ? tmin : null,
+            mode == SimulationClimateMode.Manual ? tmax : null, ForecastHorizonDays: 7),
         Costs: costs ?? FullCosts(),
-        Harvest: harvest ?? new SimulationHarvestInput(EnableBabyLeaf: true, EnableConvencional: true, HypothesisAptaPercent: 80m, RequiredTargetPercent: 70m),
-        SaveScenario: false);
+        Harvest: new SimulationHarvestInput(
+            babyLeafGoal is null ? SimulationStrategyKind.MaxBabyLeaf : SimulationStrategyKind.BabyLeafGoal, babyLeafGoal),
+        Yield: ScenarioYield());
 
-    // --- SIM-02/SIM-04: resultado único con contexto de lote ---
+    private static SimulationRequest FreeRequest(
+        int cropId, DateOnly sowing, SimulationClimateMode mode, decimal? goal = null) => new(
+        LotId: null,
+        CropTypeId: cropId,
+        SowingDate: sowing,
+        PlantCount: 60,
+        Climate: mode == SimulationClimateMode.Manual
+            ? new SimulationClimateInput(mode, 18m, 26m, 7)
+            : new SimulationClimateInput(mode, null, null, 7),
+        Costs: FullCosts(),
+        Harvest: new SimulationHarvestInput(
+            goal is null ? SimulationStrategyKind.MaxBabyLeaf : SimulationStrategyKind.BabyLeafGoal, goal),
+        Yield: ScenarioYield());
+
+    /// <summary>Deja en la DB solo este pronóstico (la tabla no se limpia entre tests).</summary>
+    private static async Task SeedForecastAsync(HydroPilotDbContext context, DateOnly from, int days, decimal tmin, decimal tmax)
+    {
+        context.DailyWeatherForecasts.RemoveRange(context.DailyWeatherForecasts);
+        for (var i = 0; i < days; i++)
+        {
+            context.DailyWeatherForecasts.Add(new DailyWeatherForecast
+            {
+                Date = from.AddDays(i),
+                TempMin = tmin,
+                TempMax = tmax,
+                FetchedAt = DateTime.UtcNow
+            });
+        }
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task AddActivePlantsAsync(HydroPilotDbContext context, Lot lot, int count)
+    {
+        var stage = await context.CommercialStages.FirstAsync(s => s.Name == CommercialStageNames.EnDesarrollo);
+        for (var i = 0; i < count; i++)
+        {
+            context.Plants.Add(new Plant
+            {
+                LotId = lot.Id,
+                Row = i / 4 + 1,
+                Column = i % 4 + 1,
+                CommercialStageId = stage.Id,
+                OperationalState = PlantOperationalState.Activa,
+            });
+        }
+        await context.SaveChangesAsync();
+    }
+
+    // --- Resultado único con contexto de lote ---
 
     [Fact]
-    public async Task Simulacion_Lote_Modo_Manual_Devuelve_Resultado_Completo()
+    public async Task Simulacion_Lote_Modo_Manual_Corta_En_Los_Optimos_De_Lotes()
     {
         await using var context = NewContext();
         await IntegrationTestHelpers.ResetTelemetryAsync(context);
         var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
         await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 10, 25m);
+        await AddActivePlantsAsync(context, lot, 10);
 
         var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id));
 
@@ -69,36 +118,40 @@ public class SimulationSqlServerTests
         var result = preview.Result!;
         Assert.True(result.IsSimulated);
         Assert.Equal("lote", result.Context.ContextKind);
+        Assert.Equal(10, result.Context.Plants); // las activas del lote
         Assert.Equal("manual", result.Gdd.ProviderName);
 
-        // 10 días × GDD(25,25,4.5)=20.5 → 205
+        // 10 días × GDD(25,25,4.5)=20.5 → 205: todavía en desarrollo.
         Assert.Equal(205m, result.Gdd.Accumulated);
-        Assert.Equal(300m, result.Gdd.GddTarget);
+        Assert.NotNull(result.Timeline);
+        Assert.Equal(CyclePhase.Desarrollo, result.Timeline.Phase);
 
-        // Proyección manual 7 días × GDD(26,16,4.5)=16.5; cruce a 300 el día 6.
-        Assert.Equal(Today.AddDays(6), result.Gdd.EstimatedHarvestDate);
-        Assert.Equal(6, result.Gdd.DaysRemaining);
+        // Proyección manual 16.5/día: el óptimo Baby Leaf (300) cae el día 6, como en la vista Lotes.
+        Assert.Equal(Today.AddDays(6), result.Timeline.BabyLeafOptimum.Date);
         Assert.Equal(7, result.Gdd.CoveredDays);
         Assert.Equal(0, result.Gdd.MissingDays);
 
-        // Rendimiento desde el núcleo de forecasting (sin ciclos cerrados → baseline).
-        Assert.True(result.Yield.Base > 0m);
-        Assert.True(result.Yield.Conservative <= result.Yield.Base && result.Yield.Base <= result.Yield.Optimistic);
+        // Sin meta Baby Leaf: "máximo Baby Leaf" y "todo convencional". Sin historial: todas aptas, sin pérdidas.
+        Assert.Equal(["Máximo Baby Leaf", "Todo convencional"], result.Strategies.Select(s => s.Name));
+        Assert.Null(result.Outlook.AptRate);
+        Assert.Equal(0, result.Strategies[0].LostPlants);
+        var babyLeaf = result.Strategies[0];
+        Assert.Equal(Today.AddDays(6), babyLeaf.BabyLeafCut!.Date);
+        Assert.Equal(16, babyLeaf.Costs.CycleDays);             // siembra (hoy-10) → corte (hoy+6)
+        // 10 plantas: 14 días antes de Baby Leaf (abre hoy+3) × 0,15 L + 2 días en Baby Leaf × 0,3 L = 27 L.
+        Assert.Equal(10, babyLeaf.Costs.Seeds);                 // las plantas del lote
+        Assert.Equal(27m, babyLeaf.Costs.Usage!.WaterLiters);
+        Assert.Equal(25.68m, babyLeaf.Costs.Total);             // 10 × 2,5 + 0,135 L × $5
+        Assert.Equal(new DestinationYield(10, 0.3m, 900m), babyLeaf.BabyLeaf); // 10 × 30 g × $3000/kg
 
-        // Contexto de lote + grilla (SIM-08/SIM-10): 3×4 posiciones, sin plantas.
+        // Curva: medido hasta hoy + proyección del escenario.
+        Assert.NotNull(result.Curve);
+        Assert.Equal(7, result.Curve.Projected.Count);
+
+        // Contexto de lote + grilla 3×4 (solo lectura).
         Assert.NotNull(result.Lot);
         Assert.Equal(12, result.Lot.Grid.Count);
-        Assert.All(result.Lot.Grid, cell => Assert.Equal("empty", cell.CellKind));
-        Assert.Equal(0, result.Lot.ActivePlants);
-
-        // Regla híbrida: GDD 205 < ventana (250–450) → no listo, con razón visible.
-        Assert.NotNull(result.Harvest);
-        Assert.False(result.Harvest.GddInWindow);
-        Assert.Equal(Today.AddDays(3), result.Harvest.BabyLeafEntryDate); // cruce a 250 el día 3
-
-        // Costos con días proyectados = 6 (referencia → cosecha).
-        Assert.NotNull(result.Costs.Total);
-        Assert.Equal(6, result.Costs.ProjectedDays);
+        Assert.Equal(10, result.Lot.ActivePlants);
     }
 
     [Fact]
@@ -106,73 +159,308 @@ public class SimulationSqlServerTests
     {
         await using var context = NewContext();
         var crop = await context.CropTypes.FirstAsync();
-        var sowing = Today.AddDays(-15);
-        var request = new SimulationRequest(
-            LotId: null,
-            CropTypeId: crop.Id,
-            SowingDate: sowing,
-            AreaM2: 4.5m,
-            ReferenceDate: Today,
-            Climate: new SimulationClimateInput(SimulationClimateMode.Manual, 18m, 26m, 65, 7),
-            Agronomic: null,
-            Costs: FullCosts(),
-            Harvest: new SimulationHarvestInput(true, true, 85m, 70m),
-            SaveScenario: false);
+        var request = FreeRequest(crop.Id, Today.AddDays(-15), SimulationClimateMode.Manual, goal: 80m);
 
         var preview = await _fixture.Simulation.PreviewAsync(request);
 
         Assert.True(preview.IsValid);
         var result = preview.Result!;
         Assert.Equal("cultivo", result.Context.ContextKind);
+        Assert.Equal(60, result.Context.Plants);
         Assert.Null(result.Lot);
 
-        // 16 días (siembra Today-15 ... Today inclusive) × GDD(26,18,4.5)=17.5 → 280
+        // 16 días (siembra hoy-15 ... hoy) × 17.5 = 280 → ventana Baby Leaf; el óptimo (300) llega en 2 días.
         Assert.Equal(280m, result.Gdd.Accumulated);
-        Assert.Equal(300m, result.Gdd.GddTarget);
+        Assert.Equal(CyclePhase.VentanaBabyLeaf, result.Timeline!.Phase);
+        Assert.Equal(Today.AddDays(2), result.Timeline.BabyLeafOptimum.Date);
 
-        // Saldo 20 con proyección 16.5/día → cruce el día 2.
-        Assert.Equal(Today.AddDays(2), result.Gdd.EstimatedHarvestDate);
-
-        // Rendimiento baseline del cultivo: 3.0 kg/m² × 4.5 m² = 13.5 base; avance 280/300 → confianza 92.
-        Assert.Equal(13.5m, result.Yield.Base);
-        Assert.Equal(92, result.Yield.ConfidencePercent);
-        Assert.Equal(0, result.Yield.HistoryCycles);
-
-        // Escenario libre sin plantas activas: la regla híbrida queda pendiente (no se inventa).
-        Assert.NotNull(result.Harvest);
-        Assert.Null(result.Harvest.IsReady);
-        Assert.Contains(result.Harvest.Warnings, w => w.Contains("sin plantas activas", StringComparison.OrdinalIgnoreCase));
+        // Meta 80 %: 48 Baby Leaf + 12 convencionales.
+        var mixed = result.Strategies.Single(s => s.Kind == SimulationStrategyKind.BabyLeafGoal);
+        Assert.Equal(48, mixed.BabyLeaf.Plants);
+        Assert.Equal(12, mixed.Conventional.Plants);
+        Assert.Equal(3, result.Strategies.Count);
     }
 
-    // --- SIM-04: AsOfDate sin fuga de lecturas futuras ---
-
     [Fact]
-    public async Task Simulacion_Respeta_AsOfDate_Sin_Consumir_Lecturas_Futuras()
+    public async Task Simulacion_Escenario_Libre_Con_Siembra_Futura_Planifica_Desde_La_Siembra()
     {
         await using var context = NewContext();
-        await IntegrationTestHelpers.ResetTelemetryAsync(context);
-        var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
+        var crop = await context.CropTypes.FirstAsync();
+        var sowing = Today.AddDays(5);
 
-        // 10 días de lecturas (20°C → GDD 15.5/día) desde la siembra (días Today-10..Today-1).
-        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 10, 20m);
-
-        // Referencia 5 días atrás: solo las lecturas ≤ ese día (6 de 10) alimentan el
-        // cálculo; las 4 restantes EXISTEN (son pasado real) pero quedan fuera de AsOfDate.
-        var reference = Today.AddDays(-5);
-        var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id, referenceDate: reference));
+        var preview = await _fixture.Simulation.PreviewAsync(FreeRequest(crop.Id, sowing, SimulationClimateMode.Manual));
 
         Assert.True(preview.IsValid);
         var result = preview.Result!;
+        Assert.Equal(Today, result.Today);
+        Assert.Equal(0m, result.Gdd.Accumulated); // todavía no se sembró
+        Assert.Equal(sowing, result.Gdd.Projection[0].Date); // el clima cuenta desde la siembra
+        Assert.Equal(CyclePhase.Desarrollo, result.Timeline!.Phase);
 
-        var expected = await _fixture.Gdd.GetAccumulatedGddAsync(lot, reference);
-        Assert.Equal(Math.Round(expected, 2), result.Gdd.Accumulated);
-        Assert.Equal(6 * 15.5m, result.Gdd.Accumulated); // 93: sin fuga de las 4 lecturas posteriores a AsOf
-        Assert.Contains(result.Warnings, w => w.Contains("Consulta simulada", StringComparison.OrdinalIgnoreCase));
+        // 17,5 GDD/día desde la siembra: 300 GDD el día 18 (≈, extrapolado después de 7 días).
+        var babyLeaf = result.Strategies[0];
+        Assert.Equal(sowing.AddDays(17), babyLeaf.BabyLeafCut!.Date);
+        Assert.Equal(17, babyLeaf.Costs.CycleDays);
 
-        // Con referencia hoy: se usan las 10 lecturas (155), nunca valores futuros.
-        var todayPreview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id));
-        Assert.True(todayPreview.IsValid);
-        Assert.Equal(10 * 15.5m, todayPreview.Result!.Gdd.Accumulated);
+        Assert.Empty(result.Curve!.Measured);
+        Assert.Equal(sowing, result.Curve.Projected[0].Date);
+    }
+
+    [Fact]
+    public async Task Simulacion_Lote_Con_Pronostico_Usa_La_Misma_Proyeccion_Que_Lotes()
+    {
+        await using var context = NewContext();
+        await IntegrationTestHelpers.ResetTelemetryAsync(context);
+        var created = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
+        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(created.SowingDate), 10, 25m);
+        await SeedForecastAsync(context, Today.AddDays(1), 7, 15m, 25m); // 15,5 GDD/día
+
+        var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(created.Id, mode: SimulationClimateMode.Forecast));
+
+        Assert.True(preview.IsValid);
+        var result = preview.Result!;
+        Assert.Equal("pronostico", result.Gdd.ProviderName);
+        Assert.Equal(205m, result.Gdd.Accumulated); // medido hasta hoy
+
+        // La proyección es la de la vista Lotes (GddService), día por día.
+        var lot = await context.Lots.AsNoTracking().Include(l => l.CropType).FirstAsync(l => l.Id == created.Id);
+        var lotes = await _fixture.Gdd.GetFutureGddProjectionAsync(lot);
+        Assert.Equal(lotes.Points.Select(p => (p.Date, p.Gdd)), result.Gdd.Projection.Select(p => (p.Date, p.Gdd)));
+        Assert.All(result.Gdd.Projection, p => Assert.Equal(15.5m, p.Gdd));
+
+        // 205 + 15,5 × 7 = 313,5: el óptimo Baby Leaf (300) cae el día 7.
+        Assert.Equal(Today.AddDays(7), result.Timeline!.BabyLeafOptimum.Date);
+    }
+
+    [Fact]
+    public async Task Simulacion_No_Ofrece_Ni_Acepta_Lotes_Cerrados()
+    {
+        await using var context = NewContext();
+        var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-30));
+        lot.StatusId = (await context.LotStatuses.FirstAsync(st => st.Name == "COSECHADO")).Id;
+        await context.SaveChangesAsync();
+
+        var options = await _fixture.Simulation.GetContextOptionsAsync();
+        var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id));
+
+        Assert.DoesNotContain(options.Lots, l => l.Id == lot.Id);
+        Assert.False(preview.IsValid);
+        Assert.Contains(preview.ValidationErrors, e => e.Contains("cerrado"));
+    }
+
+    // --- Previsión de Baby Leaf y pérdidas (histórico + estado del lote) ---
+
+    /// <summary>Lote cerrado con plantas en los estados dados (y, opcional, los datos del ciclo cargados a mano).</summary>
+    private static async Task<Lot> ClosedLotAsync(
+        HydroPilotDbContext context, DateOnly sowing, int babyLeaf, int conventional,
+        (DateOnly Date, int Count)[] discards, Action<Lot>? manual = null, DateOnly? harvest = null)
+    {
+        var lot = await ForecastTestData.CreateActiveLotAsync(context, sowing, rows: 5, columns: 6);
+        lot.StatusId = (await context.LotStatuses.FirstAsync(st => st.Name == "COSECHADO")).Id;
+        lot.ActualHarvestDate = harvest ?? sowing.AddDays(30);
+        manual?.Invoke(lot);
+
+        var apt = await context.CommercialStages.FirstAsync(st => st.Name == CommercialStageNames.BabyLeafApta);
+        var conv = await context.CommercialStages.FirstAsync(st => st.Name == CommercialStageNames.CosechaConvencional);
+        var position = 0;
+        void Add(PlantOperationalState state, int? stageId, DateOnly? harvestDate, DateOnly? discardDate)
+        {
+            context.Plants.Add(new Plant
+            {
+                LotId = lot.Id, Row = position / 6 + 1, Column = position % 6 + 1, CommercialStageId = stageId,
+                OperationalState = state, HarvestDate = harvestDate, DiscardDate = discardDate,
+            });
+            position++;
+        }
+        for (var i = 0; i < babyLeaf; i++) Add(PlantOperationalState.Cosechada, apt.Id, lot.ActualHarvestDate, null);
+        for (var i = 0; i < conventional; i++) Add(PlantOperationalState.Cosechada, conv.Id, lot.ActualHarvestDate, null);
+        foreach (var (date, count) in discards)
+            for (var i = 0; i < count; i++) Add(PlantOperationalState.Descartada, null, null, date);
+
+        await context.SaveChangesAsync();
+        return lot;
+    }
+
+    private async Task RemoveLotsAsync(params Lot[] lots)
+    {
+        await using var context = NewContext();
+        var ids = lots.Select(l => l.Id).ToList();
+        context.Lots.RemoveRange(await context.Lots.Where(l => ids.Contains(l.Id)).ToListAsync());
+        await context.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Simulacion_Preve_Aptas_Y_Perdidas_Con_Los_Lotes_Previos_Cargados()
+    {
+        await using var context = NewContext();
+        var crop = await context.CropTypes.FirstAsync();
+
+        // Dos lotes previos de la misma temporada (hace un año), con los datos del ciclo cargados a mano.
+        var x = await ClosedLotAsync(context, Today.AddDays(-365), babyLeaf: 8, conventional: 1,
+            [(Today.AddDays(-360), 1)], l => { l.BabyLeafAptAtOptimum = 8; l.EarlyLossPlants = 1; l.LateLossPlants = 0; });
+        var y = await ClosedLotAsync(context, Today.AddDays(-360), babyLeaf: 6, conventional: 3,
+            [(Today.AddDays(-335), 1)], l => { l.BabyLeafAptAtOptimum = 6; l.EarlyLossPlants = 0; l.LateLossPlants = 1; });
+        try
+        {
+            var preview = await _fixture.Simulation.PreviewAsync(FreeRequest(crop.Id, Today, SimulationClimateMode.Manual));
+
+            Assert.True(preview.IsValid);
+            var outlook = preview.Result!.Outlook;
+            Assert.Equal(2, outlook.History.Lots.Count);
+            Assert.All(outlook.History.Lots, l => Assert.True(l.Outcome.IsManual));
+            Assert.Equal(0.7444m, outlook.AptRate);              // (8/9 + 6/10) / 2
+            Assert.Equal(0.05m, outlook.History.EarlyLossRate);  // (1/10 + 0) / 2
+            Assert.Equal(0.125m, outlook.History.LateLossRate);  // (0/1 + 1/4) / 2
+
+            // 60 plantas: 3 pérdidas tempranas → 57 vivas; 74 % aptas → 42 Baby Leaf; de las 15 que siguen, 2 tardías.
+            var max = preview.Result.Strategies.Single(s => s.Kind == SimulationStrategyKind.MaxBabyLeaf);
+            Assert.Equal(42, max.BabyLeaf.Plants);
+            Assert.Equal(13, max.Conventional.Plants);
+            Assert.Equal(5, max.LostPlants);
+        }
+        finally
+        {
+            await RemoveLotsAsync(x, y);
+        }
+    }
+
+    [Fact]
+    public async Task Simulacion_Calcula_El_Ciclo_De_Los_Lotes_Cerrados_Desde_La_App()
+    {
+        await using var context = NewContext();
+        await IntegrationTestHelpers.ResetTelemetryAsync(context);
+        var crop = await context.CropTypes.FirstAsync();
+
+        // 30 días a 25 °C → 20,5 GDD/día: la ventana Baby Leaf (450) cierra el día 22 desde la siembra.
+        var sowing = Today.AddDays(-60);
+        var lot = await ClosedLotAsync(context, sowing, babyLeaf: 4, conventional: 2,
+            [(sowing.AddDays(10), 1), (sowing.AddDays(26), 1)]);
+        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(sowing), 30, 25m);
+
+        // Una de las convencionales estuvo "Baby Leaf apta": contaba como apta en el óptimo.
+        var aptId = (await context.CommercialStages.FirstAsync(st => st.Name == CommercialStageNames.BabyLeafApta)).Id;
+        var conventionalPlant = await context.Plants.FirstAsync(p => p.LotId == lot.Id && p.CommercialStageId != aptId && p.OperationalState == PlantOperationalState.Cosechada);
+        context.PlantStageHistories.Add(new PlantStageHistory
+        {
+            PlantId = conventionalPlant.Id, NewCommercialStageId = aptId, NewOperationalState = "Activa",
+            Source = "daily-flow", ChangedAtUtc = UtcDate(sowing.AddDays(18)),
+        });
+        await context.SaveChangesAsync();
+        try
+        {
+            var preview = await _fixture.Simulation.PreviewAsync(FreeRequest(crop.Id, sowing.AddDays(365), SimulationClimateMode.Manual));
+
+            var cycle = preview.Result!.Outlook.History.Lots.Single(l => l.Outcome.LotId == lot.Id).Outcome;
+            Assert.False(cycle.IsManual);
+            Assert.Equal(8, cycle.TotalPlants);
+            Assert.Equal(5, cycle.AptAtOptimum);       // 4 cortadas como Baby Leaf + 1 que estuvo apta
+            Assert.Equal(1, cycle.EarlyLosses);        // descartada el día 10
+            Assert.Equal(1, cycle.LateLosses);         // descartada el día 26, con la ventana ya cerrada
+            Assert.Equal(20.5m, cycle.AverageDailyGdd);
+        }
+        finally
+        {
+            await RemoveLotsAsync(lot);
+        }
+    }
+
+    [Fact]
+    public async Task Pronostico_Corregido_Con_El_Sensor_De_Adentro_Igual_En_Lotes_Y_Simulacion()
+    {
+        await using var context = NewContext();
+        await IntegrationTestHelpers.ResetTelemetryAsync(context);
+        var created = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
+        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(created.SowingDate), 10, 25m); // adentro: 20,5/día
+        await SeedForecastAsync(context, Today.AddDays(-10), 18, 15m, 25m);                                          // afuera: 15,5/día
+
+        var lot = await context.Lots.AsNoTracking().Include(l => l.CropType).FirstAsync(l => l.Id == created.Id);
+        var lotes = await _fixture.Gdd.GetFutureGddProjectionAsync(lot);
+        var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(created.Id, mode: SimulationClimateMode.Forecast));
+
+        // Adentro sumó 5 GDD/día más que el pronóstico de afuera: se corrige la proyección.
+        Assert.Equal(5m, lotes.Correction!.OffsetPerDay);
+        Assert.All(lotes.Points, p => Assert.Equal(20.5m, p.Gdd));
+        Assert.Equal(5m, preview.Result!.Gdd.Correction!.OffsetPerDay);
+        Assert.Equal(lotes.Points.Select(p => (p.Date, p.Gdd)), preview.Result.Gdd.Projection.Select(p => (p.Date, p.Gdd)));
+    }
+
+    // --- Plantas y pesos/precios ---
+
+    [Fact]
+    public async Task Simulacion_Usa_Las_Plantas_Activas_Del_Lote()
+    {
+        await using var context = NewContext();
+        await IntegrationTestHelpers.ResetTelemetryAsync(context);
+
+        // Lote demo del seed: 19 plantas activas.
+        var demoLot = await context.Lots.FirstAsync(l => l.Name == "Lote Demo 01");
+        var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(demoLot.Id, babyLeafGoal: 50m));
+
+        Assert.True(preview.IsValid);
+        var result = preview.Result!;
+        Assert.Equal(19, result.Context.Plants);
+        Assert.Equal(19, result.Lot!.ActivePlants);
+        var mixed = result.Strategies.Single(s => s.Kind == SimulationStrategyKind.BabyLeafGoal);
+        Assert.True(mixed.BabyLeaf.Plants <= 10); // meta 50 % de 19 = 9,5 → 10, sin pasar las previstas aptas
+        Assert.Equal(19, mixed.BabyLeaf.Plants + mixed.Conventional.Plants + mixed.LostPlants);
+    }
+
+    [Fact]
+    public async Task Simulacion_Toma_Pesos_Y_Precios_De_Parametros_Y_Acepta_Cambios_Del_Escenario()
+    {
+        var saved = await _fixture.Parameters.UpdateYieldParametersAsync(
+            new YieldReferenceInput(30m, 200m, 2600m, 1800m),
+            new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, "Administrador")], "test")));
+        Assert.True(saved.Succeeded);
+
+        await using var context = NewContext();
+        var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
+        await AddActivePlantsAsync(context, lot, 4);
+
+        var fromSystem = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id) with { Yield = null });
+        var withOverride = await _fixture.Simulation.PreviewAsync(
+            ManualLotRequest(lot.Id) with { Yield = new SimulationYieldInput(null, null, 5000m, null) });
+
+        Assert.Equal(new YieldReference(30m, 200m), fromSystem.Result!.Reference.Weights);
+        Assert.Equal(2600m, fromSystem.Result.Reference.Prices.BabyLeafPerKg);
+        Assert.False(fromSystem.Result.Reference.HasScenarioOverrides);
+
+        Assert.Equal(5000m, withOverride.Result!.Reference.Prices.BabyLeafPerKg);   // el del escenario
+        Assert.Equal(1800m, withOverride.Result.Reference.Prices.ConventionalPerKg); // el resto, del sistema
+        Assert.True(withOverride.Result.Reference.HasScenarioOverrides);
+        Assert.Equal(600m, withOverride.Result.Strategies[0].Revenue); // 4 × 30 g × $5000/kg
+    }
+
+    [Fact]
+    public async Task Simulacion_Usa_El_Precio_De_Nutrientes_De_Parametros()
+    {
+        static System.Security.Claims.ClaimsPrincipal User(string role) => new(new System.Security.Claims.ClaimsIdentity(
+            [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, role)], "test"));
+
+        Assert.False((await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(80m, User("Operador"))).Succeeded);
+        Assert.False((await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(0m, User("Administrador"))).Succeeded);
+        Assert.True((await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(80m, User("Administrador"))).Succeeded);
+        try
+        {
+            await using var context = NewContext();
+            var crop = await context.CropTypes.FirstAsync();
+            var request = FreeRequest(crop.Id, Today, SimulationClimateMode.Manual) with
+            {
+                Costs = FullCosts() with { NutrientPricePerLiter = null } // vacío: el de Ajustes > Parámetros
+            };
+
+            var preview = await _fixture.Simulation.PreviewAsync(request);
+
+            Assert.Equal(80m, (await _fixture.Simulation.GetContextOptionsAsync()).NutrientPricePerLiter);
+            var max = preview.Result!.Strategies[0];
+            Assert.Equal(Math.Round(80m * max.Costs.Usage!.NutrientLiters, 2),
+                max.Costs.Components.Single(c => c.Name == "Nutrientes").Amount);
+        }
+        finally
+        {
+            await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(null, User("Administrador"));
+        }
     }
 
     // --- SIM-05: costos y validación ---
@@ -185,22 +473,16 @@ public class SimulationSqlServerTests
         var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
         await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 5, 25m);
 
-        var costs = new SimulationCostsInput(
-            "ARS",
-            new SimulationSeedCostsInput(PricePerSeed: null, SeedCount: 600),
-            new SimulationNutrientCostsInput(5m, 5m),
-            new SimulationEnergyCostsInput(30m, 1.5m));
-
+        var costs = FullCosts() with { PricePerSeed = null };
         var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id, costs: costs));
 
         Assert.True(preview.IsValid);
-        var result = preview.Result!;
-
-        var seeds = result.Costs.Components.Single(c => c.Name == "Semillas");
-        Assert.Null(seeds.Amount);
-        Assert.Null(result.Costs.Total);
-        Assert.Contains(CostCalculator.NotCalculable, result.Costs.TotalNotCalculableReason);
-        Assert.Null(result.Costs.CostPerKg);
+        var strategy = preview.Result!.Strategies[0];
+        Assert.Null(strategy.Costs.Components.Single(c => c.Name == "Semillas").Amount);
+        Assert.Null(strategy.Costs.Total);
+        Assert.Contains(CostCalculator.NotCalculable, strategy.Costs.TotalNotCalculableReason);
+        Assert.Null(strategy.Margin);
+        Assert.Null(strategy.CostPerKg);
     }
 
     [Fact]
@@ -209,12 +491,7 @@ public class SimulationSqlServerTests
         await using var context = NewContext();
         var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
 
-        var costs = new SimulationCostsInput(
-            "ARS",
-            new SimulationSeedCostsInput(PricePerSeed: -1m, SeedCount: 600),
-            new SimulationNutrientCostsInput(5m, 5m),
-            new SimulationEnergyCostsInput(30m, 1.5m));
-
+        var costs = FullCosts() with { PricePerSeed = -1m };
         var preview = await _fixture.Simulation.PreviewAsync(ManualLotRequest(lot.Id, costs: costs));
 
         Assert.False(preview.IsValid);
@@ -229,127 +506,28 @@ public class SimulationSqlServerTests
     {
         await using var context = NewContext();
         var crop = await context.CropTypes.FirstAsync();
-        var request = new SimulationRequest(
-            LotId: null,
-            CropTypeId: crop.Id,
-            SowingDate: Today.AddDays(-15),
-            AreaM2: 4.5m,
-            ReferenceDate: Today,
-            Climate: new SimulationClimateInput(SimulationClimateMode.Historic, null, null, null, 7),
-            Agronomic: null,
-            Costs: FullCosts(),
-            Harvest: new SimulationHarvestInput(true, true, null, null),
-            SaveScenario: false);
+        await SeedForecastAsync(context, Today.AddDays(1), 0, 0m, 0m); // sin ningún pronóstico guardado
 
-        var preview = await _fixture.Simulation.PreviewAsync(request);
+        // Escenario libre con pronóstico y siembra pasada: los días sin pronóstico no suman (no se asume 0 medido).
+        var past = await _fixture.Simulation.PreviewAsync(FreeRequest(crop.Id, Today.AddDays(-15), SimulationClimateMode.Forecast));
+        Assert.True(past.IsValid);
+        Assert.Equal(0m, past.Result!.Gdd.Accumulated);
+        Assert.Contains(past.Result.Warnings, w => w.Contains("16 de 16 días desde la siembra sin pronóstico guardado"));
+
+        // Siembra lejana en el futuro: no hay pronóstico para esas fechas.
+        var preview = await _fixture.Simulation.PreviewAsync(FreeRequest(crop.Id, Today.AddDays(200), SimulationClimateMode.Forecast));
 
         Assert.True(preview.IsValid);
         var result = preview.Result!;
-        Assert.Empty(result.Gdd.Projection); // sin datos climáticos: nada se proyecta ni se asume
+        Assert.Empty(result.Gdd.Projection); // nada se proyecta ni se asume
         Assert.Equal(0, result.Gdd.CoveredDays);
         Assert.Equal(7, result.Gdd.MissingDays);
-        Assert.Contains(result.Warnings, w => w.Contains("histórico sin lote", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(result.Warnings, w => w.Contains("Sin proyección GDD", StringComparison.OrdinalIgnoreCase));
-        Assert.NotNull(result.Gdd.EstimatedHarvestDate); // respaldo por días de ciclo del cultivo, etiquetado
-    }
+        Assert.Equal(0m, result.Gdd.Accumulated);
+        Assert.Contains(result.Warnings, w => w.Contains("Sin pronóstico climático", StringComparison.OrdinalIgnoreCase));
 
-    // --- SIM-08/09: regla híbrida con hipótesis explícita ---
-
-    [Fact]
-    public async Task Simulacion_Regla_Hibrida_Usa_Hipotesis_Explicita_Sin_Tocar_El_Lote()
-    {
-        await using var context = NewContext();
-        await IntegrationTestHelpers.ResetTelemetryAsync(context);
-        var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-12), babyLeafTargetPercent: 70m);
-        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 11, 30m); // GDD 25.5/día → 280.5
-
-        // 10 plantas activas "En desarrollo" (sin evaluaciones aptas reales).
-        var stage = await context.CommercialStages.FirstAsync(s => s.Name == "En desarrollo");
-        var pheno = await context.PhenologicalStages.FirstAsync();
-        for (var i = 1; i <= 10; i++)
-        {
-            context.Plants.Add(new Plant
-            {
-                LotId = lot.Id,
-                Row = i,
-                Column = 1,
-                CommercialStageId = stage.Id,
-                PhenologicalStageId = pheno.Id,
-                OperationalState = PlantOperationalState.Activa,
-                CreatedAtUtc = DateTime.UtcNow
-            });
-        }
-        await context.SaveChangesAsync();
-
-        // Hipótesis del usuario: 85% de aptas esperadas; umbral 70%.
-        var request = ManualLotRequest(
-            lot.Id,
-            harvest: new SimulationHarvestInput(true, true, HypothesisAptaPercent: 85m, RequiredTargetPercent: 70m));
-        var preview = await _fixture.Simulation.PreviewAsync(request);
-
-        Assert.True(preview.IsValid);
-        var result = preview.Result!;
-
-        Assert.Equal(280.5m, result.Gdd.Accumulated); // dentro de la ventana 250–450
-        Assert.NotNull(result.Harvest);
-        Assert.True(result.Harvest.GddInWindow);
-        Assert.True(result.Harvest.AptaPercentIsHypothesis);
-        Assert.Equal(85m, result.Harvest.AptaPercentUsed);
-        Assert.Equal(70m, result.Harvest.RequiredPercent);
-        Assert.True(result.Harvest.IsReady); // 85% (hipótesis) ≥ 70% → listo
-        Assert.NotNull(result.Harvest.DecisionReason);
-        Assert.Contains("hipótesis", result.Harvest.DecisionReason, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(10, result.Lot!.ActivePlants); // el lote real no cambió
-
-        // El lote real sigue sin snapshot de GDD (la simulación no escribe).
-        var after = await context.Lots.AsNoTracking().FirstAsync(l => l.Id == lot.Id);
-        Assert.Null(after.AccumulatedGdd);
-    }
-
-    [Fact]
-    public async Task Simulacion_Regla_Hibrida_Queda_Pendiente_Sin_Umbral()
-    {
-        await using var context = NewContext();
-        await IntegrationTestHelpers.ResetTelemetryAsync(context);
-        var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-12), babyLeafTargetPercent: null);
-        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 11, 30m);
-
-        var request = ManualLotRequest(
-            lot.Id,
-            harvest: new SimulationHarvestInput(true, false, HypothesisAptaPercent: null, RequiredTargetPercent: null));
-        var preview = await _fixture.Simulation.PreviewAsync(request);
-
-        Assert.True(preview.IsValid);
-        var result = preview.Result!;
-        Assert.NotNull(result.Harvest);
-        Assert.Null(result.Harvest.IsReady); // decisión pendiente visible, nunca una constante oculta
-        Assert.Contains(result.Harvest.Warnings, w => w.Contains("pendiente", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public async Task Simulacion_Regla_Hibrida_Usa_Porcentaje_Apto_Real_De_Evaluaciones()
-    {
-        await using var context = NewContext();
-        await IntegrationTestHelpers.ResetTelemetryAsync(context);
-
-        // Lote demo del seed: 7 plantas "Baby Leaf apta" activas sobre 19 activas (36.8%),
-        // con evaluaciones persistidas; sin hipótesis el escenario usa el dato real.
-        var demoLot = await context.Lots.FirstAsync(l => l.Name == "Lote Demo 01");
-        var request = ManualLotRequest(
-            demoLot.Id,
-            harvest: new SimulationHarvestInput(true, false, HypothesisAptaPercent: null, RequiredTargetPercent: 70m));
-
-        var preview = await _fixture.Simulation.PreviewAsync(request);
-
-        Assert.True(preview.IsValid);
-        var result = preview.Result!;
-        Assert.NotNull(result.Harvest);
-        Assert.Equal(7, result.Harvest.RealAptaCount);
-        Assert.Equal(19, result.Harvest.TotalActivePlants);
-        Assert.Equal(36.8m, result.Harvest.AptaPercentUsed);
-        Assert.False(result.Harvest.AptaPercentIsHypothesis); // dato real, no hipótesis
-        Assert.Equal(19, result.Lot!.ActivePlants);
-        Assert.False(result.Harvest.IsReady); // 36.8% < umbral 70%
+        // Sin proyección no hay fecha de corte: las estrategias quedan sin calcular (no se inventa una fecha).
+        Assert.All(result.Strategies, s => Assert.False(s.Available));
+        Assert.Contains(result.Warnings, w => w.Contains("Sin proyección de GDD", StringComparison.OrdinalIgnoreCase));
     }
 
     // --- SIM: repetibilidad ---
@@ -362,16 +540,17 @@ public class SimulationSqlServerTests
         var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
         await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 10, 25m);
 
-        var request = ManualLotRequest(lot.Id);
+        var request = ManualLotRequest(lot.Id, babyLeafGoal: 70m);
         var first = await _fixture.Simulation.PreviewAsync(request);
         var second = await _fixture.Simulation.PreviewAsync(request);
 
         Assert.True(first.IsValid && second.IsValid);
         Assert.Equal(first.Result!.SimulationId, second.Result!.SimulationId);
-        Assert.Equal(first.Result.Gdd.EstimatedHarvestDate, second.Result.Gdd.EstimatedHarvestDate);
         Assert.Equal(first.Result.Gdd.Accumulated, second.Result.Gdd.Accumulated);
-        Assert.Equal(first.Result.Yield, second.Result.Yield);
-        Assert.Equal(first.Result.Costs.Total, second.Result.Costs.Total);
+        Assert.Equal(first.Result.Timeline, second.Result.Timeline);
+        Assert.Equal(
+            first.Result.Strategies.Select(s => (s.EndDate, s.TotalKg, s.Revenue, s.Costs.Total, s.Margin)),
+            second.Result.Strategies.Select(s => (s.EndDate, s.TotalKg, s.Revenue, s.Costs.Total, s.Margin)));
     }
 
     // --- SIM-07: AISLAMIENTO ---
@@ -385,33 +564,17 @@ public class SimulationSqlServerTests
         await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 10, 25m);
 
         // Modo pronóstico con rango ya cubierto en DB: sin fetch ni escritura.
-        var from = Today.AddDays(1);
-        for (var i = 0; i < 7; i++)
-        {
-            context.DailyWeatherForecasts.Add(new DailyWeatherForecast
-            {
-                Date = from.AddDays(i),
-                TempMin = 15m,
-                TempMax = 25m,
-                FetchedAt = DateTime.UtcNow
-            });
-        }
-        await context.SaveChangesAsync();
+        await SeedForecastAsync(context, Today.AddDays(1), 7, 15m, 25m);
+        var crop = await context.CropTypes.FirstAsync();
 
         var before = await ProductiveSnapshotAsync();
 
         foreach (var request in new[]
                  {
-                     ManualLotRequest(lot.Id), // manual
-                     ManualLotRequest(lot.Id, referenceDate: Today.AddDays(-2)), // histórico no (modo manual) + AsOfDate
-                     new SimulationRequest(lot.Id, null, null, null, Today,
-                         new SimulationClimateInput(SimulationClimateMode.Forecast, null, null, null, 7),
-                         new SimulationAgronomicInput(6.0m, 1.5m), FullCosts(),
-                         new SimulationHarvestInput(true, true, 80m, 70m), SaveScenario: false),
-                     new SimulationRequest(lot.Id, null, null, null, Today,
-                         new SimulationClimateInput(SimulationClimateMode.Historic, null, null, null, 7),
-                         new SimulationAgronomicInput(6.0m, 1.5m), FullCosts(),
-                         new SimulationHarvestInput(true, true, 80m, 70m), SaveScenario: false)
+                     ManualLotRequest(lot.Id),
+                     ManualLotRequest(lot.Id, babyLeafGoal: 50m),
+                     ManualLotRequest(lot.Id, mode: SimulationClimateMode.Forecast),
+                     FreeRequest(crop.Id, Today.AddDays(3), SimulationClimateMode.Forecast),
                  })
         {
             var preview = await _fixture.Simulation.PreviewAsync(request);
@@ -436,28 +599,9 @@ public class SimulationSqlServerTests
         Assert.True(preview.IsValid);
         Assert.Equal(0, gateway.Calls); // cero invocaciones con el adaptador falso presente
 
-        // La frontera de hardware ni siquiera es dependencia del servicio: no hay
-        // forma de que la simulación invoque un gateway que nunca recibe.
+        // La frontera de hardware ni siquiera es dependencia del servicio.
         var constructorParams = typeof(SimulationService).GetConstructors().SelectMany(c => c.GetParameters());
         Assert.DoesNotContain(constructorParams, p => p.ParameterType == typeof(IHardwareGateway));
-    }
-
-    [Fact]
-    public async Task Simulacion_Con_SaveScenario_No_Persiste_Y_Avisa()
-    {
-        await using var context = NewContext();
-        await IntegrationTestHelpers.ResetTelemetryAsync(context);
-        var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-10));
-        await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(lot.SowingDate), 5, 25m);
-
-        var request = ManualLotRequest(lot.Id) with { SaveScenario = true };
-        var preview = await _fixture.Simulation.PreviewAsync(request);
-
-        Assert.True(preview.IsValid);
-        Assert.Contains(preview.Result!.Warnings, w => w.Contains("no está disponible", StringComparison.OrdinalIgnoreCase));
-
-        var predictionCount = await context.Predictions.CountAsync();
-        Assert.Equal(0, predictionCount); // nada se guardó
     }
 
     // --- Helpers de aislamiento ---

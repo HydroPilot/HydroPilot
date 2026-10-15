@@ -14,10 +14,10 @@
 
     <main class="shell-main">
         <header class="shell-topbar">
-            <div class="shell-topbar__titles">
-                <h1>@CurrentPage.Title</h1>
-                <p>@_subtitle</p>
-            </div>
+            <h1 class="shell-topbar__title">
+                <NavIcon Name="@CurrentPage.Route" Class="shell-topbar__icon" />
+                @CurrentPage.Title
+            </h1>
 
             <div class="shell-topbar__actions">
                 <div class="status-pill @_statusCss" title="Estado global derivado de los nodos del invernadero (frescura de la última telemetría aceptada)."><span></span> @_statusText</div>
@@ -31,20 +31,6 @@
                     {
                         <span class="notification-badge">@(_unreadCount > 99 ? "99+" : _unreadCount.ToString())</span>
                     }
-                </NavLink>
-
-                <NavLink class="topbar-action" href="settings/profile" aria-label="Configuración">
-                    <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true">
-                        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2.4a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.24.61.83 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
-                    </svg>
                 </NavLink>
 
                 <button class="topbar-action" @onclick="ToggleTheme" aria-label="Alternar tema">
@@ -69,6 +55,11 @@
                         </svg>
                     }
                 </button>
+
+                @* Contexto (invernadero · cultivo) con el mismo aspecto que los botones. *@
+                <span class="topbar-context" title="@_subtitle">
+                    <span>@_subtitle</span>
+                </span>
             </div>
         </header>
 
@@ -140,28 +131,34 @@
 
     private static PageHeader ResolvePage(string relativePath)
     {
-        var path = relativePath.Trim('/').ToLowerInvariant();
+        // Sin query ni fragmento: "/lotes?lote=1" resuelve igual que "/lotes".
+        var path = relativePath.Split('?', '#')[0].Trim('/').ToLowerInvariant();
 
-        return path switch
+        var header = path switch
         {
-            "" => new PageHeader("Vista General del Sistema", "Resumen operativo del invernadero"),
+            "" => new PageHeader("Invernadero", "Resumen operativo del invernadero"),
+            "lotes" => new PageHeader("Lotes", "Situación actual, metas del ciclo y mapa de plantas de cada lote."),
             "reports" => new PageHeader("Informes", "Histórico de producción, consumo y reportes exportables."),
-            "forecasting" => new PageHeader("Módulo de Forecasting", "Predicción de variables clave del cultivo para los próximos 14 días."),
             "simulation" => new PageHeader("Módulo de Simulación", "Probá escenarios what-if y observá el impacto estimado en la cosecha."),
             "optimization" => new PageHeader("Módulo de Optimización", "Recomendaciones basadas en IA para mejorar rendimiento y reducir costos."),
             "anomalies" => new PageHeader("Módulo de Anomalías", "Detección automática de eventos fuera de rango y desvíos de comportamiento."),
             "notifications" => new PageHeader("Bandeja de Notificaciones", "Alertas y avisos operativos del sistema."),
             "settings/profile" => new PageHeader("Configuración de usuario", "Datos personales, idioma y seguridad de tu cuenta."),
             "settings/notifications" => new PageHeader("Configuración de notificaciones", "Definí cómo y cuándo querés recibir avisos del sistema."),
+            "settings/parametros" => new PageHeader("Parámetros del sistema", "Valores de referencia globales que usan todos los lotes."),
+            "admin/users" => new PageHeader("Usuarios", "Usuarios y roles del sistema."),
+            "admin/mantenimiento" => new PageHeader("Mantenimiento", "Datos, clima y herramientas de administración."),
             "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Herramienta interna de diagnóstico."),
             "test-clima" => new PageHeader("Test de clima", "Herramienta interna de diagnóstico."),
             "counter" => new PageHeader("Counter", "Demo de interacción."),
             "weather" => new PageHeader("Weather", "Demo de datos de ejemplo."),
             _ => new PageHeader("HydroPilot", "Vista operativa"),
         };
+        return header with { Route = path };
     }
 
-    private sealed record PageHeader(string Title, string Subtitle);
+    /// <summary>Route: la ruta de la vista, para mostrar su ícono del menú (<see cref="NavIcon"/>).</summary>
+    private sealed record PageHeader(string Title, string Subtitle, string Route = "-");
 
     private bool _isDark = true;
 
