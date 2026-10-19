@@ -24,7 +24,8 @@ public sealed record ParametersUpdateResult(bool Succeeded, IReadOnlyList<string
 /// <item>Peso promedio por planta de cada destino: AppSettings.</item>
 /// <item>Precio por kg de cada destino: catálogo de precios a nivel global, el mismo que usa
 /// Optimización. Un precio específico de un lote, si existiera, sigue teniendo prioridad.</item>
-/// <item>Precio de nutrientes por litro (gastos del sistema de Simulación): AppSettings.</item>
+/// <item>Precio de nutrientes por litro (gastos del sistema de Simulación y Optimización): AppSettings.</item>
+/// <item>Mínimos para que Optimización recomiende cambiar de estrategia ($ por lote y % del margen): AppSettings.</item>
 /// </list>
 /// Sin valor cargado quedan "sin definir": los precios demo del catálogo no cuentan como definidos.
 /// Solo Administrador y Productor los editan; el resto los ve.
@@ -37,6 +38,10 @@ public class SystemParametersService
     public const string ConventionalGramsKey = "YieldConventionalGramsPerPlant";
     public const string NutrientPricePerLiterKey = "NutrientPricePerLiter";
     public const decimal MaxNutrientPricePerLiter = 10_000_000m;
+    public const string StrategyMinGainAmountKey = "StrategyMinGainAmount";
+    public const string StrategyMinGainPercentKey = "StrategyMinGainPercent";
+    public const decimal MaxStrategyMinGainAmount = 1_000_000_000m;
+    public const decimal MaxStrategyMinGainPercent = 1000m;
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
@@ -174,6 +179,39 @@ public class SystemParametersService
 
         await _settings.SetDecimalAsync(NutrientPricePerLiterKey, pricePerLiter, ct);
         _logger.LogInformation("Precio de nutrientes actualizado por {User}: {Price}/L", user.Identity?.Name, pricePerLiter);
+        return new ParametersUpdateResult(true, []);
+    }
+
+    /// <summary>
+    /// Mínimos para recomendar cambiar de estrategia (la ganancia tiene que superar los dos). Sin valor
+    /// cargado, los de fábrica ($10.000 y 10 %).
+    /// </summary>
+    public async Task<OptimizationThresholds> GetStrategyThresholdsAsync(CancellationToken ct = default) => new(
+        await _settings.GetDecimalAsync(StrategyMinGainAmountKey, ct) ?? OptimizationContract.DefaultStrategyMinGainAmount,
+        await _settings.GetDecimalAsync(StrategyMinGainPercentKey, ct) ?? OptimizationContract.DefaultStrategyMinGainPercent);
+
+    /// <summary>Guarda los mínimos de cambio de estrategia (vacío = el de fábrica). Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateStrategyThresholdsAsync(
+        decimal? minGainAmount,
+        decimal? minGainPercent,
+        ClaimsPrincipal user,
+        CancellationToken ct = default)
+    {
+        if (!CanEdit(user))
+            return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
+
+        var errors = new List<string>();
+        if (minGainAmount is { } amount && (amount < 0m || amount > MaxStrategyMinGainAmount))
+            errors.Add("La ganancia mínima por lote no puede ser negativa.");
+        if (minGainPercent is { } percent && (percent < 0m || percent > MaxStrategyMinGainPercent))
+            errors.Add($"La ganancia mínima tiene que estar entre 0 % y {MaxStrategyMinGainPercent:0} %.");
+        if (errors.Count > 0)
+            return new ParametersUpdateResult(false, errors);
+
+        await _settings.SetDecimalAsync(StrategyMinGainAmountKey, minGainAmount is { } a ? Math.Round(a, 2) : null, ct);
+        await _settings.SetDecimalAsync(StrategyMinGainPercentKey, minGainPercent is { } p ? Math.Round(p, 2) : null, ct);
+        _logger.LogInformation("Mínimos de cambio de estrategia actualizados por {User}: {Amount} y {Percent} %",
+            user.Identity?.Name, minGainAmount, minGainPercent);
         return new ParametersUpdateResult(true, []);
     }
 

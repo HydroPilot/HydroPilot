@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Control;
 using HydroPilotWeb.Services;
 
 namespace HydroPilotWeb.Data;
@@ -153,6 +154,9 @@ public static class DbInitializer
             });
             context.SaveChanges();
         }
+
+        // --- Bombas de cada nodo (control de pH y CE) ---
+        SeedActuators(context);
 
         // --- Admin user (existente) ---
         var adminPassword = configuration["Admin:Password"];
@@ -390,6 +394,41 @@ public static class DbInitializer
             AddPriceCost("conventional", "transplant_cost_m2", 480m);
         }
 
+        context.SaveChanges();
+    }
+
+    /// <summary>
+    /// Las 4 bombas de cada nodo (pH Up, pH Down, nutrientes, agua) con límites para un tanque de 500 L.
+    /// Solo agrega las que faltan: no pisa límites editados.
+    /// </summary>
+    public static void SeedActuators(HydroPilotDbContext context)
+    {
+        context.SaveChanges(); // nodos recién agregados en este arranque necesitan su Id
+
+        var nodeIds = context.IotNodes.Select(n => n.Id).ToList();
+        var existing = context.Actuators.Select(a => new { a.NodeId, a.Kind }).ToList();
+        foreach (var nodeId in nodeIds)
+        {
+            foreach (var actuator in ControlContract.DefaultActuators)
+            {
+                if (existing.Any(e => e.NodeId == nodeId && e.Kind == actuator.Kind))
+                    continue;
+
+                context.Actuators.Add(new Actuator
+                {
+                    NodeId = nodeId,
+                    Kind = actuator.Kind,
+                    TechnicalKey = actuator.Kind,
+                    Name = actuator.Name,
+                    Unit = actuator.Unit,
+                    MaxPerCommand = actuator.MaxPerCommand,
+                    MaxPerDay = actuator.MaxPerDay,
+                    EffectPerUnit = actuator.Effect,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                });
+            }
+        }
         context.SaveChanges();
     }
 

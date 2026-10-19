@@ -1,917 +1,612 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
+using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
+using HydroPilotWeb.Services.Simulation;
 
 namespace HydroPilotWeb.Services.Optimization;
 
 /// <summary>
-/// Módulo de optimización (plan 16): recomendaciones explicables de pH/CE,
-/// comparativa económica Baby Leaf vs convencional y estado comercial agregado.
+/// Módulo de optimización: qué hacer en un lote para ganar más o gastar menos (R1–R6, ver
+/// <see cref="OptimizationRules"/>). Consume la lógica de las otras vistas, sin recalcularla: Lotes
+/// (fase, cortes, plantas, metas, pesos y precios), Simulación (estrategias) y Anomalías (pH/CE).
 ///
-/// Contratos consumidos (sin recalcular): lecturas válidas de telemetría
-/// (TelemetryQualityPolicy), forecast (ForecastService) y agregado de lote
-/// (LotAggregateService). La recomendación es INFORMATIVA: aceptar/descartar
-/// registra una acción manual; nunca se envían órdenes a hardware ni se calculan
-/// dosis exactas (falta volumen, concentración, receta y curva de respuesta).
-///
-/// Idempotencia (OPT-04): repetir el cálculo con el mismo snapshot (mismo hash
-/// canónico) NO duplica recomendaciones; aceptar/descartar repetido es no-op.
+/// Ciclo de vida: una recomendación por problema del lote (huella). Mientras el problema sigue, sus números
+/// se actualizan en el lugar; cuando desaparece se cierra: pendiente → ya no aplica; aceptada → cumplida
+/// (o no cumplida si se cerró la ventana sin cortar); descartada → deja de silenciar el problema. Una
+/// aceptada que pasa su fecha sin resolverse queda no cumplida. Se calcula al abrir la vista y cada
+/// <see cref="OptimizationOptions.SweepIntervalMinutes"/> (OptimizationSweepHostedService).
+/// Nunca envía órdenes a hardware.
 /// </summary>
 public class OptimizationService
 {
+    /// <summary>Una descartada vuelve a aparecer si el impacto creció al menos esta proporción.</summary>
+    public const decimal ResurfaceGrowth = 1.5m;
+
+    /// <summary>Recomendaciones cerradas que muestra el historial.</summary>
+    public const int HistorySize = 20;
+
+    // Una evaluación a la vez (vista y barrido): evita duplicar la recomendación de un mismo problema.
+    private static readonly SemaphoreSlim Gate = new(1, 1);
+
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
-    private readonly ForecastService _forecastService;
-    private readonly LotAggregateService _lotAggregate;
-    private readonly IPlantRiskProvider _plantRiskProvider;
-    private readonly IOpenAnomalyProvider _anomalyProvider;
+    private readonly LotOverviewService _lotOverview;
+    private readonly SimulationService _simulation;
+    private readonly SolutionStatusService _solution;
+    private readonly SystemParametersService _parameters;
     private readonly IOptimizationEventSink _eventSink;
-    private readonly IOptions<OptimizationOptions> _options;
     private readonly ILogger<OptimizationService> _logger;
 
     public OptimizationService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
-        ForecastService forecastService,
-        LotAggregateService lotAggregate,
-        IPlantRiskProvider plantRiskProvider,
-        IOpenAnomalyProvider anomalyProvider,
+        LotOverviewService lotOverview,
+        SimulationService simulation,
+        SolutionStatusService solution,
+        SystemParametersService parameters,
         IOptimizationEventSink eventSink,
-        IOptions<OptimizationOptions> options,
         ILogger<OptimizationService> logger)
     {
         _dbFactory = dbFactory;
-        _forecastService = forecastService;
-        _lotAggregate = lotAggregate;
-        _plantRiskProvider = plantRiskProvider;
-        _anomalyProvider = anomalyProvider;
+        _lotOverview = lotOverview;
+        _simulation = simulation;
+        _solution = solution;
+        _parameters = parameters;
         _eventSink = eventSink;
-        _options = options;
         _logger = logger;
     }
 
-    // ------------------------------------------------------------------
-    // Estado (sin persistir) y generación (idempotente por snapshot)
-    // ------------------------------------------------------------------
+    /// <summary>Lotes en curso (Activo / En pausa) para el selector, más recientes primero.</summary>
+    public async Task<IReadOnlyList<LotOption>> GetLotOptionsAsync(CancellationToken ct = default) =>
+        (await _lotOverview.GetLotOptionsAsync(ct)).Where(l => l.IsOperational).ToList();
 
-    /// <summary>Estado completo del lote para la UI/API sin persistir nada.</summary>
-    public async Task<OptimizationStateDto?> GetStateAsync(int lotId, CancellationToken ct = default)
+    /// <summary>Evalúa el lote (si se pide) y arma la vista. Null si el lote no existe.</summary>
+    public async Task<OptimizationViewDto?> GetViewAsync(int lotId, bool evaluate = true, CancellationToken ct = default)
     {
-        var core = await BuildStateCoreAsync(lotId, persist: false, ct);
-        return core.State;
+        if (evaluate)
+            await EvaluateLotAsync(lotId, ct);
+
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var lot = await context.Lots.AsNoTracking()
+            .Include(l => l.Status)
+            .FirstOrDefaultAsync(l => l.Id == lotId, ct);
+        if (lot is null)
+            return null;
+
+        var rows = await context.OptimizationRecommendations.AsNoTracking()
+            .Include(r => r.Details)
+            .Include(r => r.Actions)
+            .Where(r => r.LotId == lotId)
+            .ToListAsync(ct);
+        var all = rows.Select(ToDto).ToList();
+
+        // Activas: las de la lógica actual pendientes o en curso (las de la lógica anterior van al historial).
+        var current = rows.Where(r => r.RuleVersion == OptimizationContract.RuleVersion).Select(r => r.Id).ToHashSet();
+        var active = all
+            .Where(r => current.Contains(r.Id))
+            .Where(r => r.Status is OptimizationContractStatus.Pending or OptimizationContractStatus.Accepted)
+            .OrderBy(r => PriorityOrder(r.Priority))
+            .ThenBy(r => r.Status == OptimizationContractStatus.Accepted ? 1 : 0)
+            .ThenByDescending(r => r.Impact ?? 0m)
+            .ToList();
+        var activeIds = active.Select(r => r.Id).ToHashSet();
+        var history = all
+            .Where(r => !activeIds.Contains(r.Id))
+            .OrderByDescending(r => r.ClosedAtUtc ?? r.DecidedAtUtc ?? r.GeneratedAtUtc)
+            .Take(HistorySize)
+            .ToList();
+        var done = all.Where(r => r.Status == OptimizationContractStatus.Done).ToList();
+
+        var kpis = new OptimizationKpis(
+            active.Count(r => r.Status == OptimizationContractStatus.Pending),
+            active.Count(r => r.Status == OptimizationContractStatus.Pending && r.Priority == OptimizationContractPriority.High),
+            SumOrNull(active.Where(r => r.ImpactKind == OptimizationImpactKind.Capture).Select(r => r.Impact)),
+            SumOrNull(active.Where(r => r.ImpactKind == OptimizationImpactKind.Saving).Select(r => r.Impact)),
+            SumOrNull(done.Select(r => r.RealizedAmount)),
+            done.Count);
+
+        var isClosed = lot.Status?.Name is LotStatusNames.Cosechado or LotStatusNames.Descartado;
+        IReadOnlyList<string> missing = [];
+        var currency = YieldPrices.None.Currency;
+        if (!isClosed)
+            (missing, currency) = await MissingParametersAsync(context, lot, ct);
+
+        return new OptimizationViewDto(
+            lot.Id,
+            string.IsNullOrWhiteSpace(lot.Name) ? $"Lote #{lot.Id}" : lot.Name!,
+            isClosed,
+            currency,
+            kpis,
+            active,
+            history,
+            missing);
     }
 
     /// <summary>
-    /// Genera (o reutiliza) las recomendaciones del lote. La repetición con el
-    /// mismo snapshot no duplica; las PENDING de snapshots anteriores se expiran.
-    /// Devuelve null si el lote no existe.
+    /// Evalúa el lote con las reglas R1–R6 y sincroniza sus recomendaciones (una por problema). Devuelve
+    /// cuántas aparecieron. Las nuevas de prioridad alta se avisan a Notificaciones una sola vez.
     /// </summary>
-    public async Task<OptimizationGenerationResult?> GenerateAsync(int lotId, CancellationToken ct = default)
+    public async Task<int> EvaluateLotAsync(int lotId, CancellationToken ct = default)
     {
-        var expired = await ExpirePendingAsync(ct);
+        var overview = await _lotOverview.GetOverviewAsync(lotId, ct: ct);
+        if (overview is null)
+            return 0;
 
-        var core = await BuildStateCoreAsync(lotId, persist: true, ct);
-        if (core.State is null)
-            return null;
+        var lotName = overview.State.Name;
+        var evaluation = overview.IsClosed
+            ? OptimizationEvaluation.ClosedLot
+            : OptimizationRules.Evaluate(await SituationAsync(lotId, overview, ct));
 
-        var created = await LoadRecommendationsAsync(lotId, core.CreatedRecommendationIds, ct);
-        var active = await LoadRecommendationsAsync(lotId, null, ct, onlyActive: true);
-
-        return new OptimizationGenerationResult(
-            core.State with { ActiveRecommendations = active },
-            created,
-            expired,
-            core.ReusedSnapshotCount > 0,
-            core.State.Warnings);
-    }
-
-    private sealed record CoreBuild(
-        OptimizationStateDto? State,
-        IReadOnlyList<int> CreatedRecommendationIds,
-        int ReusedSnapshotCount);
-
-    private sealed record UpsertResult(int? CreatedId, bool ReusedExisting);
-
-    private async Task<CoreBuild> BuildStateCoreAsync(int lotId, bool persist, CancellationToken ct)
-    {
-        var options = _options.Value;
-        var warnings = new List<string>();
-
-        var forecast = await _forecastService.GetForecastAsync(lotId, null, false, ct);
-        if (forecast is null)
-            return new CoreBuild(null, [], 0);
-
-        var lotState = await _lotAggregate.GetLotStateAsync(lotId, ct: ct);
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-
-        var lot = await context.Lots
-            .Include(l => l.CropType)
-            .Include(l => l.Status)
-            .Include(l => l.AppliedPhenologicalStage)
-            .FirstOrDefaultAsync(l => l.Id == lotId, ct);
-        if (lot is null)
-            return new CoreBuild(null, [], 0);
-
-        var crop = lot.CropType;
-        var isClosed = forecast.StatusName is LotStatusNames.Cosechado or LotStatusNames.Descartado;
-        if (isClosed)
+        List<OptimizationRecommendation> created;
+        await Gate.WaitAsync(ct);
+        try
         {
-            warnings.Add($"Lote {forecast.StatusName}: sin proyección operativa ni recomendaciones nuevas (contexto histórico).");
+            created = await SyncAsync(lotId, overview, evaluation, ct);
+        }
+        finally
+        {
+            Gate.Release();
         }
 
-        // --- Lecturas recientes de pH/CE asociadas al lote (contrato IoT) ---
-        var lookback = Math.Max(1, options.ReadingLookbackCount);
-        var readings = await context.SensorReadings
-            .AsNoTracking()
-            .Include(r => r.Sensor)!
-            .ThenInclude(s => s!.SensorType)
-            .Where(r => r.LotId == lotId)
-            .Where(TelemetryQualityPolicy.OperationallyUsableReading)
-            .Where(r => r.Sensor != null
-                        && (r.Sensor!.SensorType!.Name == "pH" || r.Sensor!.SensorType!.Name == "CE"))
-            .OrderByDescending(r => r.ObservedAtUtc)
-            .Take(lookback)
-            .Select(r => new SnapshotReading(r.Sensor!.SensorType!.Name, r.Quality, r.Value, r.ObservedAtUtc))
-            .ToListAsync(ct);
-
-        var phReadings = readings.Where(r => r.SensorType == "pH").ToList();
-        var ecReadings = readings.Where(r => r.SensorType == "CE").ToList();
-
-        // --- Riesgos por planta y anomalías abiertas del lote (hooks) ---
-        var risks = await _plantRiskProvider.GetActiveRisksAsync(lotId, ct);
-        var riskDtos = risks.Select(r => new PlantRiskDto(r.Key, r.Value.Reason)).ToList();
-        var hasOpenAnomaly = await _anomalyProvider.HasOpenAnomaliesAsync(lotId, ct);
-        if (hasOpenAnomaly)
-            warnings.Add("Hay anomalías abiertas en el lote: las recomendaciones químicas quedan bloqueadas hasta su revisión.");
-
-        // --- Catálogo de costos/precios vigente (resolución lote > cultivo > global) ---
-        var priceCosts = await ResolveActivePriceCostsAsync(context, lot, ct);
-        if (priceCosts.Any(p => p.Source.Equals("demo", StringComparison.OrdinalIgnoreCase)))
+        foreach (var rec in created.Where(r => r.Priority == OptimizationContractPriority.High))
         {
-            warnings.Add("Los precios/costos provienen del catálogo DEMO (etiquetado): la comparativa económica es ilustrativa y no usa precios reales.");
-        }
-
-        // --- Evaluaciones en vivo ---
-        var nowUtc = DateTime.UtcNow;
-        var phAssessment = EvaluatePhWithFallback(lot, crop, phReadings, nowUtc, options, warnings);
-        var ecAssessment = await EvaluateEcWithFallbackAsync(context, lot, crop, ecReadings, nowUtc, options, warnings, ct);
-
-        // --- Comparativa económica (consume el yield del forecast; no recalcula) ---
-        EconomicComparisonDto? economic = null;
-        var yieldBase = forecast.Yield.Base;
-        if (!isClosed)
-        {
-            economic = EconomicRules.Compare(yieldBase, priceCosts, options.ProfitabilityThresholdPercent, nowUtc);
-        }
-
-        // --- Agregado comercial (OPT-08/OPT-09) ---
-        var babyLeafConfig = await context.BabyLeafConfigs
-            .AsNoTracking()
-            .Where(c => c.CropTypeId == lot.CropTypeId && c.IsActive)
-            .OrderByDescending(c => c.Id)
-            .FirstOrDefaultAsync(ct);
-
-        var activePlants = lotState?.ActivePlants ?? 0;
-        var aptaCount = CountStage(lotState, CommercialStageNames.BabyLeafApta);
-        var riskCount = CountStage(lotState, CommercialStageNames.RiesgoFueraDeVentana);
-        var aptaPercent = activePlants > 0 ? Math.Round(aptaCount * 100m / activePlants, 1) : 0m;
-        var commercial = CommercialRules.Evaluate(new CommercialRules.Input(
-            activePlants, aptaCount, riskCount, aptaPercent,
-            lotState?.IsCommercialStageMixed ?? false,
-            lot.BabyLeafHarvestTargetPercent,
-            forecast.GddAccumulated,
-            babyLeafConfig?.GddMin,
-            babyLeafConfig?.GddMax));
-
-        // --- Snapshot (OPT-01) ---
-        var snapshot = new OptimizationSnapshot(
-            OptimizationContract.RuleVersion,
-            lot.Id, lot.Name, crop?.Name ?? "Desconocido", lot.PlantedAreaM2,
-            forecast.StatusName, lot.SowingDate,
-            readings,
-            phAssessment?.CurrentValue, ecAssessment?.CurrentValue,
-            phReadings.Count, ecReadings.Count,
-            LatestAge(phReadings, nowUtc), LatestAge(ecReadings, nowUtc),
-            forecast.GddAccumulated, forecast.GddTarget,
-            forecast.PhenologicalStageName, ecAssessment?.TargetValue,
-            forecast.EstimatedHarvestDate, forecast.DaysRemaining,
-            yieldBase, forecast.AccuracyCycles,
-            forecast.DataSourceSummary, forecast.SourceKind.ToString(),
-            activePlants, riskCount, aptaCount, aptaPercent,
-            lotState?.IsCommercialStageMixed ?? false,
-            priceCosts);
-
-        var snapshotHash = OptimizationSnapshotBuilder.ComputeHash(snapshot);
-        var snapshotJson = OptimizationSnapshotBuilder.ToCanonicalJson(snapshot);
-
-        // --- Estado DTO ---
-        var state = new OptimizationStateDto(
-            lot.Id, lot.Name, crop?.Name ?? "Desconocido", forecast.StatusName,
-            lot.SowingDate, lot.PlantedAreaM2,
-            forecast.GddAccumulated, forecast.GddTarget,
-            forecast.PhenologicalStageName, lotState?.EcObjective,
-            forecast.EstimatedHarvestDate, forecast.DaysRemaining,
-            phAssessment?.CurrentValue, ecAssessment?.CurrentValue,
-            LatestAge(phReadings, nowUtc), LatestAge(ecReadings, nowUtc),
-            phReadings.Count, ecReadings.Count,
-            forecast.DataSourceSummary, forecast.SourceKind,
-            forecast.SourceKind == ForecastSourceKind.Mock,
-            activePlants, aptaCount, aptaPercent,
-            lot.BabyLeafHarvestTargetPercent,
-            lotState?.IsCommercialStageMixed ?? false,
-            riskDtos,
-            [new ChemicalAssessmentDto("pH", phAssessment!), new ChemicalAssessmentDto("CE", ecAssessment!)],
-            economic,
-            [],
-            warnings.Distinct().ToList());
-
-        if (!persist)
-            return new CoreBuild(state, [], 0);
-
-        // --- Persistencia idempotente por (lote, tipo, hash de snapshot) ---
-        var createdIds = new List<int>();
-        var reused = 0;
-
-        if (!isClosed)
-        {
-            var chemical = await UpsertChemicalAsync(context, snapshot, snapshotHash, snapshotJson, lot.Id,
-                phAssessment!, ecAssessment!, hasOpenAnomaly, ct);
-            if (chemical.CreatedId is { } chemicalId) createdIds.Add(chemicalId);
-            if (chemical.ReusedExisting) reused++;
-
-            var economicOutcome = await UpsertEconomicAsync(context, snapshot, snapshotHash, snapshotJson, lot.Id,
-                economic, ct);
-            if (economicOutcome.CreatedId is { } economicId) createdIds.Add(economicId);
-            if (economicOutcome.ReusedExisting) reused++;
-
-            if (commercial.HasFinding)
-            {
-                var commercialOutcome = await UpsertCommercialAsync(context, snapshot, snapshotHash, snapshotJson, lot.Id,
-                    commercial, ct);
-                if (commercialOutcome.CreatedId is { } commercialId) createdIds.Add(commercialId);
-                if (commercialOutcome.ReusedExisting) reused++;
-            }
-        }
-
-        await context.SaveChangesAsync(ct);
-
-        // OPT-06: emitir evento a Notifications solo para recomendaciones NUEVAS
-        // y estratégicas (prioridad alta / comparativa que supera el umbral).
-        foreach (var id in createdIds)
-        {
-            var dto = await LoadRecommendationAsync(id, ct);
-            if (dto is not null && IsStrategic(dto))
+            try
             {
                 await _eventSink.OnRecommendationCreatedAsync(new RecommendationEventDto(
-                    dto.Id, dto.LotId, dto.RecommendationType, dto.Priority, dto.Status,
-                    dto.Direction, dto.Explanation, dto.EstimatedImpact, dto.ImpactUnit,
-                    dto.ConfidencePercent, dto.GeneratedAtUtc, dto.SnapshotHash), ct);
+                    rec.Id, rec.LotId, lotName, rec.RecommendationType, rec.Title ?? string.Empty,
+                    rec.Explanation, rec.Priority, rec.EstimatedImpact, rec.ImpactUnit, rec.GeneratedAtUtc), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo avisar la recomendación {RecommendationId}", rec.Id);
             }
         }
 
-        return new CoreBuild(state, createdIds, reused);
+        return created.Count;
     }
 
-    private static bool IsStrategic(RecommendationDto dto) =>
-        dto.Priority == OptimizationContractPriority.High;
-
-    // ------------------------------------------------------------------
-    // Evaluación química con respaldo del snapshot manual del lote
-    // ------------------------------------------------------------------
-
-    private static ChemicalAssessment EvaluatePhWithFallback(
-        Lot lot,
-        CropType? crop,
-        IReadOnlyList<SnapshotReading> phReadings,
-        DateTime nowUtc,
-        OptimizationOptions options,
-        List<string> warnings)
+    /// <summary>
+    /// Barrido: evalúa los lotes en curso y los que todavía tienen recomendaciones abiertas (un lote que se
+    /// cerró las cierra). Devuelve cuántas recomendaciones aparecieron.
+    /// </summary>
+    public async Task<int> EvaluateOpenLotsAsync(CancellationToken ct = default)
     {
-        var bounds = new ChemicalRules.PhBounds(crop?.OptimalPhMin, crop?.OptimalPhTarget, crop?.OptimalPhMax);
-        var rangeLabel = ChemicalRules.PhRangeLabel(bounds);
-
-        if (phReadings.Count > 0)
-            return ChemicalRules.EvaluatePh(phReadings, bounds, nowUtc, options.MaxReadingAgeMinutes, options.ConsistentReadingCount);
-
-        if (lot.CurrentPh is { } manualPh)
+        var lotIds = (await GetLotOptionsAsync(ct)).Select(l => l.Id).ToList();
+        await using (var context = await _dbFactory.CreateDbContextAsync(ct))
         {
-            // Respaldo etiquetado: snapshot manual del lote sin timestamp.
-            warnings.Add("Sin lecturas frescas de sensor de pH: se usa el valor manual del lote (CurrentPh) como referencia, dirección 'verificar'.");
-            var dir = ChemicalRules.DirectionForPh(manualPh, bounds);
-            var target = ChemicalRules.PhTargetForValue(manualPh, bounds);
-            var explanation = dir == OptimizationContractDirection.Maintain
-                ? $"pH manual del lote {manualPh:0.0#} dentro del rango {rangeLabel}; sin lectura fresca de sensor no se emite recomendación firme."
-                : $"pH manual del lote {manualPh:0.0#} fuera del rango {rangeLabel}: verificar con una lectura fresca antes de ajustar.";
-            return new ChemicalAssessment(
-                Evaluable: bounds.Min is not null,
-                dir == OptimizationContractDirection.Maintain ? OptimizationContractDirection.Maintain : OptimizationContractDirection.Verify,
-                manualPh, target, rangeLabel, explanation, 35, warnings);
+            lotIds.AddRange(await context.OptimizationRecommendations.AsNoTracking()
+                .Where(r => r.Fingerprint != null && r.ClosedAtUtc == null)
+                .Select(r => r.LotId)
+                .Distinct()
+                .ToListAsync(ct));
         }
 
-        warnings.Add("Sin lecturas frescas de pH ni valor manual del lote: pH no evaluable.");
-        return new ChemicalAssessment(false, OptimizationContractDirection.Verify, null, null, rangeLabel,
-            "pH: sin datos utilizables (sin lecturas frescas ni snapshot del lote).", 0, warnings);
-    }
-
-    private static async Task<ChemicalAssessment> EvaluateEcWithFallbackAsync(
-        HydroPilotDbContext context,
-        Lot lot,
-        CropType? crop,
-        IReadOnlyList<SnapshotReading> ecReadings,
-        DateTime nowUtc,
-        OptimizationOptions options,
-        List<string> warnings,
-        CancellationToken ct)
-    {
-        // Etapa fenológica: snapshot del lote o resuelta por GDD (no se recalcula).
-        var stage = lot.AppliedPhenologicalStage;
-        if (stage is null && lot.AccumulatedGdd is { } gdd)
+        var created = 0;
+        foreach (var lotId in lotIds.Distinct())
         {
-            stage = await PlantEvaluationService.ResolvePhenologicalStageAsync(context, lot.CropTypeId, gdd, ct);
+            try
+            {
+                created += await EvaluateLotAsync(lotId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Optimización: no se pudo evaluar el lote {LotId}", lotId);
+            }
         }
-
-        var bounds = stage is null
-            ? null
-            : new ChemicalRules.EcBounds(stage.EcMin, stage.EcObjective, stage.EcMax);
-        var stageName = stage?.Name;
-
-        if (ecReadings.Count > 0)
-            return ChemicalRules.EvaluateEc(ecReadings, bounds, stageName, nowUtc, options.MaxReadingAgeMinutes, options.ConsistentReadingCount);
-
-        if (lot.CurrentEc is { } manualEc && stage is not null && bounds is not null)
-        {
-            warnings.Add("Sin lecturas frescas de sensor de CE: se usa el valor manual del lote (CurrentEc) como referencia, dirección 'verificar'.");
-            var dir = ChemicalRules.DirectionForEc(manualEc, bounds);
-            var target = ChemicalRules.EcTargetForValue(manualEc, bounds);
-            return new ChemicalAssessment(
-                Evaluable: true,
-                dir == OptimizationContractDirection.Maintain ? OptimizationContractDirection.Maintain : OptimizationContractDirection.Verify,
-                manualEc, target,
-                ChemicalRules.EcRangeLabel(bounds, stageName),
-                $"CE manual del lote {manualEc:0.0#} vs objetivo de la etapa '{stageName}' ({target:0.0#}): verificar con una lectura fresca.",
-                35, warnings);
-        }
-
-        warnings.Add("Sin lecturas frescas de CE, valor manual ni etapa fenológica: CE no evaluable.");
-        return new ChemicalAssessment(false, OptimizationContractDirection.Verify, null, null,
-            stage is null ? "CE (sin etapa)" : ChemicalRules.EcRangeLabel(bounds!, stageName),
-            "CE: sin datos utilizables (sin lecturas frescas, valor manual o etapa fenológica).", 0, warnings);
+        return created;
     }
 
     // ------------------------------------------------------------------
-    // Upserts idempotentes por tipo de recomendación
+    // Datos de entrada de las reglas
     // ------------------------------------------------------------------
 
-    private async Task<UpsertResult> UpsertChemicalAsync(
-        HydroPilotDbContext context,
-        OptimizationSnapshot snapshot,
-        string hash,
-        string snapshotJson,
-        int lotId,
-        ChemicalAssessment ph,
-        ChemicalAssessment ec,
-        bool hasOpenAnomaly,
-        CancellationToken ct)
+    private async Task<LotSituation> SituationAsync(int lotId, LotOverviewDto overview, CancellationToken ct)
     {
-        // Regla: dentro de rango (MAINTAIN) no genera recomendación química.
-        // Desvío (RAISE/LOWER), dato a verificar (VERIFY) o bloqueo sí.
-        var hasDeviation = ph.Evaluable && (ph.Direction is OptimizationContractDirection.Raise
-                                              or OptimizationContractDirection.Lower
-                                              or OptimizationContractDirection.Verify)
-                        || ec.Evaluable && (ec.Direction is OptimizationContractDirection.Raise
-                                              or OptimizationContractDirection.Lower
-                                              or OptimizationContractDirection.Verify);
-        var blocked = hasOpenAnomaly || !ph.Evaluable || !ec.Evaluable;
-        if (!hasDeviation && !blocked)
-            return new UpsertResult(null, false);
+        var today = overview.Forecast?.AsOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var stillDeciding = overview.Timeline?.Phase is CyclePhase.Desarrollo or CyclePhase.VentanaBabyLeaf;
 
-        // Idempotencia: mismo (lote, tipo, snapshot) ⇒ misma recomendación.
-        var existing = await context.OptimizationRecommendations
-            .FirstOrDefaultAsync(r => r.LotId == lotId
-                                      && r.RecommendationType == OptimizationContractType.ChemicalSolution
-                                      && r.SnapshotHash == hash, ct);
-        if (existing is not null)
-            return new UpsertResult(null, true);
-
-        // Snapshot nuevo: las PENDING del snapshot anterior se expiran (historial).
-        await ExpireReplacedAsync(context, lotId, OptimizationContractType.ChemicalSolution, hash, ct);
-
-        var (direction, priority, current, target, targetLabel, explanation) =
-            ComposeChemical(ph, ec, hasOpenAnomaly);
-
-        var status = blocked
-            ? OptimizationContractStatus.Blocked
-            : OptimizationContractStatus.Pending;
-
-        var confidence = blocked
-            ? 0
-            : Math.Max(ph.Evaluable ? ph.ConfidencePercent : 0, ec.Evaluable ? ec.ConfidencePercent : 0);
-
-        var rec = new OptimizationRecommendation
-        {
-            LotId = lotId,
-            RecommendationType = OptimizationContractType.ChemicalSolution,
-            Status = status,
-            Direction = direction,
-            Priority = priority,
-            CurrentValue = current,
-            TargetValue = target,
-            TargetLabel = targetLabel,
-            Explanation = explanation,
-            ConfidencePercent = confidence,
-            DataSourceSummary = ComposeChemicalSource(ph, ec),
-            IsMockData = false,
-            RuleVersion = OptimizationContract.RuleVersion,
-            GeneratedAtUtc = DateTime.UtcNow,
-            SnapshotJson = snapshotJson,
-            SnapshotHash = hash,
-        };
-        AddChemicalDetails(rec, ph, ec);
-        context.OptimizationRecommendations.Add(rec);
-        await context.SaveChangesAsync(ct);
-        return new UpsertResult(rec.Id, false);
-    }
-
-    private async Task<UpsertResult> UpsertEconomicAsync(
-        HydroPilotDbContext context,
-        OptimizationSnapshot snapshot,
-        string hash,
-        string snapshotJson,
-        int lotId,
-        EconomicComparisonDto? economic,
-        CancellationToken ct)
-    {
-        if (economic is null)
-            return new UpsertResult(null, false);
-
-        // Sin hallazgo recomendable (calculable sin superar el umbral): la
-        // comparativa se muestra en el panel de estado, no genera tarjeta.
-        var blocked = !economic.Calculable;
-        var recommend = economic.Calculable && economic.ExceedsThreshold;
-        if (!blocked && !recommend)
-            return new UpsertResult(null, false);
-
-        var existing = await context.OptimizationRecommendations
-            .FirstOrDefaultAsync(r => r.LotId == lotId
-                                      && r.RecommendationType == OptimizationContractType.EconomicAlternative
-                                      && r.SnapshotHash == hash, ct);
-        if (existing is not null)
-            return new UpsertResult(null, true);
-
-        await ExpireReplacedAsync(context, lotId, OptimizationContractType.EconomicAlternative, hash, ct);
-
-        var percentageDiff = economic.ProfitabilityDifferencePct is { } diff ? Math.Round(diff, 1) : (decimal?)null;
-        var rec = new OptimizationRecommendation
-        {
-            LotId = lotId,
-            RecommendationType = OptimizationContractType.EconomicAlternative,
-            Status = blocked ? OptimizationContractStatus.Blocked : OptimizationContractStatus.Pending,
-            Direction = recommend ? OptimizationContractDirection.Switch
-                : OptimizationContractDirection.Verify,
-            Priority = recommend ? OptimizationContractPriority.High : OptimizationContractPriority.Medium,
-            CurrentValue = decimal.Round(economic.BabyLeaf?.MarginPercent ?? 0m, 1),
-            TargetValue = recommend && economic.RecommendedDestination is not null
-                ? (economic.RecommendedDestination == OptimizationContractDestination.BabyLeaf
-                    ? economic.BabyLeaf?.MarginPercent
-                    : economic.Conventional?.MarginPercent)
+        return new LotSituation(
+            today,
+            overview.Timeline,
+            overview.Plants,
+            overview.Goals,
+            overview.Objectives.BabyLeafGoalPercent,
+            overview.Objectives.MaxLossPercent,
+            overview.Yield.Reference,
+            overview.Yield.Prices,
+            await _parameters.GetNutrientPricePerLiterAsync(ct),
+            await _solution.GetLotAsync(lotId, ct),
+            stillDeciding && overview.Plants.Active > 0
+                ? await CompareStrategiesAsync(lotId, overview.Objectives.BabyLeafGoalPercent, ct)
                 : null,
-            TargetLabel = recommend && economic.RecommendedDestination is not null
-                ? $"Destino recomendado: {EconomicRules.DestinationLabel(economic.RecommendedDestination)}"
-                : "Sin cambio de destino",
-            Explanation = blocked
-                ? $"{economic.NotCalculableReason} Supuestos: {string.Join(" ", economic.Assumptions)}"
-                : $"La diferencia de rentabilidad ({percentageDiff:0.#} pts) supera el umbral del {economic.ThresholdPercent:0.#}%: " +
-                  $"el destino '{EconomicRules.DestinationLabel(economic.RecommendedDestination!)}' presenta mayor margen. " +
-                  "La comparación es informativa y no decide la cosecha.",
-            EstimatedImpact = percentageDiff,
-            ImpactUnit = "pts de margen",
-            ConfidencePercent = 75,
-            DataSourceSummary = "Catálogo de costos/precios + rendimiento del forecast",
-            IsMockData = economic.Assumptions.Any(a => a.Contains("demo", StringComparison.OrdinalIgnoreCase)),
-            RuleVersion = OptimizationContract.RuleVersion,
-            GeneratedAtUtc = DateTime.UtcNow,
-            SnapshotJson = snapshotJson,
-            SnapshotHash = hash,
-        };
-        AddEconomicDetails(rec, economic);
-        context.OptimizationRecommendations.Add(rec);
-        await context.SaveChangesAsync(ct);
-        return new UpsertResult(rec.Id, false);
+            await _parameters.GetStrategyThresholdsAsync(ct),
+            await AutoControlledAsync(lotId, ct));
     }
 
-    private async Task<UpsertResult> UpsertCommercialAsync(
-        HydroPilotDbContext context,
-        OptimizationSnapshot snapshot,
-        string hash,
-        string snapshotJson,
-        int lotId,
-        CommercialRules.Result commercial,
-        CancellationToken ct)
+    /// <summary>pH y CE que el control automático ya mantiene en el lote (nodo en AUTO, sin pausa).</summary>
+    private async Task<IReadOnlySet<string>> AutoControlledAsync(int lotId, CancellationToken ct)
     {
-        var existing = await context.OptimizationRecommendations
-            .FirstOrDefaultAsync(r => r.LotId == lotId
-                                      && r.RecommendationType == OptimizationContractType.CommercialGrowout
-                                      && r.SnapshotHash == hash, ct);
-        if (existing is not null)
-            return new UpsertResult(null, true);
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        return await Control.ControlService.AutoControlledForLotAsync(context, lotId, DateTime.UtcNow, ct);
+    }
 
-        await ExpireReplacedAsync(context, lotId, OptimizationContractType.CommercialGrowout, hash, ct);
+    /// <summary>
+    /// Estrategias del lote con Simulación (clima de Lotes, pesos y precios del sistema). El plan es la meta
+    /// Baby Leaf del lote o, sin meta, máximo Baby Leaf (lo que hace Lotes: en el óptimo se corta lo apto).
+    /// Semillas a $0: son las mismas en las tres estrategias y no cambian la diferencia.
+    /// </summary>
+    private async Task<StrategyComparison?> CompareStrategiesAsync(int lotId, decimal? goalPercent, CancellationToken ct)
+    {
+        var planKind = goalPercent is null ? SimulationStrategyKind.MaxBabyLeaf : SimulationStrategyKind.BabyLeafGoal;
+        var preview = await _simulation.PreviewAsync(new SimulationRequest(
+            lotId, null, null, null,
+            new SimulationClimateInput(SimulationClimateMode.Forecast, null, null, null),
+            new SimulationCostsInput(PricePerSeed: 0m, NutrientPricePerLiter: null),
+            new SimulationHarvestInput(planKind, goalPercent),
+            null), ct);
 
-        var rec = new OptimizationRecommendation
+        if (preview.Result is not { } result)
+            return null;
+
+        var options = result.Strategies
+            .Select(st => new StrategyOption(st.Kind, st.Name, st.Available ? st.Margin : null))
+            .ToList();
+        var plan = options.FirstOrDefault(o => o.Kind == planKind);
+        return plan is null ? null : new StrategyComparison(plan, options, result.Outlook.History.Lots.Count);
+    }
+
+    // ------------------------------------------------------------------
+    // Sincronización: una recomendación por problema
+    // ------------------------------------------------------------------
+
+    private async Task<List<OptimizationRecommendation>> SyncAsync(
+        int lotId, LotOverviewDto overview, OptimizationEvaluation evaluation, CancellationToken ct)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var nowUtc = DateTime.UtcNow;
+        var today = overview.Forecast?.AsOfDate ?? DateOnly.FromDateTime(nowUtc);
+
+        var open = await context.OptimizationRecommendations
+            .Include(r => r.Details)
+            .Where(r => r.LotId == lotId && r.Fingerprint != null && r.ClosedAtUtc == null)
+            .ToListAsync(ct);
+
+        // Con "Todo convencional" aceptado no se corta Baby Leaf ni se persigue la meta Baby Leaf.
+        var allConventional = OptimizationRules.Fingerprint(
+            OptimizationContractType.HarvestStrategy, OptimizationRules.StrategyKey(SimulationStrategyKind.AllConventional));
+        var suppressed = open.Any(r => r.Fingerprint == allConventional && r.Status == OptimizationContractStatus.Accepted)
+            ? new HashSet<string>
+            {
+                OptimizationRules.Fingerprint(OptimizationContractType.BabyLeafCut, OptimizationRules.KeyBabyLeafCut),
+                OptimizationRules.Fingerprint(OptimizationContractType.CycleGoals, OptimizationRules.KeyGoal),
+            }
+            : [];
+
+        var findings = evaluation.Findings.Where(f => !suppressed.Contains(f.Fingerprint)).ToList();
+        var created = new List<OptimizationRecommendation>();
+
+        foreach (var finding in findings)
         {
-            LotId = lotId,
-            RecommendationType = OptimizationContractType.CommercialGrowout,
-            Status = OptimizationContractStatus.Pending,
-            Direction = commercial.Direction,
-            Priority = commercial.Priority,
-            Explanation = commercial.Explanation,
-            ConfidencePercent = commercial.Priority == OptimizationContractPriority.High ? 70 : 60,
-            DataSourceSummary = "Agregado de plantas del lote (conteos por estado comercial)",
-            IsMockData = false,
-            RuleVersion = OptimizationContract.RuleVersion,
-            GeneratedAtUtc = DateTime.UtcNow,
-            SnapshotJson = snapshotJson,
-            SnapshotHash = hash,
-        };
-        foreach (var (detail, index) in commercial.Details.Select((d, i) => (d, i)))
+            var mine = open.Where(r => r.Fingerprint == finding.Fingerprint).ToList();
+            var active = mine.FirstOrDefault(r => r.Status is OptimizationContractStatus.Pending or OptimizationContractStatus.Accepted);
+            if (active is not null)
+            {
+                Apply(context, active, finding, nowUtc);
+                if (active.Status == OptimizationContractStatus.Accepted && active.DueDate is { } due && due < today)
+                    Close(active, OptimizationContractStatus.Missed, "Venció sin resolverse.", nowUtc);
+                continue;
+            }
+
+            // Descartada: silencia el problema mientras siga, salvo que el impacto crezca mucho.
+            var discarded = mine.FirstOrDefault(r => r.Status == OptimizationContractStatus.Discarded);
+            if (discarded is not null)
+            {
+                discarded.LastEvaluatedAtUtc = nowUtc;
+                if (!(finding.Impact is { } impact && discarded.EstimatedImpact is { } before
+                      && before > 0 && impact >= before * ResurfaceGrowth))
+                {
+                    continue;
+                }
+                discarded.ClosedAtUtc = nowUtc;
+            }
+
+            var rec = new OptimizationRecommendation
+            {
+                LotId = lotId,
+                RecommendationType = finding.Type,
+                Fingerprint = finding.Fingerprint,
+                Status = OptimizationContractStatus.Pending,
+                RuleVersion = OptimizationContract.RuleVersion,
+                GeneratedAtUtc = nowUtc,
+            };
+            Apply(context, rec, finding, nowUtc);
+            context.OptimizationRecommendations.Add(rec);
+            created.Add(rec);
+        }
+
+        // Problemas evaluados que ya no están: se cierran (los suprimidos, como reemplazados).
+        var present = findings.Select(f => f.Fingerprint).ToHashSet();
+        foreach (var rec in open.Where(r => !present.Contains(r.Fingerprint!)))
+        {
+            if (suppressed.Contains(rec.Fingerprint!))
+            {
+                if (rec.Status is OptimizationContractStatus.Pending or OptimizationContractStatus.Accepted)
+                    Close(rec, OptimizationContractStatus.Expired, "Se eligió Todo convencional.", nowUtc);
+                else
+                    rec.ClosedAtUtc = nowUtc;
+                continue;
+            }
+
+            if (!evaluation.WasEvaluated(rec.Fingerprint!))
+                continue; // sin datos para saberlo: queda como está
+
+            switch (rec.Status)
+            {
+                case OptimizationContractStatus.Pending:
+                    Close(rec, OptimizationContractStatus.Expired, "Ya no aplica.", nowUtc);
+                    break;
+                case OptimizationContractStatus.Accepted:
+                    await ResolveAcceptedAsync(context, rec, overview, nowUtc, ct);
+                    break;
+                default:
+                    rec.ClosedAtUtc = nowUtc; // descartada: el problema terminó, deja de silenciarlo
+                    break;
+            }
+        }
+
+        await context.SaveChangesAsync(ct);
+        return created;
+    }
+
+    /// <summary>
+    /// Aceptada cuyo problema desapareció. Cortes: cumplida si se cosecharon plantas de ese destino desde que
+    /// se aceptó (lo logrado = esas plantas × peso × precio de hoy); si no, no cumplida. Estrategia y CE:
+    /// cumplida con el último impacto estimado. Riesgos (solución, metas): cumplida, sin $ logrado.
+    /// </summary>
+    private async Task ResolveAcceptedAsync(
+        HydroPilotDbContext context, OptimizationRecommendation rec, LotOverviewDto overview, DateTime nowUtc, CancellationToken ct)
+    {
+        var since = DateOnly.FromDateTime(rec.DecidedAtUtc ?? rec.GeneratedAtUtc);
+        var weights = overview.Yield.Reference;
+        var prices = overview.Yield.Prices;
+
+        if (rec.RecommendationType is OptimizationContractType.BabyLeafCut or OptimizationContractType.ConventionalCut)
+        {
+            var babyLeaf = rec.RecommendationType == OptimizationContractType.BabyLeafCut;
+            var harvested = await context.Plants.AsNoTracking()
+                .Where(p => p.LotId == rec.LotId
+                            && p.OperationalState == PlantOperationalState.Cosechada
+                            && p.HarvestDate != null && p.HarvestDate >= since)
+                .Select(p => p.CommercialStage != null ? p.CommercialStage.Name : null)
+                .ToListAsync(ct);
+            var count = harvested.Count(stage => IsBabyLeafStage(stage) == babyLeaf);
+
+            if (count == 0)
+            {
+                Close(rec, OptimizationContractStatus.Missed,
+                    babyLeaf ? "Se cerró la ventana sin cortar Baby Leaf." : "No se cosechó convencional.", nowUtc);
+                return;
+            }
+
+            var value = babyLeaf
+                ? OptimizationRules.PlantValue(weights.BabyLeafGramsPerPlant, prices.BabyLeafPerKg)
+                : OptimizationRules.PlantValue(weights.ConventionalGramsPerPlant, prices.ConventionalPerKg);
+            rec.RealizedAmount = value is { } v ? Math.Round(count * v, 0) : null;
+            Close(rec, OptimizationContractStatus.Done, $"{count} plantas cosechadas.", nowUtc);
+            return;
+        }
+
+        rec.RealizedAmount = rec.ImpactUnit is OptimizationImpactKind.Capture or OptimizationImpactKind.Saving
+            ? rec.EstimatedImpact
+            : null;
+        Close(rec, OptimizationContractStatus.Done, "Resuelta.", nowUtc);
+    }
+
+    private static bool IsBabyLeafStage(string? stage) =>
+        stage is CommercialStageNames.BabyLeafApta or CommercialStageNames.CandidataBabyLeaf;
+
+    /// <summary>Copia los datos del problema en la recomendación (nueva o abierta).</summary>
+    private static void Apply(HydroPilotDbContext context, OptimizationRecommendation rec, OptimizationFinding finding, DateTime nowUtc)
+    {
+        rec.Title = finding.Title;
+        rec.Explanation = finding.Summary;
+        rec.Priority = finding.Priority;
+        rec.Direction = finding.Direction;
+        rec.EstimatedImpact = finding.Impact;
+        rec.ImpactUnit = finding.ImpactKind;
+        rec.IsMockData = finding.IsEstimate;
+        // Una aceptada conserva su fecha más temprana: el compromiso no se corre solo.
+        rec.DueDate = rec.Status == OptimizationContractStatus.Accepted && rec.DueDate is { } previous
+                      && (finding.DueDate is not { } next || previous < next)
+            ? previous
+            : finding.DueDate;
+        rec.CurrentValue = finding.CurrentValue;
+        rec.TargetValue = finding.TargetValue;
+        rec.DataSourceSummary = SourceFor(finding.Type);
+        rec.LastEvaluatedAtUtc = nowUtc;
+        rec.SnapshotJson = JsonSerializer.Serialize(finding);
+        rec.SnapshotHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rec.SnapshotJson))).ToLowerInvariant();
+
+        if (rec.Details.Count > 0)
+        {
+            context.RecommendationDetails.RemoveRange(rec.Details);
+            rec.Details.Clear();
+        }
+        foreach (var (figure, index) in finding.Figures.Select((f, i) => (f, i)))
         {
             rec.Details.Add(new RecommendationDetail
             {
-                Label = $"Hallazgo {index + 1}",
-                Kind = "finding",
-                Note = detail,
+                Label = figure.Label,
+                Kind = figure.Kind,
+                Value = figure.Value,
+                Unit = figure.Unit,
+                Note = figure.Date?.ToString("yyyy-MM-dd") ?? figure.Text,
                 Order = index,
             });
         }
-        context.OptimizationRecommendations.Add(rec);
-        await context.SaveChangesAsync(ct);
-        return new UpsertResult(rec.Id, false);
     }
 
-    /// <summary>
-    /// Expira recomendaciones PENDING del mismo (lote, tipo) cuyo snapshot fue
-    /// reemplazado por uno más nuevo (los datos cambiaron): quedan EXPIRED en el
-    /// historial con la razón visible. NUNCA toca ACCEPTED/DISCARDED.
-    /// </summary>
-    private static async Task ExpireReplacedAsync(
-        HydroPilotDbContext context, int lotId, string type, string newHash, CancellationToken ct)
+    private static void Close(OptimizationRecommendation rec, string status, string note, DateTime nowUtc)
     {
-        var pending = await context.OptimizationRecommendations
-            .Where(r => r.LotId == lotId
-                        && r.RecommendationType == type
-                        && r.Status == OptimizationContractStatus.Pending
-                        && r.SnapshotHash != newHash)
-            .ToListAsync(ct);
-
-        foreach (var rec in pending)
-        {
-            rec.Status = OptimizationContractStatus.Expired;
-            rec.DecidedAtUtc = DateTime.UtcNow;
-            rec.DecisionNote = "Reemplazada por un snapshot de datos más nuevo (los insumos cambiaron).";
-        }
+        rec.Status = status;
+        rec.ClosedAtUtc = nowUtc;
+        rec.DecisionNote = note;
     }
+
+    private static string SourceFor(string type) => type switch
+    {
+        OptimizationContractType.BabyLeafCut or OptimizationContractType.ConventionalCut => "Lotes: próximo corte y plantas",
+        OptimizationContractType.HarvestStrategy => "Simulación: estrategias del lote",
+        OptimizationContractType.NutrientOverspend or OptimizationContractType.SolutionRisk => "Anomalías: pH y CE",
+        _ => "Lotes: metas del ciclo",
+    };
 
     // ------------------------------------------------------------------
-    // Composición de recomendación química (explicación y detalles)
+    // Acciones (aceptar / descartar), idempotentes
     // ------------------------------------------------------------------
 
-    private static (string Direction, string Priority, decimal? Current, decimal? Target, string? TargetLabel, string Explanation)
-        ComposeChemical(ChemicalAssessment ph, ChemicalAssessment ec, bool hasOpenAnomaly)
-    {
-        if (hasOpenAnomaly)
-        {
-            return (OptimizationContractDirection.Verify, OptimizationContractPriority.High, null, null, null,
-                "Hay anomalías abiertas en el lote: la recomendación química queda bloqueada hasta revisar el episodio.");
-        }
-
-        if (!ph.Evaluable || !ec.Evaluable)
-        {
-            var reasons = new List<string>();
-            if (!ph.Evaluable) reasons.Add(ph.Explanation);
-            if (!ec.Evaluable) reasons.Add(ec.Explanation);
-            return (OptimizationContractDirection.Verify, OptimizationContractPriority.Medium, null, null, null,
-                "Recomendación química bloqueada por datos insuficientes: " + string.Join(" ", reasons));
-        }
-
-        var directions = new[] { ph.Direction, ec.Direction };
-        var primary = ph.Direction != OptimizationContractDirection.Maintain ? ph : ec;
-        var hasFirm = directions.Contains(OptimizationContractDirection.Raise)
-                   || directions.Contains(OptimizationContractDirection.Lower);
-        var hasVerify = directions.Contains(OptimizationContractDirection.Verify);
-
-        string direction;
-        string priority;
-        if (hasFirm && directions.Distinct().Count() == 1 && directions[0] is OptimizationContractDirection.Raise or OptimizationContractDirection.Lower)
-        {
-            direction = directions[0];
-            priority = OptimizationContractPriority.High;
-        }
-        else if (hasFirm)
-        {
-            direction = OptimizationContractDirection.Verify;
-            priority = OptimizationContractPriority.High;
-        }
-        else if (hasVerify)
-        {
-            direction = OptimizationContractDirection.Verify;
-            priority = OptimizationContractPriority.Medium;
-        }
-        else
-        {
-            direction = OptimizationContractDirection.Maintain;
-            priority = OptimizationContractPriority.Low;
-        }
-
-        var explanation = direction switch
-        {
-            OptimizationContractDirection.Raise =>
-                $"Subir la solución: {ph.Explanation} {ec.Explanation}".TrimEnd(),
-            OptimizationContractDirection.Lower =>
-                $"Bajar la solución: {ph.Explanation} {ec.Explanation}".TrimEnd(),
-            OptimizationContractDirection.Verify =>
-                $"Verificar la solución: {ph.Explanation} {ec.Explanation}".TrimEnd(),
-            _ => "Mantener la solución dentro de los rangos objetivo.",
-        };
-
-        return (direction, priority, primary.CurrentValue, primary.TargetValue, primary.TargetLabel, explanation);
-    }
-
-    private static void AddChemicalDetails(OptimizationRecommendation rec, ChemicalAssessment ph, ChemicalAssessment ec)
-    {
-        void Add(string label, ChemicalAssessment a, int order)
-        {
-            rec.Details.Add(new RecommendationDetail
-            {
-                Label = label,
-                Kind = "metric",
-                Value = a.CurrentValue,
-                Target = a.TargetValue,
-                Unit = label == "pH" ? "pH" : "mS/cm",
-                Note = a.Explanation,
-                Order = order,
-            });
-        }
-
-        Add("pH", ph, 1);
-        Add("CE", ec, 2);
-    }
-
-    private static string ComposeChemicalSource(ChemicalAssessment ph, ChemicalAssessment ec)
-    {
-        var parts = new List<string>();
-        if (ph.Evaluable) parts.Add($"pH sensor ({ph.ConfidencePercent}%)");
-        if (ec.Evaluable) parts.Add($"CE sensor ({ec.ConfidencePercent}%)");
-        return parts.Count > 0 ? string.Join(" + ", parts) : "sin lecturas utilizables (bloqueado)";
-    }
-
-    private static void AddEconomicDetails(OptimizationRecommendation rec, EconomicComparisonDto economic)
-    {
-        void AddScenario(string label, EconomicScenarioDto s, int order)
-        {
-            var note = s.Calculable
-                ? $"Ingresos ${s.RevenueM2:0.0#} - costos ${s.TotalCostM2:0.0#} = ${s.ResultM2:0.0#}/m² (margen {s.MarginPercent:0.#}%)"
-                : s.NotCalculableReason;
-            rec.Details.Add(new RecommendationDetail
-            {
-                Label = label,
-                Kind = "scenario",
-                Value = s.ResultM2,
-                Unit = "$/m²",
-                Note = note,
-                Order = order,
-            });
-        }
-
-        if (economic.BabyLeaf is not null) AddScenario("Escenario Baby Leaf", economic.BabyLeaf, 1);
-        if (economic.Conventional is not null) AddScenario("Escenario convencional", economic.Conventional, 2);
-        foreach (var (assumption, index) in economic.Assumptions.Select((a, i) => (a, i)))
-        {
-            rec.Details.Add(new RecommendationDetail
-            {
-                Label = "Supuesto",
-                Kind = "assumption",
-                Note = assumption,
-                Order = index + 3,
-            });
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Acciones (aceptar/descartar) idempotentes y expiración
-    // ------------------------------------------------------------------
-
-    /// <summary>Aceptar una recomendación: registra acción manual; repetido es no-op.</summary>
-    public async Task<DecisionResult> AcceptAsync(int recommendationId, string? note, string? performedBy, CancellationToken ct = default)
+    /// <summary>Aceptar ("lo hago"): queda en curso y el sistema verifica solo si se cumplió. Repetido es no-op.</summary>
+    public async Task<DecisionResult> AcceptAsync(int recommendationId, string? performedBy, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var rec = await context.OptimizationRecommendations
+            .Include(r => r.Details)
             .Include(r => r.Actions)
             .FirstOrDefaultAsync(r => r.Id == recommendationId, ct);
         if (rec is null)
-            return new DecisionResult(false, false, $"Recomendación '{recommendationId}' no encontrada.", null);
+            return new DecisionResult(false, false, "La recomendación no existe.", null);
 
         if (rec.Status == OptimizationContractStatus.Accepted)
-            return new DecisionResult(true, true, "La recomendación ya estaba aceptada (acción repetida, sin cambios).", ToDto(rec));
-
-        if (rec.Status == OptimizationContractStatus.Discarded)
-            return new DecisionResult(false, false, $"La recomendación fue descartada ({rec.DecisionNote ?? "sin motivo"}) y no puede aceptarse.", ToDto(rec));
-
-        if (rec.Status == OptimizationContractStatus.Expired)
-            return new DecisionResult(false, false, "La recomendación venció sin decisión: regenerá el cálculo con el snapshot actual.", ToDto(rec));
-
-        if (rec.Status == OptimizationContractStatus.Blocked)
-            return new DecisionResult(false, false, "La recomendación está bloqueada por datos insuficientes: no hay acción que aceptar.", ToDto(rec));
+            return new DecisionResult(true, true, "Ya estaba aceptada.", ToDto(rec));
+        if (rec.Status != OptimizationContractStatus.Pending)
+            return new DecisionResult(false, false, "Solo se aceptan recomendaciones pendientes.", ToDto(rec));
 
         rec.Status = OptimizationContractStatus.Accepted;
         rec.DecidedAtUtc = DateTime.UtcNow;
-        rec.DecisionNote = note;
         rec.Actions.Add(new RecommendationAction
         {
             Action = OptimizationContractAction.Accept,
-            Note = note,
             PerformedBy = performedBy,
-            ActionedAtUtc = DateTime.UtcNow,
+            ActionedAtUtc = rec.DecidedAtUtc.Value,
         });
         await context.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Recomendación {RecommendationId} aceptada (nota: {Note})", recommendationId, note);
-        return new DecisionResult(true, false, "Recomendación aceptada: se registró la acción manual.", ToDto(rec));
+        _logger.LogInformation("Recomendación {RecommendationId} aceptada por {User}", recommendationId, performedBy);
+        return new DecisionResult(true, false, "Aceptada.", ToDto(rec));
     }
 
     /// <summary>
-    /// Descartar una recomendación con motivo (obligatorio): conserva historial.
-    /// Repetido es no-op. No reabre recomendaciones aceptadas/vencidas/bloqueadas.
+    /// Descartar con motivo (obligatorio): el problema no vuelve a aparecer mientras siga, salvo que su
+    /// impacto crezca al menos un 50 %. Repetido es no-op. Solo pendientes.
     /// </summary>
     public async Task<DecisionResult> DiscardAsync(int recommendationId, string reason, string? performedBy, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(reason))
-            return new DecisionResult(false, false, "Motivo de descarte obligatorio (para conservar trazabilidad).", null);
+            return new DecisionResult(false, false, "Elegí un motivo para descartar.", null);
 
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var rec = await context.OptimizationRecommendations
+            .Include(r => r.Details)
             .Include(r => r.Actions)
             .FirstOrDefaultAsync(r => r.Id == recommendationId, ct);
         if (rec is null)
-            return new DecisionResult(false, false, $"Recomendación '{recommendationId}' no encontrada.", null);
+            return new DecisionResult(false, false, "La recomendación no existe.", null);
 
         if (rec.Status == OptimizationContractStatus.Discarded)
-            return new DecisionResult(true, true, "La recomendación ya estaba descartada (acción repetida, sin cambios).", ToDto(rec));
-
+            return new DecisionResult(true, true, "Ya estaba descartada.", ToDto(rec));
         if (rec.Status != OptimizationContractStatus.Pending)
-            return new DecisionResult(false, false,
-                $"Solo se descartan recomendaciones pendientes (estado actual: {rec.Status}).", ToDto(rec));
+            return new DecisionResult(false, false, "Solo se descartan recomendaciones pendientes.", ToDto(rec));
 
         rec.Status = OptimizationContractStatus.Discarded;
         rec.DecidedAtUtc = DateTime.UtcNow;
-        rec.DecisionNote = reason;
+        rec.DecisionNote = reason.Trim();
         rec.Actions.Add(new RecommendationAction
         {
             Action = OptimizationContractAction.Discard,
-            Note = reason,
+            Note = rec.DecisionNote,
             PerformedBy = performedBy,
-            ActionedAtUtc = DateTime.UtcNow,
+            ActionedAtUtc = rec.DecidedAtUtc.Value,
         });
         await context.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Recomendación {RecommendationId} descartada (motivo: {Reason})", recommendationId, reason);
-        return new DecisionResult(true, false, "Recomendación descartada y conservada en el historial.", ToDto(rec));
-    }
-
-    /// <summary>Historial de recomendaciones (opcional filtrar por lote).</summary>
-    public async Task<IReadOnlyList<RecommendationDto>> GetHistoryAsync(int? lotId = null, CancellationToken ct = default)
-    {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        return await HistoryQuery(context, lotId, ct);
-    }
-
-    /// <summary>
-    /// Marca EXPIRED las PENDING sin decisión después de PendingExpirationHours.
-    /// Devuelve la cantidad expirada.
-    /// </summary>
-    public async Task<int> ExpirePendingAsync(CancellationToken ct = default)
-    {
-        var options = _options.Value;
-        var threshold = DateTime.UtcNow.AddHours(-options.PendingExpirationHours);
-
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var pending = await context.OptimizationRecommendations
-            .Where(r => r.Status == OptimizationContractStatus.Pending && r.GeneratedAtUtc < threshold)
-            .ToListAsync(ct);
-
-        foreach (var rec in pending)
-        {
-            rec.Status = OptimizationContractStatus.Expired;
-            rec.DecidedAtUtc = DateTime.UtcNow;
-            rec.DecisionNote = $"Vencida por antigüedad (sin decisión dentro de {options.PendingExpirationHours} h).";
-        }
-
-        await context.SaveChangesAsync(ct);
-        if (pending.Count > 0)
-            _logger.LogInformation("Optimization: {Count} recomendaciones pendientes vencidas (EXPIRED).", pending.Count);
-        return pending.Count;
+        _logger.LogInformation("Recomendación {RecommendationId} descartada por {User} (motivo: {Reason})",
+            recommendationId, performedBy, reason);
+        return new DecisionResult(true, false, "Descartada.", ToDto(rec));
     }
 
     // ------------------------------------------------------------------
-    // Carga y DTOs
+    // DTOs y helpers
     // ------------------------------------------------------------------
 
-    private async Task<IReadOnlyList<RecommendationDto>> LoadRecommendationsAsync(
-        int lotId,
-        IReadOnlyList<int>? ids,
-        CancellationToken ct,
-        bool onlyActive = false)
+    internal static RecommendationDto ToDto(OptimizationRecommendation r)
     {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var query = context.OptimizationRecommendations
-            .Include(r => r.Details)
-            .Include(r => r.Actions)
-            .Where(r => r.LotId == lotId);
-        if (ids is { Count: > 0 })
-            query = query.Where(r => ids.Contains(r.Id));
-        if (onlyActive)
-        {
-            query = query.Where(r => r.Status == OptimizationContractStatus.Pending
-                                  || r.Status == OptimizationContractStatus.Blocked);
-        }
-
-        var rows = await query.OrderByDescending(r => r.GeneratedAtUtc).ToListAsync(ct);
-        return rows.Select(ToDto).ToList();
+        var lastAction = r.Actions.OrderByDescending(a => a.ActionedAtUtc).FirstOrDefault();
+        var isCurrent = r.RuleVersion == OptimizationContract.RuleVersion;
+        return new RecommendationDto(
+            r.Id,
+            r.LotId,
+            r.RecommendationType,
+            r.Title ?? LegacyTitle(r.RecommendationType),
+            r.Status,
+            r.Priority,
+            r.Direction,
+            isCurrent ? r.EstimatedImpact : null,
+            isCurrent ? r.ImpactUnit : null,
+            r.IsMockData && isCurrent,
+            r.DueDate,
+            r.Details.OrderBy(d => d.Order).Select(ToFigure).ToList(),
+            r.Explanation,
+            r.GeneratedAtUtc,
+            r.DecidedAtUtc,
+            r.DecisionNote,
+            lastAction?.PerformedBy,
+            r.RealizedAmount,
+            r.ClosedAtUtc);
     }
 
-    private async Task<RecommendationDto?> LoadRecommendationAsync(int id, CancellationToken ct)
+    private static RecommendationFigure ToFigure(RecommendationDetail d) =>
+        d.Kind == "date" && DateOnly.TryParse(d.Note, out var date)
+            ? new RecommendationFigure(d.Label, d.Kind, d.Value, d.Unit, Date: date)
+            : new RecommendationFigure(d.Label, d.Kind, d.Value, d.Unit, Text: d.Note);
+
+    private static string LegacyTitle(string type) => type switch
     {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var rec = await context.OptimizationRecommendations
-            .Include(r => r.Details)
-            .Include(r => r.Actions)
-            .FirstOrDefaultAsync(r => r.Id == id, ct);
-        return rec is null ? null : ToDto(rec);
+        OptimizationContractType.ChemicalSolution => "Solución nutritiva (lógica anterior)",
+        OptimizationContractType.EconomicAlternative => "Comparativa económica (lógica anterior)",
+        OptimizationContractType.CommercialGrowout => "Estado comercial (lógica anterior)",
+        _ => type,
+    };
+
+    private static int PriorityOrder(string priority) => priority switch
+    {
+        OptimizationContractPriority.High => 0,
+        OptimizationContractPriority.Medium => 1,
+        _ => 2,
+    };
+
+    private static decimal? SumOrNull(IEnumerable<decimal?> values)
+    {
+        var known = values.Where(v => v is not null).Select(v => v!.Value).ToList();
+        return known.Count > 0 ? known.Sum() : null;
     }
 
-    private static async Task<IReadOnlyList<RecommendationDto>> HistoryQuery(
-        HydroPilotDbContext context, int? lotId, CancellationToken ct)
-    {
-        var query = context.OptimizationRecommendations
-            .Include(r => r.Details)
-            .Include(r => r.Actions)
-            .AsQueryable();
-        if (lotId is { } id)
-            query = query.Where(r => r.LotId == id);
-
-        var rows = await query.OrderByDescending(r => r.GeneratedAtUtc).ToListAsync(ct);
-        return rows.Select(ToDto).ToList();
-    }
-
-    internal static RecommendationDto ToDto(OptimizationRecommendation r) => new(
-        r.Id,
-        r.LotId,
-        r.RecommendationType,
-        r.Status,
-        r.Direction,
-        r.Priority,
-        r.CurrentValue,
-        r.TargetValue,
-        r.TargetLabel,
-        r.Explanation,
-        r.EstimatedImpact,
-        r.ImpactUnit,
-        r.ConfidencePercent,
-        r.DataSourceSummary,
-        r.IsMockData,
-        r.RuleVersion,
-        r.GeneratedAtUtc,
-        r.DecidedAtUtc,
-        r.DecisionNote,
-        r.SnapshotHash,
-        r.Details.OrderBy(d => d.Order).Select(d => new RecommendationDetailDto(d.Id, d.Label, d.Kind, d.Value, d.Target, d.Unit, d.Note, d.Order)).ToList(),
-        r.Actions.OrderBy(a => a.ActionedAtUtc).Select(a => new RecommendationActionDto(a.Id, a.Action, a.Note, a.PerformedBy, a.ActionedAtUtc)).ToList());
-
-    // ------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------
-
-    private static int CountStage(LotStateDto? lotState, string stageName) =>
-        lotState?.CommercialCounts.FirstOrDefault(c => c.StageName == stageName)?.Count ?? 0;
-
-    private static int? LatestAge(IReadOnlyList<SnapshotReading> readings, DateTime nowUtc) =>
-        readings.Count > 0 ? (int)(nowUtc - readings.Max(r => r.ObservedAtUtc)).TotalMinutes : null;
-
-    /// <summary>
-    /// Catálogo vigente (hoy) con precedencia lote &gt; cultivo &gt; global (CostPriceResolver),
-    /// como SnapshotPriceCost para el snapshot; los valores demo se conservan etiquetados.
-    /// </summary>
-    private static async Task<IReadOnlyList<SnapshotPriceCost>> ResolveActivePriceCostsAsync(
+    /// <summary>Pesos y precios sin definir que dejan impactos sin calcular (como "Sin definir" de Lotes).</summary>
+    private async Task<(IReadOnlyList<string> Missing, string Currency)> MissingParametersAsync(
         HydroPilotDbContext context, Lot lot, CancellationToken ct)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var rows = await CostPriceResolver.ResolveActiveAsync(context, lot, today, ct);
-
-        return rows
-            .Select(row => new SnapshotPriceCost(
-                row.Destination, row.Item, row.Value, row.Currency, row.Source,
-                row.ValidFrom, row.ValidUntil))
-            .ToList();
+        var weights = await _parameters.GetYieldReferenceAsync(ct);
+        var prices = await SystemParametersService.ResolveLotPricesAsync(context, lot, DateOnly.FromDateTime(DateTime.UtcNow), ct);
+        var missing = new List<string>();
+        if (weights.BabyLeafGramsPerPlant is null) missing.Add("peso Baby Leaf");
+        if (weights.ConventionalGramsPerPlant is null) missing.Add("peso convencional");
+        if (prices.BabyLeafPerKg is null) missing.Add("precio Baby Leaf");
+        if (prices.ConventionalPerKg is null) missing.Add("precio convencional");
+        if (await _parameters.GetNutrientPricePerLiterAsync(ct) is null) missing.Add("precio de nutrientes");
+        return (missing, prices.Currency);
     }
 }

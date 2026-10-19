@@ -34,6 +34,19 @@ public class IotNode
     /// <summary>Última vez que un batch del nodo fue rechazado o generó rechazos.</summary>
     public DateTime? LastRejectedAt { get; set; }
 
+    /// <summary>Control de pH/CE del tanque: OFF | MANUAL | AUTO (ControlContract.Mode*). Arranca en MANUAL.</summary>
+    [MaxLength(10)]
+    public string ControlMode { get; set; } = Control.ControlContract.ModeManual;
+
+    /// <summary>Litros del tanque de solución que alimenta el nodo.</summary>
+    public decimal ReservoirLiters { get; set; } = Control.ControlContract.DefaultReservoirLiters;
+
+    /// <summary>CE del agua de red con que se diluye el tanque (mS/cm): la usa la dosis de agua.</summary>
+    public decimal SourceWaterEc { get; set; } = Control.ControlContract.DefaultSourceWaterEc;
+
+    /// <summary>Última vez que la Pi pidió sus comandos pendientes.</summary>
+    public DateTime? LastCommandPollAtUtc { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Greenhouse? Greenhouse { get; set; }

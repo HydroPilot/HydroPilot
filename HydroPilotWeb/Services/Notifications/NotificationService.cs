@@ -378,6 +378,18 @@ public class NotificationService
         }
     }
 
+    /// <summary>Marca resuelta la alerta activa con esa huella (por ejemplo, al reanudar un control pausado).</summary>
+    public async Task ResolveByFingerprintAsync(string fingerprint, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var now = DateTime.UtcNow;
+        await context.NotificationAlerts
+            .Where(a => a.Fingerprint == fingerprint && !a.IsResolved)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.IsResolved, true)
+                .SetProperty(a => a.ResolvedAtUtc, now), ct);
+    }
+
     /// <summary>
     /// Sincroniza alertas de cosecha inminente para lotes activos.
     /// </summary>

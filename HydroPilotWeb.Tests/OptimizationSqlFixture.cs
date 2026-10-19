@@ -6,9 +6,12 @@ using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Anomalies;
+using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Optimization;
+using HydroPilotWeb.Services.Simulation;
 
 namespace HydroPilotWeb.Tests;
 
@@ -19,21 +22,43 @@ namespace HydroPilotWeb.Tests;
 [CollectionDefinition("optimization-sql")]
 public class OptimizationSqlCollection : ICollectionFixture<OptimizationSqlFixture>;
 
+/// <summary>Sink de prueba: guarda los avisos que Optimización manda a Notificaciones.</summary>
+public sealed class RecordingOptimizationSink : IOptimizationEventSink
+{
+    private readonly List<RecommendationEventDto> _events = [];
+
+    public IReadOnlyList<RecommendationEventDto> Events
+    {
+        get { lock (_events) return _events.ToList(); }
+    }
+
+    public Task OnRecommendationCreatedAsync(RecommendationEventDto recommendation, CancellationToken ct = default)
+    {
+        lock (_events) _events.Add(recommendation);
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>
-/// Fixture de integración del módulo de optimización: base SQL limpia
-/// (drop + migrate con las MIGRACIONES REALES) y catálogos mínimos del dominio
-/// (cultivo con rangos, etapas fenológicas, estados comerciales, Baby Leaf,
-/// invernadero/nodo/sensores pH-CE-Temperatura, lote con plantas y catálogo de
-/// costos/precios). Requiere SQL Server local (SETUP.md) o HYDROPILOT_TEST_SQL.
+/// Fixture de integración de Optimización: base SQL limpia (drop + migrate con las MIGRACIONES REALES),
+/// catálogos mínimos (cultivo con rangos, etapas, estados comerciales, Baby Leaf), un sensor de temperatura
+/// ambiente con 20,5 GDD por día durante los últimos 45 días (los lotes avanzan según cuántos días hace que se
+/// sembraron), pH/CE, pesos (30 g / 250 g), precios ($50.000 / $11.800 por kg) y nutrientes ($25.000/L).
+/// Servicios reales: Lotes, Simulación, Anomalías (solución) y Optimización. Requiere SQL Server local
+/// (SETUP.md) o HYDROPILOT_TEST_SQL.
 /// </summary>
 public sealed class OptimizationSqlFixture : IAsyncLifetime
 {
     public const string DbName = "hydropilot_optimization_test";
 
+    /// <summary>GDD por día de las temperaturas sembradas: (30 + 20) / 2 − 4,5.</summary>
+    public const decimal DailyGdd = 20.5m;
+
     public string ConnectionString { get; }
     public IDbContextFactory<HydroPilotDbContext> Factory { get; private set; } = null!;
     public OptimizationService Optimization { get; private set; } = null!;
-    public ForecastService Forecast { get; private set; } = null!;
+    public SolutionStatusService Solutions { get; private set; } = null!;
+    public RecordingOptimizationSink Sink { get; } = new();
 
     public OptimizationSqlFixture()
     {
@@ -58,24 +83,26 @@ public sealed class OptimizationSqlFixture : IAsyncLifetime
         Factory = new SimpleFactory(NewOptions());
 
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Weather:ApiKey"] = "" })
             .Build();
 
         var settings = new SettingsService(Factory);
+        await settings.SetDecimalAsync(SystemParametersService.BabyLeafGramsKey, 30m);
+        await settings.SetDecimalAsync(SystemParametersService.ConventionalGramsKey, 250m);
+        await settings.SetDecimalAsync(SystemParametersService.NutrientPricePerLiterKey, 25_000m);
+
         var weather = new WeatherService(new HttpClient { Timeout = TimeSpan.FromSeconds(5) }, Factory, configuration, NullLogger<WeatherService>.Instance);
         var gdd = new GddService(Factory, weather, settings);
-        var yieldService = new YieldService(Factory);
-        Forecast = new ForecastService(Factory, gdd, yieldService, weather, settings, NullLogger<ForecastService>.Instance);
-        var agg = new LotAggregateService(Factory, gdd);
+        var forecast = new ForecastService(Factory, gdd, new YieldService(Factory), weather, settings, NullLogger<ForecastService>.Instance);
+        var aggregate = new LotAggregateService(Factory, gdd);
+        var parameters = new SystemParametersService(Factory, settings, NullLogger<SystemParametersService>.Instance);
+        var dashboardOptions = Options.Create(new DashboardOptions());
+        var overview = new LotOverviewService(Factory, aggregate, forecast, gdd, parameters, dashboardOptions, NullLogger<LotOverviewService>.Instance);
+        var simulation = new SimulationService(Factory, gdd, new ClimateScenarioProvider(gdd, weather), aggregate, parameters,
+            new BabyLeafOutlookService(Factory, gdd));
 
-        Optimization = new OptimizationService(
-            Factory,
-            Forecast,
-            agg,
-            new NoPlantRiskProvider(),
-            new NoOpenAnomalyProvider(),
-            new NoopOptimizationEventSink(NullLogger<NoopOptimizationEventSink>.Instance),
-            Options.Create(new OptimizationOptions()),
+        Solutions = new SolutionStatusService(Factory, dashboardOptions);
+        Optimization = new OptimizationService(Factory, overview, simulation, Solutions, parameters, Sink,
             NullLogger<OptimizationService>.Instance);
     }
 
@@ -124,16 +151,14 @@ public sealed class OptimizationSqlFixture : IAsyncLifetime
             new PhenologicalStage { CropTypeId = crop.Id, Name = "Crecimiento vegetativo", Order = 2, GddMin = 150, GddMax = 450, EcMin = 1.2m, EcObjective = 1.5m, EcMax = 1.8m },
             new PhenologicalStage { CropTypeId = crop.Id, Name = "Formación y madurez", Order = 3, GddMin = 450, GddMax = 750, EcMin = 1.5m, EcObjective = 1.7m, EcMax = 1.8m });
 
-        var babyLeafApta = new CommercialStage { CropTypeId = crop.Id, Name = "Baby Leaf apta" };
-        var riesgo = new CommercialStage { CropTypeId = crop.Id, Name = "Riesgo / fuera de ventana" };
         context.CommercialStages.AddRange(
-            new CommercialStage { CropTypeId = crop.Id, Name = "En desarrollo" },
-            new CommercialStage { CropTypeId = crop.Id, Name = "Candidata Baby Leaf" },
-            babyLeafApta,
-            new CommercialStage { CropTypeId = crop.Id, Name = "Cosecha convencional" },
-            riesgo);
+            new CommercialStage { CropTypeId = crop.Id, Name = CommercialStageNames.EnDesarrollo },
+            new CommercialStage { CropTypeId = crop.Id, Name = CommercialStageNames.CandidataBabyLeaf },
+            new CommercialStage { CropTypeId = crop.Id, Name = CommercialStageNames.BabyLeafApta },
+            new CommercialStage { CropTypeId = crop.Id, Name = CommercialStageNames.CosechaConvencional },
+            new CommercialStage { CropTypeId = crop.Id, Name = CommercialStageNames.RiesgoFueraDeVentana });
 
-        var config = new BabyLeafConfig
+        context.BabyLeafConfigs.Add(new BabyLeafConfig
         {
             CropTypeId = crop.Id,
             Name = "Baby Leaf test v1",
@@ -142,12 +167,11 @@ public sealed class OptimizationSqlFixture : IAsyncLifetime
             ScoreMinCandidate = 60m,
             ScoreMinReady = 80m,
             Version = "1.0"
-        };
-        context.BabyLeafConfigs.Add(config);
+        });
         context.SaveChanges();
 
-        // Invernadero + nodo + sensores pH/CE/temperatura.
-        var greenhouse = new Greenhouse { Name = "Invernadero Optimization Test", Location = "Test", CreatedAt = DateTime.UtcNow };
+        // Invernadero (UTC: el GDD diario se agrupa sin depender de la zona) + nodo + sensores pH/CE/temperatura.
+        var greenhouse = new Greenhouse { Name = "Invernadero Optimization Test", Location = "Test", TimeZoneId = "UTC", CreatedAt = DateTime.UtcNow };
         context.Greenhouses.Add(greenhouse);
         context.SaveChanges();
 
@@ -171,162 +195,157 @@ public sealed class OptimizationSqlFixture : IAsyncLifetime
             new Sensor { NodeId = node.Id, SensorTypeId = types["Temperatura"].Id, MeasurementUnitId = units["grados Celsius"].Id, Name = "temp-amb", TechnicalKey = "temp-amb", IsActive = true, CreatedAt = DateTime.UtcNow });
         context.SaveChanges();
 
-        // Catálogo de costos/precios (mismo horizonte que el demo).
+        // Temperaturas: mínima 20 °C y máxima 30 °C cada día de los últimos 45 (20,5 GDD por día).
+        var temperature = context.Sensors.First(s => s.Name == "temp-amb");
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var counter = 0;
+        for (var day = today.AddDays(-45); day <= today; day = day.AddDays(1))
+        {
+            foreach (var (hour, value) in new[] { (3, 20m), (15, 30m) })
+            {
+                var observed = day.ToDateTime(new TimeOnly(hour, 0), DateTimeKind.Utc);
+                context.SensorReadings.Add(new SensorReading
+                {
+                    SensorId = temperature.Id,
+                    NodeId = temperature.NodeId,
+                    MeasurementUnitId = temperature.MeasurementUnitId,
+                    Value = value,
+                    Timestamp = observed,
+                    ObservedAtUtc = observed,
+                    ReceivedAtUtc = observed,
+                    ExternalReadingId = $"opt-temp-{++counter}",
+                    Quality = TelemetryContract.QualityValid,
+                    IngestionResult = TelemetryContract.ResultAceptada,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+        }
+
+        // Precios por kg cargados por el usuario (globales).
         context.CostPriceCatalogs.AddRange(
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "baby_leaf", Item = "price_per_kg", Value = 2600m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "baby_leaf", Item = "seed_cost_m2", Value = 900m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "baby_leaf", Item = "nutrient_cost_m2", Value = 320m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "baby_leaf", Item = "energy_cost_m2", Value = 260m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "baby_leaf", Item = "transplant_cost_m2", Value = 0m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "conventional", Item = "price_per_kg", Value = 1800m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "conventional", Item = "seed_cost_m2", Value = 250m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "conventional", Item = "nutrient_cost_m2", Value = 420m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "conventional", Item = "energy_cost_m2", Value = 520m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow },
-            new CostPriceCatalog { CropTypeId = crop.Id, Destination = "conventional", Item = "transplant_cost_m2", Value = 480m, Currency = "ARS", ValidFrom = today.AddDays(-10), ValidUntil = today.AddDays(90), Source = "fixture", CreatedAtUtc = DateTime.UtcNow });
+            Price(null, OptimizationContractDestination.BabyLeaf, 50_000m),
+            Price(null, OptimizationContractDestination.Conventional, 11_800m));
         await context.SaveChangesAsync();
     }
+
+    public static CostPriceCatalog Price(int? lotId, string destination, decimal value) => new()
+    {
+        LotId = lotId,
+        Destination = destination,
+        Item = OptimizationContractCostItem.PricePerKg,
+        Value = value,
+        Currency = "ARS",
+        ValidFrom = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-60),
+        Source = "manual",
+        CreatedAtUtc = DateTime.UtcNow
+    };
 
     // ------------------------------------------------------------------
     // Helpers para los tests
     // ------------------------------------------------------------------
 
-    public sealed record SeededLot(int LotId, int CropTypeId, DateTime SowingUtc);
-
     /// <summary>
-    /// Crea un lote ACTIVO con grilla 2x3, 2 plantas aptas, 1 planta en riesgo y
-    /// 1 en desarrollo; nodo asignado al lote; AppliedPhenologicalStage = etapa 2
-    /// (EC objetivo 1.5). Devuelve el lote con sus ids.
+    /// Crea un lote ACTIVO sembrado hace <paramref name="daysAgo"/> días (GDD ≈ (daysAgo + 1) × 20,5) con
+    /// las plantas pedidas, etapa aplicada "Crecimiento vegetativo" (CE 1,2–1,8, objetivo 1,5). Devuelve su id.
     /// </summary>
-    public static async Task<SeededLot> SeedOperativeLotAsync(
+    public static async Task<int> SeedLotAsync(
         HydroPilotDbContext context,
-        decimal? currentPh = 6.0m,
-        decimal? currentEc = 1.5m,
-        string? name = "Lote Opt Test")
+        int daysAgo,
+        int apta = 0,
+        int candidate = 0,
+        int developing = 0,
+        int risk = 0,
+        decimal? babyLeafGoal = null,
+        decimal? maxLoss = null)
     {
         var crop = await context.CropTypes.FirstAsync();
         var status = await context.LotStatuses.FirstAsync(s => s.Name == "ACTIVO");
         var stage2 = await context.PhenologicalStages.FirstAsync(s => s.Order == 2);
         var greenhouse = await context.Greenhouses.FirstAsync();
-        var node = await context.IotNodes.FirstAsync();
 
+        var total = apta + candidate + developing + risk;
         var lot = new Lot
         {
             GreenhouseId = greenhouse.Id,
             CropTypeId = crop.Id,
             StatusId = status.Id,
-            Name = name + " " + Interlocked.Increment(ref _lotCounter),
-            SowingDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-15)),
-            PlantedAreaM2 = 4.5m,
-            GridRows = 2,
-            GridColumns = 3,
-            CurrentPh = currentPh,
-            CurrentEc = currentEc,
+            Name = "Lote Opt " + Interlocked.Increment(ref _lotCounter),
+            SowingDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-daysAgo),
+            PlantedAreaM2 = 0m,
+            GridRows = 1,
+            GridColumns = Math.Max(1, total),
             AppliedPhenologicalStageId = stage2.Id,
-            BabyLeafHarvestTargetPercent = 70m,
+            BabyLeafGoalPercent = babyLeafGoal,
+            MaxLossPercent = maxLoss,
             CreatedAt = DateTime.UtcNow
         };
         context.Lots.Add(lot);
         await context.SaveChangesAsync();
 
-        // Una sola asignación abierta por nodo (índice filtrado): cierra previas.
-        var openAssignments = context.NodeLotAssignments
-            .Where(a => a.NodeId == node.Id && a.ValidUntilUtc == null)
-            .ToList();
-        foreach (var assignment in openAssignments)
-        {
-            assignment.ValidUntilUtc = DateTime.UtcNow;
-        }
-
         var comm = await context.CommercialStages.ToDictionaryAsync(s => s.Name);
-        context.Plants.AddRange(
-            new Plant { LotId = lot.Id, Row = 1, Column = 1, CommercialStageId = comm["Baby Leaf apta"].Id, OperationalState = PlantOperationalState.Activa, CreatedAtUtc = DateTime.UtcNow },
-            new Plant { LotId = lot.Id, Row = 1, Column = 2, CommercialStageId = comm["Baby Leaf apta"].Id, OperationalState = PlantOperationalState.Activa, CreatedAtUtc = DateTime.UtcNow },
-            new Plant { LotId = lot.Id, Row = 1, Column = 3, CommercialStageId = comm["En desarrollo"].Id, OperationalState = PlantOperationalState.Activa, CreatedAtUtc = DateTime.UtcNow },
-            new Plant { LotId = lot.Id, Row = 2, Column = 1, CommercialStageId = comm["Riesgo / fuera de ventana"].Id, OperationalState = PlantOperationalState.Activa, CreatedAtUtc = DateTime.UtcNow });
-        await context.SaveChangesAsync();
-
-        context.NodeLotAssignments.Add(new NodeLotAssignment
+        var column = 0;
+        void Add(int count, string stage)
         {
-            NodeId = node.Id,
-            LotId = lot.Id,
-            ValidFromUtc = DateTime.UtcNow.AddDays(-30),
-            ValidUntilUtc = null,
-            Source = "fixture",
-            CreatedAt = DateTime.UtcNow
-        });
+            for (var i = 0; i < count; i++)
+            {
+                context.Plants.Add(new Plant
+                {
+                    LotId = lot.Id,
+                    Row = 1,
+                    Column = ++column,
+                    CommercialStageId = comm[stage].Id,
+                    OperationalState = PlantOperationalState.Activa,
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+            }
+        }
+        Add(apta, CommercialStageNames.BabyLeafApta);
+        Add(candidate, CommercialStageNames.CandidataBabyLeaf);
+        Add(developing, CommercialStageNames.EnDesarrollo);
+        Add(risk, CommercialStageNames.RiesgoFueraDeVentana);
         await context.SaveChangesAsync();
 
-        return new SeededLot(lot.Id, crop.Id, DateTime.UtcNow);
+        return lot.Id;
     }
 
-    /// <summary>Inserta una lectura de sensor (pH/CE/temperatura) con fecha de observación dada.</summary>
-    public static async Task AddReadingAsync(
-        HydroPilotDbContext context,
-        string sensorName,
-        decimal value,
-        DateTime observedAtUtc,
-        string quality = TelemetryContract.QualityValid)
+    /// <summary>Lectura de pH o CE del lote.</summary>
+    public static async Task AddReadingAsync(HydroPilotDbContext context, int lotId, string sensorName, decimal value, DateTime observedAtUtc)
     {
         var sensor = await context.Sensors.FirstAsync(s => s.Name == sensorName);
-        var seedTag = $"opt-{sensorName}-" + Interlocked.Increment(ref _readingCounter);
         context.SensorReadings.Add(new SensorReading
         {
             SensorId = sensor.Id,
             NodeId = sensor.NodeId,
+            LotId = lotId,
             MeasurementUnitId = sensor.MeasurementUnitId,
             Value = value,
             Timestamp = observedAtUtc,
             ObservedAtUtc = observedAtUtc,
             ReceivedAtUtc = DateTime.UtcNow,
-            ExternalReadingId = seedTag,
-            Quality = quality,
+            ExternalReadingId = $"opt-{sensorName}-{Interlocked.Increment(ref _readingCounter)}",
+            Quality = TelemetryContract.QualityValid,
             IngestionResult = TelemetryContract.ResultAceptada,
             CreatedAt = DateTime.UtcNow
         });
         await context.SaveChangesAsync();
     }
 
-    /// <summary>Asigna una lectura de pH/CE al lote (el LotId lo resuelve el sensor del lote).</summary>
-    public static async Task AssignLatestReadingsToLotAsync(HydroPilotDbContext context, int lotId)
+    /// <summary>Cosecha hoy las plantas activas del lote en ese estado comercial (lo congela, como Lotes).</summary>
+    public static async Task HarvestAsync(HydroPilotDbContext context, int lotId, string commercialStage)
     {
-        var sensorIds = await context.Sensors
-            .Where(s => s.Name == "ph-solucion" || s.Name == "ec-solucion")
-            .Select(s => s.Id)
+        var plants = await context.Plants
+            .Where(p => p.LotId == lotId
+                        && p.OperationalState == PlantOperationalState.Activa
+                        && p.CommercialStage != null && p.CommercialStage.Name == commercialStage)
             .ToListAsync();
-        var readings = await context.SensorReadings
-            .Where(r => sensorIds.Contains(r.SensorId) && r.LotId == null)
-            .ToListAsync();
-        foreach (var reading in readings)
+        foreach (var plant in plants)
         {
-            reading.LotId = lotId;
+            plant.OperationalState = PlantOperationalState.Cosechada;
+            plant.HarvestDate = DateOnly.FromDateTime(DateTime.UtcNow);
         }
-        await context.SaveChangesAsync();
-    }
-
-    /// <summary>Borra lecturas de pH/CE (deja limpio para cada caso).</summary>
-    public static async Task ClearReadingsAsync(HydroPilotDbContext context)
-    {
-        var sensorIds = await context.Sensors
-            .Where(s => s.Name == "ph-solucion" || s.Name == "ec-solucion")
-            .Select(s => s.Id)
-            .ToListAsync();
-        var readings = await context.SensorReadings
-            .Where(r => sensorIds.Contains(r.SensorId))
-            .ToListAsync();
-        context.SensorReadings.RemoveRange(readings);
         await context.SaveChangesAsync();
     }
 
     private static int _lotCounter;
     private static int _readingCounter;
-}
-
-/// <summary>Colección de tests de integración del módulo (serializada).</summary>
-[Collection("optimization-sql")]
-public abstract class OptimizationSqlTestBase
-{
-    protected OptimizationSqlFixture Fixture { get; }
-
-    protected OptimizationSqlTestBase(OptimizationSqlFixture fixture) => Fixture = fixture;
 }

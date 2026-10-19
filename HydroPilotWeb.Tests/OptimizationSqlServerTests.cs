@@ -1,374 +1,254 @@
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Data;
-using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
+using HydroPilotWeb.Services.Anomalies;
+using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Optimization;
 
 namespace HydroPilotWeb.Tests;
 
 /// <summary>
-/// Integración del módulo de optimización sobre SQL Server local (plan 16):
-/// generación idempotente por snapshot, bloqueo por frescura/calidad, acciones
-/// aceptar/descartar idempotentes con motivo, expiración, comparativa económica
-/// sin precios y cero llamadas a hardware (nada de dosis ni comandos).
+/// Integración de Optimización sobre SQL Server local: recomendaciones R1–R6 con la lógica real de Lotes,
+/// Simulación y Anomalías; una recomendación por problema (no se duplica ni se vuelve a avisar), aceptar
+/// verifica solo si se cumplió, descartar silencia el problema, y sin datos frescos no se cierra nada.
 /// </summary>
 [Collection("optimization-sql")]
-public class OptimizationSqlServerTests : IAsyncLifetime
+public class OptimizationSqlServerTests
 {
     private readonly OptimizationSqlFixture _fixture;
 
     public OptimizationSqlServerTests(OptimizationSqlFixture fixture) => _fixture = fixture;
 
-    public Task InitializeAsync() => Task.CompletedTask;
-    public Task DisposeAsync() => Task.CompletedTask;
-
     private HydroPilotDbContext Ctx() => _fixture.NewContext();
 
-    /// <summary>Lote fresco con lecturas de pH/CE fuera de rango y asignadas al lote.</summary>
-    private async Task<(int LotId, DateTime NowUtc)> SeedOutOfRangeLotAsync(decimal ph = 7.0m, decimal ec = 2.0m)
+    // Sembrado hace 16 días: 17 × 20,5 = 348,5 GDD (ventana Baby Leaf, pasado el óptimo de 300).
+    private const int BabyLeafWindowDaysAgo = 16;
+
+    private async Task<int> LotAsync(int daysAgo, int apta = 0, int candidate = 0, int developing = 0, int risk = 0,
+        decimal? goal = null, decimal? maxLoss = null)
     {
         await using var context = Ctx();
-        var seeded = await OptimizationSqlFixture.SeedOperativeLotAsync(context, currentPh: null, currentEc: null);
-        var now = DateTime.UtcNow;
-        await OptimizationSqlFixture.AddReadingAsync(context, "ph-solucion", ph, now.AddMinutes(-5));
-        await OptimizationSqlFixture.AddReadingAsync(context, "ec-solucion", ec, now.AddMinutes(-4));
-        await OptimizationSqlFixture.AssignLatestReadingsToLotAsync(context, seeded.LotId);
-        return (seeded.LotId, now);
+        return await OptimizationSqlFixture.SeedLotAsync(context, daysAgo, apta, candidate, developing, risk, goal, maxLoss);
     }
 
-    [Fact]
-    public async Task Generar_Crea_Recomendacion_Quimica_Cuando_Ph_CE_Fueran_De_Rango()
-    {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
+    private async Task<OptimizationViewDto> ViewAsync(int lotId) =>
+        (await _fixture.Optimization.GetViewAsync(lotId))!;
 
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-        Assert.NotNull(result);
-
-        var chemical = result!.State.ActiveRecommendations
-            .FirstOrDefault(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
-        Assert.NotNull(chemical);
-        Assert.Equal(OptimizationContractStatus.Pending, chemical!.Status);
-        Assert.Equal(OptimizationContractDirection.Lower, chemical.Direction);
-        Assert.Equal(6.0m, chemical.TargetValue); // objetivo de pH del cultivo
-        Assert.True(chemical.ConfidencePercent > 0);
-    }
+    private static RecommendationDto Active(OptimizationViewDto view, string type) =>
+        Assert.Single(view.Active, r => r.Type == type);
 
     [Fact]
-    public async Task Repetir_Calculo_Con_Mismo_Snapshot_No_Duplica()
+    public async Task Corte_Baby_Leaf_Ahora_Crea_Una_Recomendacion_Y_Avisa_Una_Sola_Vez()
     {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 3, developing: 3);
 
-        var first = await _fixture.Optimization.GenerateAsync(lotId);
-        var second = await _fixture.Optimization.GenerateAsync(lotId);
+        var first = await ViewAsync(lotId);
+        var cut = Active(first, OptimizationContractType.BabyLeafCut);
+        Assert.Equal("Cortar Baby Leaf ahora", cut.Title);
+        Assert.Equal(OptimizationContractStatus.Pending, cut.Status);
+        Assert.Equal(OptimizationContractPriority.High, cut.Priority);
+        Assert.Equal(4_500m, cut.Impact); // 3 aptas × 30 g × $50.000/kg
+        Assert.True(first.Kpis.ToCapture >= 4_500m);
 
-        var firstId = first!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution).Id;
-        var secondId = second!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution).Id;
-
-        Assert.Equal(firstId, secondId);
-        Assert.Equal(first.State.ActiveRecommendations.Count, second.State.ActiveRecommendations.Count);
-        Assert.True(second.DuplicatedSnapshotsSkipped);
+        // Repetir no duplica ni vuelve a avisar: es el mismo problema.
+        var second = await ViewAsync(lotId);
+        Assert.Equal(cut.Id, Active(second, OptimizationContractType.BabyLeafCut).Id);
+        Assert.Single(_fixture.Sink.Events, e => e.RecommendationId == cut.Id);
 
         await using var context = Ctx();
-        var count = await context.OptimizationRecommendations
-            .CountAsync(r => r.RecommendationType == OptimizationContractType.ChemicalSolution && r.LotId == lotId);
-        Assert.Equal(1, count);
+        Assert.Equal(1, await context.OptimizationRecommendations.CountAsync(
+            r => r.LotId == lotId && r.RecommendationType == OptimizationContractType.BabyLeafCut));
     }
 
     [Fact]
-    public async Task Nuevas_Lecturas_Generan_Nueva_Recomendacion_Y_Expiram_La_Anterior()
+    public async Task Aceptar_Y_Cosechar_Las_Aptas_La_Cierra_Cumplida_Con_Lo_Logrado()
     {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var first = await _fixture.Optimization.GenerateAsync(lotId);
-        var oldHash = first!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution).SnapshotHash;
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 3, developing: 3);
+        var cut = Active(await ViewAsync(lotId), OptimizationContractType.BabyLeafCut);
 
-        // El estado cambia (lectura nueva): hash distinto ⇒ recomendación nueva;
-        // la PENDING anterior queda EXPIRED en el historial.
+        var accepted = await _fixture.Optimization.AcceptAsync(cut.Id, "test");
+        Assert.True(accepted.Succeeded);
+        Assert.True((await _fixture.Optimization.AcceptAsync(cut.Id, "test")).Repeated);
+
+        await using (var context = Ctx())
+            await OptimizationSqlFixture.HarvestAsync(context, lotId, CommercialStageNames.BabyLeafApta);
+
+        var view = await ViewAsync(lotId);
+        var done = Assert.Single(view.History, r => r.Id == cut.Id);
+        Assert.Equal(OptimizationContractStatus.Done, done.Status);
+        Assert.Equal(4_500m, done.RealizedAmount);
+        Assert.Equal(4_500m, view.Kpis.Achieved);
+        Assert.Equal(1, view.Kpis.Done);
+    }
+
+    [Fact]
+    public async Task Pendiente_Que_Deja_De_Aplicar_Queda_En_El_Historial()
+    {
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 2, developing: 2);
+        var cut = Active(await ViewAsync(lotId), OptimizationContractType.BabyLeafCut);
+
+        await using (var context = Ctx())
+            await OptimizationSqlFixture.HarvestAsync(context, lotId, CommercialStageNames.BabyLeafApta);
+
+        var expired = Assert.Single((await ViewAsync(lotId)).History, r => r.Id == cut.Id);
+        Assert.Equal(OptimizationContractStatus.Expired, expired.Status);
+        Assert.NotNull(expired.ClosedAtUtc);
+    }
+
+    [Fact]
+    public async Task Descartar_Pide_Motivo_Y_Silencia_El_Problema_Mientras_Siga()
+    {
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 3, developing: 3);
+        var cut = Active(await ViewAsync(lotId), OptimizationContractType.BabyLeafCut);
+
+        Assert.False((await _fixture.Optimization.DiscardAsync(cut.Id, " ", "test")).Succeeded);
+        Assert.True((await _fixture.Optimization.DiscardAsync(cut.Id, "Sin mano de obra", "test")).Succeeded);
+
+        var view = await ViewAsync(lotId);
+        Assert.DoesNotContain(view.Active, r => r.Type == OptimizationContractType.BabyLeafCut);
+        Assert.Equal("Sin mano de obra", Assert.Single(view.History, r => r.Id == cut.Id).DecisionNote);
+
         await using var context = Ctx();
-        var now = DateTime.UtcNow;
-        await OptimizationSqlFixture.AddReadingAsync(context, "ph-solucion", 6.2m, now.AddMinutes(-2));
-        await OptimizationSqlFixture.AssignLatestReadingsToLotAsync(context, lotId);
-
-        var second = (await _fixture.Optimization.GenerateAsync(lotId))!;
-        var newHash = second!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution).SnapshotHash;
-        Assert.NotEqual(oldHash, newHash);
-
-        var history = await _fixture.Optimization.GetHistoryAsync(lotId);
-        Assert.Contains(history, r => r.Status == OptimizationContractStatus.Expired);
+        Assert.Equal(1, await context.OptimizationRecommendations.CountAsync(
+            r => r.LotId == lotId && r.RecommendationType == OptimizationContractType.BabyLeafCut));
     }
 
     [Fact]
-    public async Task Aceptar_Es_Idempotente_Y_Registra_Accion_Manual()
+    public async Task Corte_Convencional_En_Su_Optimo_Con_Las_Que_No_Estan_En_Riesgo()
     {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-        var rec = result!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
+        // Sembrado hace 33 días: 34 × 20,5 = 697 GDD (pasado el óptimo convencional de 650).
+        var lotId = await LotAsync(33, developing: 4, risk: 1);
 
-        var first = await _fixture.Optimization.AcceptAsync(rec.Id, "Revisado por operador", "test-user");
-        Assert.True(first.Succeeded);
-        Assert.False(first.Repeated);
-        Assert.Equal(OptimizationContractStatus.Accepted, first.Recommendation!.Status);
-
-        var repeat = await _fixture.Optimization.AcceptAsync(rec.Id, "otra nota", "test-user");
-        Assert.True(repeat.Succeeded);
-        Assert.True(repeat.Repeated);
-
-        // Solo UNA acción persistida (la transición de estado es única).
-        await using var context = Ctx();
-        var actions = await context.RecommendationActions.Where(a => a.RecommendationId == rec.Id).ToListAsync();
-        Assert.Single(actions);
-        Assert.Equal(OptimizationContractAction.Accept, actions[0].Action);
+        var cut = Active(await ViewAsync(lotId), OptimizationContractType.ConventionalCut);
+        Assert.Equal("Cortar convencional ahora", cut.Title);
+        Assert.Equal(11_800m, cut.Impact); // 4 × 250 g × $11.800/kg
     }
 
     [Fact]
-    public async Task Descartar_Requiere_Motivo_Y_Es_Idempotente()
+    public async Task PH_Alto_Firme_Pide_Bajarlo_Y_Anomalias_Muestra_Que_Corregir()
     {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-        var rec = result!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
-
-        var withoutReason = await _fixture.Optimization.DiscardAsync(rec.Id, "", "test-user");
-        Assert.False(withoutReason.Succeeded);
-        Assert.Contains("Motivo", withoutReason.Message);
-
-        var first = await _fixture.Optimization.DiscardAsync(rec.Id, "Decisión de operación: ajuste manual del reservorio", "test-user");
-        Assert.True(first.Succeeded);
-        Assert.Equal(OptimizationContractStatus.Discarded, first.Recommendation!.Status);
-        Assert.Equal("Decisión de operación: ajuste manual del reservorio", first.Recommendation.DecisionNote);
-
-        var repeat = await _fixture.Optimization.DiscardAsync(rec.Id, "otro motivo", "test-user");
-        Assert.True(repeat.Succeeded);
-        Assert.True(repeat.Repeated);
-    }
-
-    [Fact]
-    public async Task Aceptar_Una_Descartada_Es_Error_Claro()
-    {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-        var rec = result!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
-
-        await _fixture.Optimization.DiscardAsync(rec.Id, "No aplica por cambio de cultivo", "test-user");
-        var accept = await _fixture.Optimization.AcceptAsync(rec.Id, null, "test-user");
-
-        Assert.False(accept.Succeeded);
-        Assert.Contains("descartada", accept.Message);
-    }
-
-    [Fact]
-    public async Task Lectura_Vieja_Bloquea_La_Recomendacion_Quimica()
-    {
-        await using var context = Ctx();
-        var seeded = await OptimizationSqlFixture.SeedOperativeLotAsync(context, currentPh: null, currentEc: null);
-        var now = DateTime.UtcNow;
-        // Lecturas de hace 150 minutos: ventana de frescura default = 60.
-        await OptimizationSqlFixture.AddReadingAsync(context, "ph-solucion", 7.0m, now.AddMinutes(-150));
-        await OptimizationSqlFixture.AddReadingAsync(context, "ec-solucion", 2.0m, now.AddMinutes(-148));
-        await OptimizationSqlFixture.AssignLatestReadingsToLotAsync(context, seeded.LotId);
-
-        var result = await _fixture.Optimization.GenerateAsync(seeded.LotId);
-        var chemical = result!.State.ActiveRecommendations
-            .FirstOrDefault(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
-
-        Assert.NotNull(chemical);
-        Assert.Equal(OptimizationContractStatus.Blocked, chemical!.Status);
-        Assert.Contains("frescura", chemical.Explanation, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task Lectura_Con_Calidad_Invalida_Bloquea_Lo_Quimico()
-    {
-        await using var context = Ctx();
-        var seeded = await OptimizationSqlFixture.SeedOperativeLotAsync(context, currentPh: null, currentEc: null);
-        var now = DateTime.UtcNow;
-        await OptimizationSqlFixture.AddReadingAsync(context, "ph-solucion", 7.0m, now.AddMinutes(-5), TelemetryContract.QualityInvalid);
-        await OptimizationSqlFixture.AddReadingAsync(context, "ec-solucion", 2.0m, now.AddMinutes(-4), TelemetryContract.QualityInvalid);
-        await OptimizationSqlFixture.AssignLatestReadingsToLotAsync(context, seeded.LotId);
-
-        var result = await _fixture.Optimization.GenerateAsync(seeded.LotId);
-        var chemical = result!.State.ActiveRecommendations
-            .FirstOrDefault(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
-
-        Assert.NotNull(chemical);
-        Assert.Equal(OptimizationContractStatus.Blocked, chemical!.Status);
-        Assert.Contains("utilizables", chemical.Explanation, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task Sin_Precios_La_Comparacion_Economica_Es_No_Calculable()
-    {
-        await using var context = Ctx();
-        var seeded = await OptimizationSqlFixture.SeedOperativeLotAsync(context, currentPh: null, currentEc: null);
-        await OptimizationSqlFixture.AddReadingAsync(context, "ph-solucion", 6.0m, DateTime.UtcNow.AddMinutes(-5));
-        await OptimizationSqlFixture.AddReadingAsync(context, "ec-solucion", 1.5m, DateTime.UtcNow.AddMinutes(-4));
-        await OptimizationSqlFixture.AssignLatestReadingsToLotAsync(context, seeded.LotId);
-
-        // Sin catálogo de precios vigente (backup para restaurar: la base es
-        // compartida por la colección serializada).
-        var backup = await context.CostPriceCatalogs.AsNoTracking().ToListAsync();
-        await context.Database.ExecuteSqlRawAsync("DELETE FROM dbo.CostPriceCatalogs");
-
-        var result = await _fixture.Optimization.GenerateAsync(seeded.LotId);
-        var economic = result!.State.ActiveRecommendations
-            .FirstOrDefault(r => r.RecommendationType == OptimizationContractType.EconomicAlternative);
-
-        Assert.NotNull(economic);
-        Assert.Equal(OptimizationContractStatus.Blocked, economic!.Status);
-        Assert.Contains(OptimizationContract.NotCalculableReason, economic.Explanation);
-        Assert.Null(result.State.EconomicComparison!.RecommendedDestination);
-        Assert.False(result.State.EconomicComparison.Calculable);
-
-        // Restaurar el catálogo para los tests siguientes (sin ids explícitos).
-        context.CostPriceCatalogs.AddRange(backup.Select(b => new CostPriceCatalog
+        var lotId = await LotAsync(5, developing: 6);
+        await using (var context = Ctx())
         {
-            CropTypeId = b.CropTypeId,
-            LotId = b.LotId,
-            Destination = b.Destination,
-            Item = b.Item,
-            Value = b.Value,
-            Currency = b.Currency,
-            ValidFrom = b.ValidFrom,
-            ValidUntil = b.ValidUntil,
-            Source = b.Source,
-            CreatedAtUtc = DateTime.UtcNow,
-        }));
-        await context.SaveChangesAsync();
-    }
-
-    [Fact]
-    public async Task Con_Precios_Y_Diferencia_Mayor_Al_Umbral_Recomienda_Destino()
-    {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-
-        Assert.NotNull(result!.State.EconomicComparison);
-        Assert.True(result.State.EconomicComparison!.Calculable);
-        Assert.True(result.State.EconomicComparison.ExceedsThreshold);
-
-        var economic = result.State.ActiveRecommendations
-            .FirstOrDefault(r => r.RecommendationType == OptimizationContractType.EconomicAlternative);
-        Assert.NotNull(economic);
-        Assert.Equal(OptimizationContractDirection.Switch, economic!.Direction);
-        Assert.Equal(OptimizationContractPriority.High, economic.Priority);
-    }
-
-    [Fact]
-    public async Task Pendiente_Sin_Decision_Se_Expira_Por_Antiguedad()
-    {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        await _fixture.Optimization.GenerateAsync(lotId);
-
-        await using var context = Ctx();
-        var pending = await context.OptimizationRecommendations
-            .Where(r => r.LotId == lotId && r.Status == OptimizationContractStatus.Pending)
-            .ToListAsync();
-        Assert.NotEmpty(pending);
-        foreach (var rec in pending)
-        {
-            rec.GeneratedAtUtc = DateTime.UtcNow.AddHours(-48);
+            await OptimizationSqlFixture.AddReadingAsync(context, lotId, "ph-solucion", 7.1m, DateTime.UtcNow.AddMinutes(-15));
+            await OptimizationSqlFixture.AddReadingAsync(context, lotId, "ph-solucion", 7.2m, DateTime.UtcNow.AddMinutes(-5));
         }
-        await context.SaveChangesAsync();
 
-        var expired = await _fixture.Optimization.ExpirePendingAsync();
-        Assert.True(expired >= pending.Count);
+        var solution = await _fixture.Solutions.GetLotAsync(lotId);
+        Assert.Equal(SolutionState.Lower, solution!.Ph.State);
+        Assert.Equal(6.0m, solution.Ph.Band.Target);
 
-        var history = await _fixture.Optimization.GetHistoryAsync(lotId);
-        Assert.Contains(history, r => r.Status == OptimizationContractStatus.Expired && r.DecisionNote!.Contains("antigüedad"));
+        var risk = Active(await ViewAsync(lotId), OptimizationContractType.SolutionRisk);
+        Assert.Equal("Bajar pH", risk.Title);
+        Assert.Equal(17_700m, risk.Impact); // 6 en desarrollo × 250 g × $11.800 (rendimiento potencial)
     }
 
     [Fact]
-    public async Task Snapshot_Reproducible_En_Integracion()
+    public async Task CE_Alta_Firme_Estima_El_Ahorro_Semanal_De_Nutrientes_En_Duda()
     {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var first = await _fixture.Optimization.GenerateAsync(lotId);
-        var second = await _fixture.Optimization.GenerateAsync(lotId);
-
-        var h1 = first!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution).SnapshotHash;
-        var h2 = second!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution).SnapshotHash;
-        Assert.Equal(h1, h2);
-    }
-
-    [Fact]
-    public async Task Explicacion_No_Contiene_Dosis_Exactas_Ni_Mililitros()
-    {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-
-        foreach (var rec in result!.State.ActiveRecommendations)
+        var lotId = await LotAsync(5, developing: 10);
+        await using (var context = Ctx())
         {
-            Assert.DoesNotContain("ml", rec.Explanation, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("mililitros", rec.Explanation, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("mililitros", rec.DataSourceSummary, StringComparison.OrdinalIgnoreCase);
+            await OptimizationSqlFixture.AddReadingAsync(context, lotId, "ec-solucion", 2.2m, DateTime.UtcNow.AddMinutes(-15));
+            await OptimizationSqlFixture.AddReadingAsync(context, lotId, "ec-solucion", 2.1m, DateTime.UtcNow.AddMinutes(-5));
+        }
+
+        var view = await ViewAsync(lotId);
+        var overspend = Active(view, OptimizationContractType.NutrientOverspend);
+        // 2,1 / 1,5 − 1 = 40 %; 10 plantas × 0,15 L × 7 días × 5 ml/L = 0,0525 L; × 0,4 × $25.000 = $525.
+        Assert.Equal(525m, overspend.Impact);
+        Assert.True(overspend.IsEstimate);
+        Assert.Equal(525m, view.Kpis.WeeklySaving);
+    }
+
+    [Fact]
+    public async Task Sin_Lecturas_Frescas_La_Recomendacion_De_Solucion_Queda_Como_Esta()
+    {
+        var lotId = await LotAsync(5, developing: 6);
+        await using (var context = Ctx())
+        {
+            await OptimizationSqlFixture.AddReadingAsync(context, lotId, "ph-solucion", 7.1m, DateTime.UtcNow.AddMinutes(-15));
+            await OptimizationSqlFixture.AddReadingAsync(context, lotId, "ph-solucion", 7.2m, DateTime.UtcNow.AddMinutes(-5));
+        }
+        var risk = Active(await ViewAsync(lotId), OptimizationContractType.SolutionRisk);
+
+        // Las lecturas envejecen (2 h): no se sabe si se corrigió, así que no se cierra.
+        await using (var context = Ctx())
+        {
+            var readings = await context.SensorReadings.Where(r => r.LotId == lotId).ToListAsync();
+            foreach (var reading in readings)
+                reading.ObservedAtUtc = reading.ObservedAtUtc.AddHours(-2);
+            await context.SaveChangesAsync();
+        }
+
+        Assert.Equal(risk.Id, Active(await ViewAsync(lotId), OptimizationContractType.SolutionRisk).Id);
+    }
+
+    [Fact]
+    public async Task Meta_Baby_Leaf_Por_Debajo_Del_Potencial_Es_Una_Meta_En_Riesgo()
+    {
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 1, candidate: 1, developing: 8, goal: 80m);
+
+        var goal = Active(await ViewAsync(lotId), OptimizationContractType.CycleGoals);
+        Assert.Equal("Meta Baby Leaf en riesgo", goal.Title);
+        Assert.Equal(9_000m, goal.Impact); // faltan 8 − 2 = 6 plantas × 30 g × $50.000
+    }
+
+    [Fact]
+    public async Task Barrido_Cierra_Las_Recomendaciones_De_Un_Lote_Que_Se_Cerro()
+    {
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 2, developing: 2);
+        var cut = Active(await ViewAsync(lotId), OptimizationContractType.BabyLeafCut);
+
+        await SetStatusAsync(lotId, "DESCARTADO");
+        try
+        {
+            await _fixture.Optimization.EvaluateOpenLotsAsync();
+
+            var view = (await _fixture.Optimization.GetViewAsync(lotId, evaluate: false))!;
+            Assert.Empty(view.Active);
+            Assert.Equal(OptimizationContractStatus.Expired, Assert.Single(view.History, r => r.Id == cut.Id).Status);
+        }
+        finally
+        {
+            // Un lote cerrado entra en la previsión de Simulación de los demás tests: se vuelve a abrir.
+            await SetStatusAsync(lotId, "ACTIVO");
         }
     }
 
-    [Fact]
-    public async Task Riesgo_Comercial_Se_Muestra_Y_No_Bloquea_La_Quimica()
-    {
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        var result = await _fixture.Optimization.GenerateAsync(lotId);
-
-        // La química sigue PENDING (el riesgo no bloquea la recomendación de lote).
-        var chemical = result!.State.ActiveRecommendations
-            .First(r => r.RecommendationType == OptimizationContractType.ChemicalSolution);
-        Assert.Equal(OptimizationContractStatus.Pending, chemical.Status);
-
-        // El hallazgo comercial (1 planta en Riesgo / fuera de ventana) se
-        // persiste con dirección VERIFY y prioridad alta; el lote no se descarta.
-        var commercial = result.State.ActiveRecommendations
-            .FirstOrDefault(r => r.RecommendationType == OptimizationContractType.CommercialGrowout);
-        Assert.NotNull(commercial);
-        Assert.Equal(OptimizationContractDirection.Verify, commercial!.Direction);
-        Assert.Equal(OptimizationContractPriority.High, commercial.Priority);
-        Assert.Contains("No se descarta el lote", commercial.Explanation);
-        // El riesgo por conteo comercial (estado "Riesgo / fuera de ventana") no
-        // bloquea la recomendación química ni descarta el lote.
-        Assert.Equal(2, result.State.AptaPlantCount);
-        Assert.Equal(4, result.State.ActivePlants);
-        Assert.Equal(50m, result.State.AptaPercent);
-    }
-
-    [Fact]
-    public async Task Lote_Cosechado_No_Genera_Recomendaciones_Nuevas()
+    private async Task SetStatusAsync(int lotId, string status)
     {
         await using var context = Ctx();
-        var seeded = await OptimizationSqlFixture.SeedOperativeLotAsync(context, currentPh: null, currentEc: null);
-        var cosechado = await context.LotStatuses.FirstAsync(s => s.Name == "COSECHADO");
-        var lot = await context.Lots.FindAsync(seeded.LotId);
-        lot!.StatusId = cosechado.Id;
-        lot.ActualHarvestDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        var lot = await context.Lots.FirstAsync(l => l.Id == lotId);
+        lot.StatusId = (await context.LotStatuses.FirstAsync(s => s.Name == status)).Id;
         await context.SaveChangesAsync();
-
-        var result = await _fixture.Optimization.GenerateAsync(seeded.LotId);
-        Assert.NotNull(result);
-        Assert.Empty(result!.State.ActiveRecommendations);
-        Assert.Contains(result.State.Warnings, w => w.Contains("COSECHADO", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public async Task Cero_Llamadas_A_Hardware_No_Existe_Tabla_De_Comandos()
+    public async Task Aceptar_Todo_Convencional_Reemplaza_El_Corte_Baby_Leaf()
     {
-        // Verificación de diseño sobre la base migrada: el módulo no persiste
-        // comandos/órdenes; solo recomendaciones, detalles y acciones manuales.
-        await using var context = Ctx();
-        var tables = (await context.Database
-                .SqlQueryRaw<string>("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME LIKE '%Command%' OR TABLE_NAME LIKE '%Actuator%'")
-                .ToListAsync());
-        Assert.Empty(tables);
+        var lotId = await LotAsync(BabyLeafWindowDaysAgo, apta: 3, developing: 3);
+        await using (var context = Ctx())
+        {
+            // Precios propios del lote: el convencional deja mucho más que Baby Leaf.
+            context.CostPriceCatalogs.AddRange(
+                OptimizationSqlFixture.Price(lotId, OptimizationContractDestination.BabyLeaf, 1_000m),
+                OptimizationSqlFixture.Price(lotId, OptimizationContractDestination.Conventional, 200_000m));
+            await context.SaveChangesAsync();
+        }
 
-        // La generación solo toca las tablas del módulo + consumidores.
-        var (lotId, _) = await SeedOutOfRangeLotAsync();
-        await _fixture.Optimization.GenerateAsync(lotId);
-        var snapshots = await context.OptimizationRecommendations
-            .AnyAsync(r => r.LotId == lotId && !string.IsNullOrEmpty(r.SnapshotJson));
-        Assert.True(snapshots);
+        var view = await ViewAsync(lotId);
+        var strategy = Active(view, OptimizationContractType.HarvestStrategy);
+        Assert.Equal("Cambiar a Todo convencional", strategy.Title);
+        Assert.True(strategy.Impact > 10_000m);
+        var cut = Active(view, OptimizationContractType.BabyLeafCut);
+
+        Assert.True((await _fixture.Optimization.AcceptAsync(strategy.Id, "test")).Succeeded);
+
+        var after = await ViewAsync(lotId);
+        Assert.Equal(OptimizationContractStatus.Accepted, Active(after, OptimizationContractType.HarvestStrategy).Status);
+        var replaced = Assert.Single(after.History, r => r.Id == cut.Id);
+        Assert.Equal(OptimizationContractStatus.Expired, replaced.Status);
+        Assert.Equal("Se eligió Todo convencional.", replaced.DecisionNote);
     }
 }

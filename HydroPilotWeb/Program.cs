@@ -58,6 +58,7 @@ builder.Services.AddOptions<AnomalyOptions>().BindConfiguration(AnomalyOptions.S
 builder.Services.AddSingleton<AnomalyLotRiskEvaluator>();
 builder.Services.AddSingleton<AnomalyEventService>();
 builder.Services.AddScoped<AnomalyQueryService>();
+builder.Services.AddScoped<SolutionStatusService>();
 builder.Services.AddHostedService<AnomalySweepHostedService>();
 
 // --- Dashboard (plan 12) ---
@@ -72,14 +73,49 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
 
-// --- Módulo de optimización (plan 16) ---
-// Hook de anomalías abiertas: lo reemplaza el módulo de anomalies cuando exista
-// (último registro gana en DI). Sink de eventos: lo reemplaza notifications.
-builder.Services.AddSingleton<IOpenAnomalyProvider, NoOpenAnomalyProvider>();
+// --- Módulo de optimización: recomendaciones R1–R6 con la lógica de Lotes, Simulación y Anomalías ---
+// Se recalculan al abrir la vista y cada SweepIntervalMinutes (barrido); las nuevas de prioridad alta
+// se avisan a Notificaciones una sola vez.
 builder.Services.AddScoped<IOptimizationEventSink, HydroPilotWeb.Services.Notifications.OptimizationNotificationSink>();
 builder.Services.AddScoped<OptimizationService>();
 builder.Services.AddOptions<OptimizationOptions>()
     .BindConfiguration(OptimizationOptions.SectionName);
+builder.Services.AddHostedService<OptimizationSweepHostedService>();
+
+// --- Control de pH y CE (dosis manual + motor automático) ---
+// La Pi pide sus comandos por /api/nodos/{nodeId}/comandos y responde el resultado. Al llegar lecturas de pH/CE
+// la ingesta avisa al ControlWorker, que evalúa el tanque si el nodo está en AUTO; el barrido vence lo que nadie
+// tomó, mide el efecto de las dosis y guarda el nivel vigente de cada lote (notas/control/plan-control-ph-ce.md).
+builder.Services.AddOptions<HydroPilotWeb.Services.Control.ControlOptions>()
+    .BindConfiguration(HydroPilotWeb.Services.Control.ControlOptions.SectionName);
+builder.Services.AddSingleton<HydroPilotWeb.Services.Control.ControlTrigger>();
+
+// Transporte con la Pi: HTTP (la Pi consulta sus comandos) o Azure IoT Hub (C2D/D2C), con IotHub:Enabled.
+// Las cadenas del hub van en user-secrets o en la configuración de la Web App (notas/control/azure-iot-hub.md).
+builder.Services.AddOptions<HydroPilotWeb.Services.Control.IotHub.IotHubOptions>()
+    .BindConfiguration(HydroPilotWeb.Services.Control.IotHub.IotHubOptions.SectionName);
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.IotHub.IotHubMessageHandler>();
+var iotHub = builder.Configuration.GetSection(HydroPilotWeb.Services.Control.IotHub.IotHubOptions.SectionName)
+    .Get<HydroPilotWeb.Services.Control.IotHub.IotHubOptions>() ?? new();
+if (iotHub.Enabled)
+{
+    if (string.IsNullOrWhiteSpace(iotHub.ServiceConnectionString) || string.IsNullOrWhiteSpace(iotHub.EventHubConnectionString))
+        throw new InvalidOperationException("IotHub:Enabled=true pero faltan IotHub:ServiceConnectionString o IotHub:EventHubConnectionString.");
+    builder.Services.AddSingleton<HydroPilotWeb.Services.Control.ICommandChannel, HydroPilotWeb.Services.Control.IotHub.IotHubCommandChannel>();
+    builder.Services.AddHostedService<HydroPilotWeb.Services.Control.IotHub.IotHubConsumerHostedService>();
+    builder.Services.AddHostedService<HydroPilotWeb.Services.Control.IotHub.IotHubFeedbackHostedService>();
+}
+else
+{
+    builder.Services.AddSingleton<HydroPilotWeb.Services.Control.ICommandChannel, HydroPilotWeb.Services.Control.HttpPollingCommandChannel>();
+}
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.IControlEventSink, HydroPilotWeb.Services.Notifications.ControlNotificationSink>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.ControlService>();
+// Receta aprendida (fase 5): el histórico de ciclos cerrados es el de Lotes (BabyLeafOutlookService).
+builder.Services.AddScoped<ILotHistorySource>(sp => sp.GetRequiredService<BabyLeafOutlookService>());
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.RecipeService>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.Control.ControlWorker>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.Control.ControlSweepHostedService>();
 
 // --- Módulo de notificaciones y correo (plan 17) ---
 builder.Services.Configure<HydroPilotWeb.Services.Notifications.EmailOptions>(

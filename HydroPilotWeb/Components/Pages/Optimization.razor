@@ -3,18 +3,18 @@
 @rendermode InteractiveServer
 
 @using System.Security.Claims
-@using Microsoft.AspNetCore.Components.Authorization
-@using Microsoft.EntityFrameworkCore
-@using HydroPilotWeb.Controllers
+@using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Models.Optimization
-@using HydroPilotWeb.Services.Forecasting
+@using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Optimization
 @inject OptimizationService OptimizationService
-@inject ForecastService ForecastService
 @inject AuthenticationStateProvider AuthState
 @inject ILogger<Optimization> Logger
 
 <PageTitle>Optimización</PageTitle>
+
+@* Qué hacer en el lote para ganar más o gastar menos: una card por problema, con su $ y su fecha.
+   La lógica está en OptimizationRules / OptimizationService (notas/ux/logica-vista-optimizacion.md). *@
 
 @if (error is not null)
 {
@@ -29,351 +29,229 @@
 }
 else if (lots.Count == 0)
 {
-    <div class="alert alert-info">
-        No hay lotes operativos (ACTIVO / EN_PAUSA). Creá un lote desde Forecasting o ejecutá el script mock para
-        generar datos de prueba. Los lotes cosechados y descartados se consultan como histórico.
-    </div>
+    <div class="alert alert-info">No hay lotes en curso.</div>
 }
 else
 {
-    <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
-        <label class="form-label mb-0">Lote:</label>
-        <select class="form-select form-select-sm" style="width: auto;" value="@selectedLotId"
-                @onchange="OnLotChanged">
-            @foreach (var lot in lots)
-            {
-                <option value="@lot.Id">#@lot.Id — @lot.CropType (@lot.Status, siembra @lot.SowingDate.ToString("dd/MM/yyyy"))</option>
-            }
-        </select>
-        <button class="btn btn-success btn-sm" @onclick="LoadAsync" disabled="@busy">
-            @(busy ? "Calculando..." : "Calcular recomendaciones")
-        </button>
-    </div>
-
-    @if (State is { } state)
-    {
-        @if (state.Warnings.Count > 0)
-        {
-            <div class="alert alert-warning opt-warnings">
-                <strong>Advertencias del cálculo:</strong>
-                <ul class="mb-0">
-                    @foreach (var warning in state.Warnings)
-                    {
-                        <li>@warning</li>
-                    }
-                </ul>
-            </div>
-        }
-
-        <h2 class="opt-section-title">Estado actual del lote</h2>
-
-        @* --- Resumen del lote (GDD / etapa / fecha / fuente) --- *@
-        <section class="metric-row metric-row--four">
-            <article class="metric-card">
-                <p>GDD acumulado</p>
-                <strong>@state.GddAccumulated.ToString("0.0")</strong>
-                <span>objetivo @(state.GddTarget?.ToString("0.0") ?? "—")</span>
-            </article>
-            <article class="metric-card">
-                <p>Etapa fenológica</p>
-                <strong>@(state.PhenologicalStageName ?? "Sin etapa")</strong>
-                <span>EC objetivo @(state.EcObjective?.ToString("0.0#") ?? "—") mS/cm</span>
-            </article>
-            <article class="metric-card">
-                <p>Cosecha estimada</p>
-                <strong>@(state.EstimatedHarvestDate?.ToString("dd/MM/yyyy") ?? "Pendiente")</strong>
-                <span>@(state.DaysRemaining is { } d ? $"{d} días restantes" : "sin fecha estimada")</span>
-            </article>
-            <article class="metric-card">
-                <p>Fuente de datos</p>
-                <strong>@SourceKindLabel(state.SourceKind)</strong>
-                <span>@state.DataSourceSummary</span>
-            </article>
-        </section>
-
-        @if (state.IsMockData)
-        {
-            <div class="alert alert-warning py-2">El cálculo se apoya en datos mock etiquetados como tales (no son precisión real).</div>
-        }
-
-        @* --- Estado de la solución: pH y CE vs objetivo --- *@
-        <h3 class="opt-section-title">Solución nutritiva</h3>
-        <div class="opt-solution-grid">
-            @foreach (var item in state.ChemicalAssessments)
-            {
-                var a = item.Assessment;
-                <div class="opt-card @(a.Evaluable ? "opt-card--ok" : "opt-card--blocked")">
-                    <div class="opt-card__head">
-                        <span class="opt-pill opt-pill--@DirectionClass(a.Direction)">@DirectionLabel(item.SensorType, a.Direction)</span>
-                        <span class="opt-muted">confianza @a.ConfidencePercent%</span>
-                    </div>
-                    <div class="opt-card__value">
-                        <strong>@(a.CurrentValue?.ToString("0.0#") ?? "—")</strong>
-                        <span class="opt-card__unit">@(item.SensorType == "pH" ? "pH" : "mS/cm")</span>
-                        <span class="opt-muted">objetivo @(a.TargetValue?.ToString("0.0#") ?? "—")</span>
-                    </div>
-                    <p class="opt-explanation">@a.Explanation</p>
-                    @if (a.Evaluable && a.TargetLabel is not null)
-                    {
-                        <div class="opt-range">
-                            <span>@a.TargetLabel</span>
-                        </div>
-                    }
-                </div>
-            }
-        </div>
-
-        @* --- Riesgo de plantas (OPT-09): se muestra, no descarta el lote --- *@
-        @if (state.PlantRisks.Count > 0)
-        {
-            <div class="alert alert-warning">
-                <strong>@state.PlantRisks.Count planta(s) en "Riesgo / fuera de ventana":</strong>
-                @string.Join("; ", state.PlantRisks.Select(r => r.Reason).Distinct())
-                <span class="d-block mt-1">El porcentaje de plantas aptas puede sobreestimar la cosecha si esas plantas debían aportar al conteo.
-                No se descarta el lote automáticamente.</span>
-            </div>
-        }
-
-        @* --- Agregado comercial (OPT-08) --- *@
-        <h3 class="opt-section-title">Agregado comercial del lote</h3>
-        <div class="opt-commercial">
-            <div>
-                <span class="opt-muted">Plantas aptas / activas</span>
-                <strong>@state.AptaPlantCount / @state.ActivePlants (@state.AptaPercent.ToString("0.#")%)</strong>
-            </div>
-            <div>
-                <span class="opt-muted">Objetivo de aptas del lote</span>
-                <strong>
-                    @(state.AptaTargetPercent is { } t ? $"{t:0.#}%" : "Sin configurar (decisión pendiente)")
-                </strong>
-            </div>
-            <div>
-                <span class="opt-muted">Estado predominante</span>
-                <strong>@(state.IsCommercialStageMixed ? "Mixto (empate de conteos)" : "No mixto")</strong>
-            </div>
-        </div>
-
-        @* --- Comparativa económica (OPT-03/OPT-08) --- *@
-        <h3 class="opt-section-title">Comparativa económica: Baby Leaf vs convencional</h3>
-        @if (state.EconomicComparison is { } econ)
-        {
-            @if (!econ.Calculable)
-            {
-                <div class="alert alert-secondary mb-2">
-                    <strong>@OptimizationContract.NotCalculableReason.</strong> @econ.NotCalculableReason
-                </div>
-            }
-            else
-            {
-                <div class="table-responsive hp-table-card">
-                <table class="table table-sm hp-table">
-                    <thead>
-                        <tr>
-                            <th>Concepto (por m²)</th>
-                            <th>Baby Leaf</th>
-                            <th>Convencional</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @if (econ.BabyLeaf is { } bl && econ.Conventional is { } cv)
-                        {
-                            <tr><td>Rendimiento base (kg)</td><td>@bl.YieldKgM2.ToString("0.0#")</td><td>@cv.YieldKgM2.ToString("0.0#")</td></tr>
-                            <tr><td>Precio (kg)</td><td>@Money(bl.PricePerKg)</td><td>@Money(cv.PricePerKg)</td></tr>
-                            <tr><td>Ingresos</td><td>@Money(bl.RevenueM2)</td><td>@Money(cv.RevenueM2)</td></tr>
-                            <tr><td>Costos (semillas, nutrientes, energía, trasplante)</td><td>@Money(bl.TotalCostM2)</td><td>@Money(cv.TotalCostM2)</td></tr>
-                            <tr class="hp-table__total"><td><strong>Resultado</strong></td><td><strong>@Money(bl.ResultM2)</strong></td><td><strong>@Money(cv.ResultM2)</strong></td></tr>
-                            <tr><td>Margen</td><td>@(bl.MarginPercent?.ToString("0.#") + "%")</td><td>@(cv.MarginPercent?.ToString("0.#") + "%")</td></tr>
-                        }
-                    </tbody>
-                </table>
-                </div>
-                <div class="opt-muted small mt-2">
-                    Diferencia de margen: @(econ.ProfitabilityDifferencePct?.ToString("0.#") ?? "—") pts
-                    (umbral @econ.ThresholdPercent.ToString("0.#")%,
-                    @(econ.ExceedsThreshold ? "supera el umbral" : "no supera el umbral: no se recomienda cambiar de destino")).
-                </div>
-            }
-            <ul class="opt-assumptions">
-                @foreach (var assumption in econ.Assumptions)
+    <div class="opt-view">
+        <div class="lot-toolbar">
+            <label class="visually-hidden" for="opt-lot">Lote</label>
+            <select id="opt-lot" class="form-select lot-toolbar__select" @bind="selectedLotId" @bind:after="LoadAsync">
+                @foreach (var lot in lots)
                 {
-                    <li>@assumption</li>
+                    <option value="@lot.Id">@lot.Name · @StatusLabel(lot.StatusName)</option>
                 }
-            </ul>
-        }
-        else
-        {
-            <div class="alert alert-secondary">Sin comparativa económica para este lote (contexto histórico o sin datos).</div>
-        }
-
-        @* --- Recomendaciones activas --- *@
-        <h3 class="opt-section-title">Recomendaciones</h3>
-        @if (state.ActiveRecommendations.Count == 0)
-        {
-            <div class="alert alert-success">
-                Sin recomendaciones activas: valores dentro de rango o sin hallazgos. Los bloqueos por datos
-                insuficientes aparecen aquí con su motivo.
-            </div>
-        }
-        else
-        {
-            @foreach (var rec in state.ActiveRecommendations)
+            </select>
+            @if (loading)
             {
-                @if (rec.Status == OptimizationContractStatus.Blocked)
-                {
-                    <article class="recommendation-card opt-blocked">
-                        <div class="recommendation-card__icon">⛔</div>
-                        <div class="recommendation-card__body">
-                            <div class="recommendation-card__meta">
-                                <span class="mono">#@rec.Id</span>
-                                <span class="prio prio--high">@TypeLabel(rec.RecommendationType)</span>
-                            </div>
-                            <h3>Recomendación bloqueada</h3>
-                            <p>@rec.Explanation</p>
-                            <div class="opt-muted small">Actualizado @rec.GeneratedAtUtc.ToLocalTime().ToString("g") · versión de reglas @rec.RuleVersion</div>
-                        </div>
+                <span class="lot-loading" role="status">
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Calculando…
+                </span>
+            }
+            @if (view is { Missing.Count: > 0 } withMissing)
+            {
+                <a class="lot-chip lot-chip--warning opt-missing" href="settings/parametros"
+                   title="Sin estos valores algunos impactos quedan sin calcular.">
+                    Sin definir: @string.Join(", ", withMissing.Missing)
+                </a>
+            }
+        </div>
+
+        @if (view is not null)
+        {
+            <div class="@(loading ? "lot-layout--loading" : null)">
+                @* --- Números del lote --- *@
+                <section class="opt-kpis">
+                    <article class="opt-kpi">
+                        <span class="opt-kpi__label">Pendientes</span>
+                        <strong class="opt-kpi__value">@view.Kpis.Pending</strong>
+                        <span class="opt-kpi__sub @(view.Kpis.HighPriorityPending > 0 ? "opt-tone--danger" : null)">
+                            @(view.Kpis.HighPriorityPending == 1 ? "1 prioridad alta" : $"{view.Kpis.HighPriorityPending} prioridad alta")
+                        </span>
                     </article>
+                    <article class="opt-kpi opt-kpi--capture">
+                        <span class="opt-kpi__label">A capturar</span>
+                        <strong class="opt-kpi__value">@MoneyOrDash(view.Kpis.ToCapture)</strong>
+                        <span class="opt-kpi__sub">cortes y estrategia</span>
+                    </article>
+                    <article class="opt-kpi opt-kpi--saving">
+                        <span class="opt-kpi__label">Ahorro posible</span>
+                        <strong class="opt-kpi__value">@(view.Kpis.WeeklySaving is { } saving ? "≈ " + Money(saving) : "—")</strong>
+                        <span class="opt-kpi__sub">nutrientes por semana</span>
+                    </article>
+                    <article class="opt-kpi opt-kpi--done">
+                        <span class="opt-kpi__label">Logrado</span>
+                        <strong class="opt-kpi__value">@MoneyOrDash(view.Kpis.Achieved)</strong>
+                        <span class="opt-kpi__sub">@(view.Kpis.Done == 1 ? "1 cumplida" : $"{view.Kpis.Done} cumplidas")</span>
+                    </article>
+                </section>
+
+                @* --- Recomendaciones activas --- *@
+                @if (view.Active.Count == 0)
+                {
+                    <div class="opt-empty">
+                        <strong>Sin recomendaciones</strong>
+                        <span>No hay nada que corregir en este lote.</span>
+                    </div>
                 }
                 else
                 {
-                    <article class="recommendation-card">
-                        <div class="recommendation-card__icon">@IconFor(rec.RecommendationType)</div>
-                        <div class="recommendation-card__body">
-                            <div class="recommendation-card__meta">
-                                <span class="mono">#@rec.Id</span>
-                                <span class="prio @PriorityClass(rec.Priority)">@rec.Priority</span>
-                                <span class="opt-pill opt-pill--@DirectionClass(rec.Direction)">@DirectionLabel(rec)</span>
-                            </div>
-                            <h3>@TypeLabel(rec.RecommendationType)</h3>
-                            <p>@rec.Explanation</p>
-                            @if (rec.CurrentValue is not null)
-                            {
-                                <div class="recommendation-card__stats">
-                                    <div><small>Actual</small><strong>@rec.CurrentValue.Value.ToString("0.0#")</strong></div>
-                                    <div><small>Objetivo</small><strong>@(rec.TargetValue?.ToString("0.0#") ?? "—")</strong></div>
-                                    <div><small>Confianza</small><strong>@rec.ConfidencePercent%</strong></div>
-                                    @if (rec.EstimatedImpact is not null)
+                    <section class="opt-grid">
+                        @foreach (var rec in view.Active)
+                        {
+                            var type = TypeStyle(rec.Type);
+                            <article class="opt-rec opt-rec--@PriorityClass(rec.Priority)" style="--opt-type: @type.Color;">
+                                <header class="opt-rec__head">
+                                    <span class="opt-rec__type">@type.Label</span>
+                                    @if (rec.Status == OptimizationContractStatus.Accepted)
                                     {
-                                        <div><small>Impacto</small><strong>@rec.EstimatedImpact.Value.ToString("0.#") @(rec.ImpactUnit ?? "")</strong></div>
+                                        <span class="lot-chip lot-chip--success">En curso</span>
                                     }
-                                </div>
-                            }
-                            <div class="opt-muted small">Fuente: @rec.DataSourceSummary · confianza @rec.ConfidencePercent%</div>
+                                    else if (rec.Priority == OptimizationContractPriority.High)
+                                    {
+                                        <span class="lot-chip lot-chip--danger">Prioridad alta</span>
+                                    }
+                                </header>
 
-                            <ul class="opt-details">
-                                @foreach (var detail in rec.Details)
+                                <h3 class="opt-rec__title">@rec.Title</h3>
+
+                                <div class="opt-rec__impact">
+                                    <strong class="opt-tone--@ImpactTone(rec.ImpactKind)">@ImpactText(rec)</strong>
+                                    <span>@ImpactLabel(rec.ImpactKind)</span>
+                                </div>
+
+                                @if (rec.Figures.Count > 0)
                                 {
-                                    <li><strong>@detail.Label:</strong> @detail.Note</li>
+                                    <dl class="opt-rec__figures">
+                                        @foreach (var figure in rec.Figures)
+                                        {
+                                            <div>
+                                                <dt>@figure.Label</dt>
+                                                <dd>@FigureText(figure)</dd>
+                                            </div>
+                                        }
+                                    </dl>
                                 }
-                            </ul>
 
-                            @if (rec.Status == OptimizationContractStatus.Pending)
-                            {
-                                <div class="recommendation-card__actions opt-actions">
-                                    <input class="form-control form-control-sm" placeholder="Nota (opcional)"
-                                           value="@NoteFor(rec.Id)" @onchange="e => SetNote(rec.Id, e.Value?.ToString())" />
-                                    <button class="btn-pill btn-pill--solid" type="button"
-                                            disabled="@busy" @onclick="() => AcceptAsync(rec.Id)">
-                                        Aceptar
-                                    </button>
-                                    <button class="btn-pill opt-discard" type="button"
-                                            disabled="@busy" @onclick="() => DiscardAsync(rec.Id)">
-                                        Descartar
-                                    </button>
-                                </div>
-                            }
-                            @if (decisionError is not null && decisionErrorRec == rec.Id)
-                            {
-                                <div class="alert alert-danger py-1 px-2 mt-2 mb-0 small">@decisionError</div>
-                            }
-                        </div>
-                    </article>
+                                <footer class="opt-rec__foot">
+                                    @if (rec.DueDate is { } due)
+                                    {
+                                        <span class="lot-chip lot-chip--@DueTone(due)">@DueText(due)</span>
+                                    }
+                                    <a class="lot-link" href="@LinkFor(rec)">@LinkLabel(rec.Type)</a>
+                                </footer>
+
+                                @if (rec.Status == OptimizationContractStatus.Pending)
+                                {
+                                    <div class="opt-rec__actions">
+                                        <button type="button" class="btn btn-success btn-sm" disabled="@busy"
+                                                @onclick="() => AcceptAsync(rec.Id)">Aceptar</button>
+                                        <select class="form-select form-select-sm opt-reason" aria-label="Motivo de descarte"
+                                                value="@ReasonFor(rec.Id)" @onchange="e => SetReason(rec.Id, e.Value?.ToString())">
+                                            <option value="">Motivo…</option>
+                                            @foreach (var reason in OptimizationContract.DiscardReasons)
+                                            {
+                                                <option value="@reason">@reason</option>
+                                            }
+                                        </select>
+                                        <button type="button" class="btn btn-sm opt-discard" disabled="@(busy || !CanDiscard(rec.Id))"
+                                                @onclick="() => DiscardAsync(rec.Id)">Descartar</button>
+                                        @if (ReasonFor(rec.Id) == OtherReason)
+                                        {
+                                            <input class="form-control form-control-sm opt-reason-text" placeholder="¿Por qué?"
+                                                   value="@OtherFor(rec.Id)" @oninput="e => SetOther(rec.Id, e.Value?.ToString())" />
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="opt-rec__decided">Aceptada el @Day(rec.DecidedAtUtc)@(rec.DecidedBy is { } by ? $" · {by}" : null)</p>
+                                }
+
+                                @if (decisionError is not null && decisionErrorRec == rec.Id)
+                                {
+                                    <div class="alert alert-danger py-1 px-2 mb-0 small">@decisionError</div>
+                                }
+                            </article>
+                        }
+                    </section>
                 }
-            }
-        }
 
-        @* --- Historial --- *@
-        <h3 class="opt-section-title">Historial de recomendaciones</h3>
-        @if (history is { Count: > 0 })
-        {
-            <div class="table-responsive hp-table-card">
-            <table class="table table-sm hp-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Fecha</th>
-                        <th>Tipo</th>
-                        <th>Estado</th>
-                        <th>Dirección</th>
-                        <th>Confianza</th>
-                        <th>Decisión / nota</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var rec in history.Take(30))
-                    {
-                        <tr>
-                            <td class="mono">@rec.Id</td>
-                            <td>@rec.GeneratedAtUtc.ToLocalTime().ToString("dd/MM HH:mm")</td>
-                            <td>@TypeLabel(rec.RecommendationType)</td>
-                            <td><span class="opt-status opt-status--@rec.Status">@rec.Status</span></td>
-                            <td>@DirectionLabel(rec)</td>
-                            <td>@rec.ConfidencePercent%</td>
-                            <td class="small">@rec.DecisionNote</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
+                @* --- Historial --- *@
+                @if (view.History.Count > 0)
+                {
+                    <h3 class="lot-panel-title opt-history-title">Historial</h3>
+                    <div class="table-responsive hp-table-card">
+                        <table class="table table-sm hp-table">
+                            <thead>
+                                <tr>
+                                    <th>Fecha</th>
+                                    <th>Recomendación</th>
+                                    <th>Estado</th>
+                                    <th class="text-end">Impacto</th>
+                                    <th class="text-end">Logrado</th>
+                                    <th>Motivo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var rec in view.History)
+                                {
+                                    <tr>
+                                        <td>@Day(rec.ClosedAtUtc ?? rec.DecidedAtUtc ?? rec.GeneratedAtUtc)</td>
+                                        <td>@rec.Title</td>
+                                        <td><span class="lot-chip lot-chip--@StatusTone(rec.Status)">@StatusText(rec.Status)</span></td>
+                                        <td class="text-end">@(rec.Impact is { } impact ? ImpactText(rec) : "—")</td>
+                                        <td class="text-end">@MoneyOrDash(rec.RealizedAmount)</td>
+                                        <td class="small text-muted">@rec.DecisionNote</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             </div>
         }
-        else
-        {
-            <div class="alert alert-secondary">Sin historial todavía.</div>
-        }
-    }
+    </div>
 }
 
 @code {
-    private List<LotSummary>? lots;
+    /// <summary>Lote a abrir desde un enlace (/optimization?lote=ID).</summary>
+    [SupplyParameterFromQuery(Name = "lote")]
+    public int? LotFromQuery { get; set; }
+
+    private const string OtherReason = "Otro";
+
+    private IReadOnlyList<LotOption>? lots;
     private int? selectedLotId;
-    private OptimizationGenerationResult? result;
-    private List<RecommendationDto>? history;
+    private OptimizationViewDto? view;
     private string? error;
     private string? decisionError;
     private int? decisionErrorRec;
+    private bool loading;
     private bool busy;
     private string? currentUser;
+    private int loadVersion;
 
-    private OptimizationStateDto? State => result?.State;
+    private readonly Dictionary<int, string> reasons = new();
+    private readonly Dictionary<int, string> others = new();
 
-    private readonly Dictionary<int, string> notes = new();
+    private string Currency => view?.Currency ?? "ARS";
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
             var auth = await AuthState.GetAuthenticationStateAsync();
-            currentUser = auth.User.Identity?.Name
-                          ?? auth.User.FindFirst(ClaimTypes.Email)?.Value;
-            lots = (await ForecastService.GetLotsAsync(includeClosed: false)).ToList();
-            selectedLotId = lots.FirstOrDefault()?.Id;
+            currentUser = auth.User.Identity?.Name ?? auth.User.FindFirst(ClaimTypes.Email)?.Value;
+            lots = await OptimizationService.GetLotOptionsAsync();
+            selectedLotId = lots.Any(l => l.Id == LotFromQuery) ? LotFromQuery : lots.FirstOrDefault()?.Id;
             await LoadAsync();
         }
         catch (Exception ex)
         {
-            error = $"No se pudo cargar el módulo: {ex.Message}";
+            error = $"No se pudo cargar Optimización: {ex.Message}";
             Logger.LogError(ex, "Optimization init failed");
-        }
-    }
-
-    private async Task OnLotChanged(ChangeEventArgs e)
-    {
-        if (int.TryParse(e.Value?.ToString(), out var lotId))
-        {
-            selectedLotId = lotId;
-            result = null;
-            history = null;
-            notes.Clear();
-            await LoadAsync();
+            lots ??= [];
         }
     }
 
@@ -382,73 +260,60 @@ else
         if (selectedLotId is not { } lotId)
             return;
 
-        busy = true;
+        var version = ++loadVersion;
+        loading = true;
         decisionError = null;
         try
         {
-            result = await OptimizationService.GenerateAsync(lotId);
-            history = (await OptimizationService.GetHistoryAsync(lotId)).ToList();
-        }
-        catch (Exception ex)
-        {
-            error = $"Error al calcular recomendaciones: {ex.Message}";
-            Logger.LogError(ex, "Optimization generate failed for lot {LotId}", lotId);
-        }
-        finally
-        {
-            busy = false;
-        }
-    }
-
-    private async Task AcceptAsync(int recommendationId)
-    {
-        busy = true;
-        decisionError = null;
-        decisionErrorRec = recommendationId;
-        try
-        {
-            var decision = await OptimizationService.AcceptAsync(recommendationId, Trim(notes.GetValueOrDefault(recommendationId)), currentUser);
-            if (!decision.Succeeded)
+            var result = await OptimizationService.GetViewAsync(lotId);
+            if (version == loadVersion)
             {
-                decisionError = decision.Message;
+                view = result;
+                error = null;
             }
-            await LoadAsync();
         }
         catch (Exception ex)
         {
-            decisionError = $"Error al aceptar: {ex.Message}";
+            error = $"No se pudieron calcular las recomendaciones: {ex.Message}";
+            Logger.LogError(ex, "Optimization load failed for lot {LotId}", lotId);
         }
         finally
         {
-            busy = false;
+            if (version == loadVersion)
+                loading = false;
         }
     }
 
-    private async Task DiscardAsync(int recommendationId)
-    {
-        var reason = Trim(notes.GetValueOrDefault(recommendationId));
-        if (string.IsNullOrWhiteSpace(reason))
-        {
-            decisionError = "Motivo de descarte obligatorio (trazabilidad): escribí por qué se descarta.";
-            decisionErrorRec = recommendationId;
-            return;
-        }
+    private async Task AcceptAsync(int id) =>
+        await DecideAsync(id, () => OptimizationService.AcceptAsync(id, currentUser));
 
+    private async Task DiscardAsync(int id)
+    {
+        var reason = ReasonFor(id) == OtherReason ? $"{OtherReason}: {OtherFor(id).Trim()}" : ReasonFor(id);
+        await DecideAsync(id, () => OptimizationService.DiscardAsync(id, reason, currentUser));
+    }
+
+    private async Task DecideAsync(int id, Func<Task<DecisionResult>> decide)
+    {
         busy = true;
         decisionError = null;
-        decisionErrorRec = recommendationId;
+        decisionErrorRec = id;
         try
         {
-            var decision = await OptimizationService.DiscardAsync(recommendationId, reason, currentUser);
-            if (!decision.Succeeded)
+            var result = await decide();
+            if (!result.Succeeded)
             {
-                decisionError = decision.Message;
+                decisionError = result.Message;
+                return;
             }
-            await LoadAsync();
+            reasons.Remove(id);
+            others.Remove(id);
+            if (selectedLotId is { } lotId)
+                view = await OptimizationService.GetViewAsync(lotId, evaluate: false);
         }
         catch (Exception ex)
         {
-            decisionError = $"Error al descartar: {ex.Message}";
+            decisionError = $"No se pudo guardar: {ex.Message}";
         }
         finally
         {
@@ -456,86 +321,134 @@ else
         }
     }
 
-    private static string? Trim(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private string ReasonFor(int id) => reasons.GetValueOrDefault(id) ?? string.Empty;
+    private string OtherFor(int id) => others.GetValueOrDefault(id) ?? string.Empty;
+    private void SetReason(int id, string? value) => reasons[id] = value ?? string.Empty;
+    private void SetOther(int id, string? value) => others[id] = value ?? string.Empty;
 
-    private string NoteFor(int recommendationId) =>
-        notes.TryGetValue(recommendationId, out var note) ? note : string.Empty;
+    private bool CanDiscard(int id) =>
+        ReasonFor(id) is { Length: > 0 } reason && (reason != OtherReason || !string.IsNullOrWhiteSpace(OtherFor(id)));
 
-    private void SetNote(int recommendationId, string? value) =>
-        notes[recommendationId] = value ?? string.Empty;
+    // --- Formato ---
 
-    // --- Labels y estilos ---
+    private string Money(decimal value) => LotFormat.Money(value, Currency);
 
-    private static string TypeLabel(string type) => type switch
+    private string MoneyOrDash(decimal? value) => value is { } v ? Money(v) : "—";
+
+    private static string Day(DateTime? utc) => utc is { } value ? LotFormat.Day(DateOnly.FromDateTime(value.ToLocalTime())) : "—";
+
+    private string ImpactText(RecommendationDto rec) => rec.Impact is { } impact
+        ? (rec.IsEstimate ? "≈ " : string.Empty) + Money(impact) + (rec.ImpactKind == OptimizationImpactKind.Saving ? " /semana" : string.Empty)
+        : "Sin precio";
+
+    private static string ImpactLabel(string? kind) => kind switch
     {
-        OptimizationContractType.ChemicalSolution => "Solución nutritiva (pH/CE)",
-        OptimizationContractType.EconomicAlternative => "Comparativa económica",
-        OptimizationContractType.CommercialGrowout => "Estado comercial agregado",
-        _ => type,
+        OptimizationImpactKind.Saving => "ahorro (supuesto en duda)",
+        OptimizationImpactKind.Risk => "en riesgo",
+        _ => "a capturar",
     };
 
-    private static string DirectionLabel(string magnitude, string direction)
+    private static string ImpactTone(string? kind) => kind switch
     {
-        var prefix = magnitude == "pH" ? "pH" : magnitude == "CE" ? "CE" : "";
-        return direction switch
+        OptimizationImpactKind.Saving => "saving",
+        OptimizationImpactKind.Risk => "danger",
+        _ => "capture",
+    };
+
+    private string FigureText(RecommendationFigure figure) => figure.Kind switch
+    {
+        "money" => MoneyOrDash(figure.Value),
+        "moneyPerKg" => figure.Value is { } price ? Money(price) + "/kg" : "sin precio",
+        "plants" => figure.Value is { } count ? count.ToString("0", LotFormat.Culture) : "—",
+        "pct" => figure.Value is { } pct ? LotFormat.Pct1(pct) : "—",
+        "date" => figure.Date is { } date ? LotFormat.Day(date) : "sin fecha",
+        "number" => figure.Value is { } number
+            ? number.ToString("0.##", LotFormat.Culture) + (figure.Unit is { } unit ? " " + unit : string.Empty)
+            : "—",
+        _ => figure.Text ?? "—",
+    };
+
+    private DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
+
+    private string DueText(DateOnly due)
+    {
+        var days = due.DayNumber - Today.DayNumber;
+        return days switch
         {
-            OptimizationContractDirection.Raise => $"Subir {prefix}",
-            OptimizationContractDirection.Lower => $"Bajar {prefix}",
-            OptimizationContractDirection.Maintain => "Mantener",
-            OptimizationContractDirection.Verify => "Verificar",
-            OptimizationContractDirection.Switch => "Cambiar destino",
-            _ => direction,
+            < 0 => $"Venció el {LotFormat.Day(due)}",
+            0 => "Hoy",
+            1 => "Hasta mañana",
+            _ => $"Hasta el {LotFormat.Day(due)} · {LotFormat.Days(days)}",
         };
     }
 
-    private static string DirectionLabel(RecommendationDto rec) => rec.RecommendationType switch
+    private string DueTone(DateOnly due) => (due.DayNumber - Today.DayNumber) switch
     {
-        OptimizationContractType.ChemicalSolution =>
-            rec.Direction switch
-            {
-                OptimizationContractDirection.Raise => "Subir solución",
-                OptimizationContractDirection.Lower => "Bajar solución",
-                OptimizationContractDirection.Maintain => "Mantener",
-                _ => "Verificar",
-            },
-        OptimizationContractType.EconomicAlternative => rec.Direction == OptimizationContractDirection.Switch ? "Cambiar destino" : "Verificar",
-        OptimizationContractType.CommercialGrowout =>
-            rec.Direction == OptimizationContractDirection.Verify ? "Verificar lote" : "Mantener",
-        _ => rec.Direction,
+        <= 1 => "danger",
+        <= 3 => "warning",
+        _ => "info",
     };
 
-    private static string DirectionClass(string direction) => direction switch
+    private string LinkFor(RecommendationDto rec) => rec.Type switch
     {
-        OptimizationContractDirection.Raise => "up",
-        OptimizationContractDirection.Lower => "down",
-        OptimizationContractDirection.Maintain => "ok",
-        OptimizationContractDirection.Switch => "switch",
-        _ => "warn",
+        OptimizationContractType.HarvestStrategy => $"simulation?lote={rec.LotId}",
+        OptimizationContractType.NutrientOverspend or OptimizationContractType.SolutionRisk => $"control?lote={rec.LotId}",
+        _ => $"lotes?lote={rec.LotId}",
+    };
+
+    private static string LinkLabel(string type) => type switch
+    {
+        OptimizationContractType.HarvestStrategy => "Ver en Simulación",
+        OptimizationContractType.NutrientOverspend or OptimizationContractType.SolutionRisk => "Ver en Control",
+        _ => "Ver en Lotes",
+    };
+
+    private sealed record TypeInfo(string Label, string Color);
+
+    private static readonly string BabyLeafColor = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta).Background;
+    private static readonly string ConventionalColor = CommercialStagePalette.ForStage(CommercialStageNames.CosechaConvencional).Background;
+
+    private static TypeInfo TypeStyle(string type) => type switch
+    {
+        OptimizationContractType.BabyLeafCut => new("Corte Baby Leaf", BabyLeafColor),
+        OptimizationContractType.ConventionalCut => new("Corte convencional", ConventionalColor),
+        OptimizationContractType.HarvestStrategy => new("Estrategia", "#16a34a"),
+        OptimizationContractType.NutrientOverspend => new("Nutrientes", "#0e9384"),
+        OptimizationContractType.SolutionRisk => new("Solución", "#d64545"),
+        OptimizationContractType.CycleGoals => new("Metas", "#e8a33d"),
+        _ => new("Anterior", "#94a3b8"),
     };
 
     private static string PriorityClass(string priority) => priority switch
     {
-        OptimizationContractPriority.High => "prio--high",
-        OptimizationContractPriority.Medium => "prio--medium",
-        _ => "prio--low",
+        OptimizationContractPriority.High => "high",
+        OptimizationContractPriority.Medium => "medium",
+        _ => "low",
     };
 
-    private static string SourceKindLabel(ForecastSourceKind kind) => kind switch
+    private static string StatusText(string status) => status switch
     {
-        ForecastSourceKind.Mock => "Mock",
-        ForecastSourceKind.Observed => "Sensor",
-        ForecastSourceKind.Forecast => "Pronóstico",
-        ForecastSourceKind.Fallback => "Fallback",
-        _ => kind.ToString(),
+        OptimizationContractStatus.Done => "Cumplida",
+        OptimizationContractStatus.Missed => "No cumplida",
+        OptimizationContractStatus.Discarded => "Descartada",
+        OptimizationContractStatus.Expired => "Ya no aplica",
+        OptimizationContractStatus.Accepted => "Aceptada",
+        OptimizationContractStatus.Blocked => "Bloqueada",
+        _ => "Pendiente",
     };
 
-    private static string Money(decimal? value) => value is { } v ? $"${v:0.0}" : "—";
-
-    private static string IconFor(string type) => type switch
+    private static string StatusTone(string status) => status switch
     {
-        OptimizationContractType.EconomicAlternative => "💱",
-        OptimizationContractType.CommercialGrowout => "🧬",
-        _ => "⚗️",
+        OptimizationContractStatus.Done => "success",
+        OptimizationContractStatus.Missed => "danger",
+        OptimizationContractStatus.Accepted => "info",
+        _ => "neutral",
+    };
+
+    private static string StatusLabel(string? status) => status switch
+    {
+        "ACTIVO" => "Activo",
+        "EN_PAUSA" => "En pausa",
+        _ => status ?? "Sin estado"
     };
 }

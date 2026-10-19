@@ -50,6 +50,23 @@ public class SettingsService
         return setting is not null && int.TryParse(setting.Value, out var value) ? value : defaultValue;
     }
 
+    public async Task<string?> GetStringAsync(string key, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        return (await context.AppSettings.FindAsync([key], ct))?.Value;
+    }
+
+    public async Task SetStringAsync(string key, string value, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var setting = await context.AppSettings.FindAsync([key], ct);
+        if (setting is null)
+            context.AppSettings.Add(new AppSetting { Key = key, Value = value });
+        else
+            setting.Value = value;
+        await context.SaveChangesAsync(ct);
+    }
+
     /// <summary>Decimal guardado con cultura invariante; null si no está definido.</summary>
     public async Task<decimal?> GetDecimalAsync(string key, CancellationToken ct = default)
     {

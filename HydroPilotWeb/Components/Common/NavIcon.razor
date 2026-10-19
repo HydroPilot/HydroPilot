@@ -31,6 +31,10 @@
                 <path d="M11 3.5 12.8 8.2 17.5 10l-4.7 1.8L11 16.5l-1.8-4.7L4.5 10l4.7-1.8Z" />
                 <path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.7-.9-2.7-2.6-.9 2.6-.9Z" />
                 break;
+            case "control":
+                <path d="M12 3.5c3.6 4.3 6 7.5 6 10.5a6 6 0 0 1-12 0c0-3 2.4-6.2 6-10.5Z" />
+                <path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5" />
+                break;
             case "anomalies":
                 <path d="M10.3 4.2 2.7 17.5A2 2 0 0 0 4.4 20.5h15.2a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
                 <path d="M12 9.5v4" />
@@ -73,6 +77,6 @@
     [Parameter] public string? Class { get; set; }
 
     public static bool HasIcon(string name) => name is "" or "lotes" or "reports" or "simulation" or "optimization"
-        or "anomalies" or "settings/profile" or "settings/notifications" or "notifications" or "settings/parametros"
+        or "control" or "anomalies" or "settings/profile" or "settings/notifications" or "notifications" or "settings/parametros"
         or "admin/users" or "admin/mantenimiento";
 }

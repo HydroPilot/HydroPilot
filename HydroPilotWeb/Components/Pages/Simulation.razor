@@ -446,6 +446,10 @@
 @code {
     [Inject] private SimulationService SimulationSvc { get; set; } = null!;
 
+    /// <summary>Lote a simular desde un enlace (/simulation?lote=ID, por ejemplo desde Optimización).</summary>
+    [SupplyParameterFromQuery(Name = "lote")]
+    public int? LotFromQuery { get; set; }
+
     private SimulationContextOptions? options;
     private SimulationPreview? preview;
     private SimulationResult? result => preview?.Result;
@@ -486,7 +490,7 @@
 
         if (options.Lots.Count > 0)
         {
-            selectedLotId = options.Lots[0].Id;
+            selectedLotId = options.Lots.Any(l => l.Id == LotFromQuery) ? LotFromQuery : options.Lots[0].Id;
             OnLotChanged();
         }
     }

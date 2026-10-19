@@ -108,6 +108,11 @@ IF OBJECT_ID('PlantImageAnalyses', 'U') IS NOT NULL DELETE FROM PlantImageAnalys
 IF OBJECT_ID('PlantImages', 'U') IS NOT NULL DELETE FROM PlantImages;
 IF OBJECT_ID('Plants', 'U') IS NOT NULL DELETE FROM Plants;
 
+IF OBJECT_ID('ActuatorCommands', 'U') IS NOT NULL DELETE FROM ActuatorCommands;
+IF OBJECT_ID('ControlPauses', 'U') IS NOT NULL DELETE FROM ControlPauses;
+IF OBJECT_ID('LotSetpointHistories', 'U') IS NOT NULL DELETE FROM LotSetpointHistories;
+IF OBJECT_ID('LotRecipes', 'U') IS NOT NULL DELETE FROM LotRecipes;
+
 IF OBJECT_ID('NodeLotAssignments', 'U') IS NOT NULL DELETE FROM NodeLotAssignments;
 IF OBJECT_ID('Predictions', 'U') IS NOT NULL DELETE FROM Predictions;
 IF OBJECT_ID('SensorReadings', 'U') IS NOT NULL DELETE FROM SensorReadings;

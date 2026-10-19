@@ -3,14 +3,12 @@ using System.ComponentModel.DataAnnotations;
 namespace HydroPilotWeb.Models.Optimization;
 
 /// <summary>
-/// Recomendación de optimización persistida (plan 16, OPT-04).
+/// Recomendación de optimización persistida: una por problema del lote (Fingerprint), no por cálculo.
+/// Mientras el problema sigue, se actualizan sus números en el lugar; cuando desaparece, se cierra
+/// (cumplida, no cumplida o vencida). Es informativa: nunca controla actuadores.
 ///
-/// La recomendación es INFORMATIVA: no equivale a una orden física ni controla
-/// actuadores. Conserva el snapshot completo de entradas (JSON + hash canónico)
-/// para reconstruir la razón sin recalcular con datos futuros (OPT-01/OPT-04).
-///
-/// Estados (plan 16 / contrato compartido 02): PENDING, ACCEPTED, DISCARDED,
-/// EXPIRED, BLOCKED.
+/// Estados: PENDING, ACCEPTED (en curso), DONE (cumplida), MISSED (no cumplida), DISCARDED y EXPIRED
+/// (ya no aplica). BLOCKED solo queda en el historial de la lógica anterior.
 /// </summary>
 public class OptimizationRecommendation
 {
@@ -18,23 +16,17 @@ public class OptimizationRecommendation
 
     public int LotId { get; set; }
 
-    /// <summary>
-    /// Tipo de recomendación (ver OptimizationContract): CHEMICAL_SOLUTION,
-    /// ECONOMIC_ALTERNATIVE o COMMERCIAL_GROWOUT.
-    /// </summary>
+    /// <summary>Tipo de recomendación (OptimizationContractType).</summary>
     [Required]
     [MaxLength(40)]
     public string RecommendationType { get; set; } = string.Empty;
 
-    /// <summary>Estado: PENDING | ACCEPTED | DISCARDED | EXPIRED | BLOCKED.</summary>
+    /// <summary>Estado (OptimizationContractStatus).</summary>
     [Required]
     [MaxLength(20)]
     public string Status { get; set; } = OptimizationContractStatus.Pending;
 
-    /// <summary>
-    /// Dirección sugerida (química): RAISE | LOWER | MAINTAIN | VERIFY.
-    /// Económica/comercial: RAISE/MAINTAIN según contexto (ver Explanation).
-    /// </summary>
+    /// <summary>Dirección sugerida (OptimizationContractDirection).</summary>
     [Required]
     [MaxLength(20)]
     public string Direction { get; set; } = OptimizationContractDirection.Verify;
@@ -44,58 +36,78 @@ public class OptimizationRecommendation
     [MaxLength(20)]
     public string Priority { get; set; } = OptimizationContractPriority.Medium;
 
-    /// <summary>Valor actual observado (pH, CE, margen %, etc.). Null si no aplica.</summary>
+    /// <summary>Valor actual observado (pH, CE, etc.). Null si no aplica.</summary>
     public decimal? CurrentValue { get; set; }
 
-    /// <summary>Valor objetivo (pH objetivo, EC de la etapa, margen de la alternativa...).</summary>
+    /// <summary>Valor objetivo (pH objetivo, CE de la etapa...).</summary>
     public decimal? TargetValue { get; set; }
 
-    /// <summary>Etiqueta legible del objetivo (ej: "pH 5,8–6,2", "EC 1,5 (etapa ...)").</summary>
+    /// <summary>Etiqueta legible del objetivo.</summary>
     [MaxLength(200)]
     public string? TargetLabel { get; set; }
 
-    /// <summary>Motivo/regla aplicada: qué dato disparó la recomendación y qué se sugiere.</summary>
+    /// <summary>Qué disparó la recomendación (texto corto).</summary>
     [Required]
     public string Explanation { get; set; } = string.Empty;
 
-    /// <summary>Impacto estimado (porcentual, económico o null según tipo).</summary>
+    /// <summary>Impacto estimado en la moneda de los precios (null si falta un peso o un precio).</summary>
     public decimal? EstimatedImpact { get; set; }
 
-    /// <summary>Unidad del impacto ("%", moneda, "puntos de margen", null).</summary>
+    /// <summary>Qué es el impacto: "capture" (a capturar), "saving" (ahorro por semana) o "risk" (en riesgo).</summary>
     [MaxLength(30)]
     public string? ImpactUnit { get; set; }
 
-    /// <summary>Confianza 0-100 según cantidad/consistencia de lecturas y fuente.</summary>
+    /// <summary>Lógica anterior (porcentaje fijo por regla). La lógica actual no lo usa: queda en 0.</summary>
     public int ConfidencePercent { get; set; }
 
-    /// <summary>Resumen de la fuente de datos (sensor/pronóstico/mock/manual).</summary>
+    /// <summary>De dónde salen los datos (texto corto).</summary>
     [MaxLength(200)]
     public string DataSourceSummary { get; set; } = string.Empty;
 
-    /// <summary>El hallazgo proviene de datos demo etiquetados (nunca se oculta).</summary>
+    /// <summary>El impacto es una aproximación en duda (≈).</summary>
     public bool IsMockData { get; set; }
 
-    /// <summary>Versión de las reglas que produjeron la recomendación (OPT-01).</summary>
+    /// <summary>Versión de las reglas que produjeron la recomendación.</summary>
     [Required]
     [MaxLength(40)]
     public string RuleVersion { get; set; } = string.Empty;
 
-    /// <summary>Momento de cálculo (UTC).</summary>
+    /// <summary>Momento en que apareció el problema (UTC).</summary>
     public DateTime GeneratedAtUtc { get; set; } = DateTime.UtcNow;
 
     /// <summary>Momento de la decisión (aceptar/descartar), UTC.</summary>
     public DateTime? DecidedAtUtc { get; set; }
 
-    /// <summary>Nota de la decisión (motivo de descarte/aceptación, registrado por acción).</summary>
+    /// <summary>Motivo de descarte, o cómo se cerró.</summary>
     public string? DecisionNote { get; set; }
 
-    /// <summary>Snapshot completo de entradas en JSON canónico (OPT-01).</summary>
+    /// <summary>Datos de la última evaluación en JSON (para reconstruir el porqué sin recalcular).</summary>
     public string SnapshotJson { get; set; } = string.Empty;
 
-    /// <summary>SHA-256 hex del snapshot canónico: idempotencia (mismo snapshot ⇒ misma recomendación).</summary>
+    /// <summary>SHA-256 hex de <see cref="SnapshotJson"/>.</summary>
     [Required]
     [MaxLength(64)]
     public string SnapshotHash { get; set; } = string.Empty;
+
+    /// <summary>Problema al que responde ("BABY_LEAF_CUT:bl-cut"): una recomendación abierta por problema y lote.</summary>
+    [MaxLength(120)]
+    public string? Fingerprint { get; set; }
+
+    /// <summary>Acción en pocas palabras ("Cortar Baby Leaf ahora").</summary>
+    [MaxLength(200)]
+    public string? Title { get; set; }
+
+    /// <summary>Hasta cuándo conviene hacerlo. Aceptada y vencida sin resolverse → no cumplida.</summary>
+    public DateOnly? DueDate { get; set; }
+
+    /// <summary>Lo logrado al cumplirse (cosecha real o el impacto estimado), en la moneda de los precios.</summary>
+    public decimal? RealizedAmount { get; set; }
+
+    /// <summary>Última evaluación del problema (UTC).</summary>
+    public DateTime? LastEvaluatedAtUtc { get; set; }
+
+    /// <summary>Cierre: el problema desapareció o se resolvió (UTC). Una descartada sin cierre silencia el problema.</summary>
+    public DateTime? ClosedAtUtc { get; set; }
 
     public Lot? Lot { get; set; }
 

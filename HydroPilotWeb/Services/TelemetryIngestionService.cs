@@ -52,17 +52,20 @@ public sealed class TelemetryIngestionService
     private readonly TelemetryValidationService _validation;
     private readonly TelemetryOptions _options;
     private readonly ILogger<TelemetryIngestionService> _logger;
+    private readonly Control.ControlTrigger? _controlTrigger;
 
     public TelemetryIngestionService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         TelemetryValidationService validation,
         IOptions<TelemetryOptions> options,
-        ILogger<TelemetryIngestionService> logger)
+        ILogger<TelemetryIngestionService> logger,
+        Control.ControlTrigger? controlTrigger = null)
     {
         _dbFactory = dbFactory;
         _validation = validation;
         _options = options.Value;
         _logger = logger;
+        _controlTrigger = controlTrigger;
     }
 
     public async Task<IngestOutcome> IngestAsync(ParsedEnvelope envelope, CancellationToken ct)
@@ -167,6 +170,7 @@ public sealed class TelemetryIngestionService
                 var nowUtc = DateTime.UtcNow;
                 var anyAccepted = false;
                 var anyRejected = false;
+                var solutionReadings = false;
 
                 foreach (var reading in envelope.Readings)
                 {
@@ -251,6 +255,10 @@ public sealed class TelemetryIngestionService
                     context.SensorReadings.Add(sensorReading);
 
                     anyAccepted = true;
+                    if (assignment is not null
+                        && TelemetryQualityPolicy.IsOperationallyUsable(classification.Quality)
+                        && sensor.SensorType?.Name is AnomalyContract.SensorTypePh or AnomalyContract.SensorTypeCe)
+                        solutionReadings = true;
                     results.Add(new ReadingIngestionRecord(
                         reading.ReadingId, reading.SensorRef,
                         readingResult, classification.Quality, classification.Reason,
@@ -288,6 +296,10 @@ public sealed class TelemetryIngestionService
                 });
 
                 await context.SaveChangesAsync(ct);
+
+                // pH/CE nuevos de un nodo con lote: el control automático evalúa ese tanque (sin esperar acá).
+                if (solutionReadings)
+                    _controlTrigger?.ReadingsArrived(node.Id);
 
                 _logger.LogInformation("Nodo {NodeId} batch {BatchId}: {Accepted} aceptadas, {Rejected} rechazadas, {Duplicated} duplicadas.",
                     envelope.NodeId, envelope.BatchId,

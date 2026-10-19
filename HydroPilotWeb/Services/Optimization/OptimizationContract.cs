@@ -1,16 +1,29 @@
 namespace HydroPilotWeb.Models.Optimization;
 
-/// <summary>Estados de una recomendación (contrato compartido plan 02 / plan 16 OPT-04).</summary>
+/// <summary>Estados de una recomendación.</summary>
 public static class OptimizationContractStatus
 {
     public const string Pending = "PENDING";
+
+    /// <summary>Aceptada: el usuario se comprometió a hacerlo; el sistema verifica solo si se cumplió.</summary>
     public const string Accepted = "ACCEPTED";
+
+    /// <summary>Cumplida: aceptada y el problema se resolvió.</summary>
+    public const string Done = "DONE";
+
+    /// <summary>No cumplida: aceptada y se pasó la fecha (o se cerró la ventana) sin resolverse.</summary>
+    public const string Missed = "MISSED";
+
     public const string Discarded = "DISCARDED";
+
+    /// <summary>Ya no aplica: el problema desapareció sin decisión.</summary>
     public const string Expired = "EXPIRED";
+
+    /// <summary>Solo lógica anterior (historial).</summary>
     public const string Blocked = "BLOCKED";
 }
 
-/// <summary>Dirección sugerida por una recomendación (regla OPT-02).</summary>
+/// <summary>Dirección sugerida por una recomendación.</summary>
 public static class OptimizationContractDirection
 {
     public const string Raise = "RAISE";
@@ -18,12 +31,11 @@ public static class OptimizationContractDirection
     public const string Maintain = "MAINTAIN";
     public const string Verify = "VERIFY";
 
-    /// <summary>
-    /// Adoptar un destino alternativo (comparativa económica que supera el
-    /// umbral: OPT-03/OPT-08). Es una recomendación informativa, nunca un
-    /// cambio físico automático.
-    /// </summary>
+    /// <summary>Cambiar la estrategia de destino del lote.</summary>
     public const string Switch = "SWITCH";
+
+    /// <summary>Cortar (cosechar).</summary>
+    public const string Cut = "CUT";
 }
 
 /// <summary>Prioridades de recomendación.</summary>
@@ -34,27 +46,54 @@ public static class OptimizationContractPriority
     public const string Low = "LOW";
 }
 
-/// <summary>Tipos de recomendación del módulo de optimización.</summary>
+/// <summary>Tipos de recomendación (R1–R6) y, para el historial, los de la lógica anterior.</summary>
 public static class OptimizationContractType
 {
-    /// <summary>Manejo de la solución nutritiva del lote (pH/CE vs objetivos).</summary>
+    /// <summary>R1: cortar Baby Leaf (óptimo alcanzado o en pocos días).</summary>
+    public const string BabyLeafCut = "BABY_LEAF_CUT";
+
+    /// <summary>R2: cortar convencional (óptimo alcanzado, en pocos días o pasado de cosecha).</summary>
+    public const string ConventionalCut = "CONVENTIONAL_CUT";
+
+    /// <summary>R3: otra estrategia de destino deja más margen que el plan del lote.</summary>
+    public const string HarvestStrategy = "HARVEST_STRATEGY";
+
+    /// <summary>R4: CE por encima del rango: se gasta de más en nutrientes.</summary>
+    public const string NutrientOverspend = "NUTRIENT_OVERSPEND";
+
+    /// <summary>R5: pH/CE fuera de rango o anomalía abierta: plantas en riesgo.</summary>
+    public const string SolutionRisk = "SOLUTION_RISK";
+
+    /// <summary>R6: meta Baby Leaf o máximo de pérdidas en riesgo.</summary>
+    public const string CycleGoals = "CYCLE_GOALS";
+
+    // Lógica anterior (solo historial).
     public const string ChemicalSolution = "CHEMICAL_SOLUTION";
-
-    /// <summary>Comparativa económica Baby Leaf vs convencional (OPT-03/OPT-08).</summary>
     public const string EconomicAlternative = "ECONOMIC_ALTERNATIVE";
-
-    /// <summary>Recomendación comercial agregada del lote (OPT-08) con riesgo visible (OPT-09).</summary>
     public const string CommercialGrowout = "COMMERCIAL_GROWOUT";
 }
 
-/// <summary>Acciones manuales registrables sobre una recomendación (OPT-04).</summary>
+/// <summary>Qué representa el impacto en $ de una recomendación.</summary>
+public static class OptimizationImpactKind
+{
+    /// <summary>Plata a capturar (cortes, estrategia).</summary>
+    public const string Capture = "capture";
+
+    /// <summary>Ahorro por semana (nutrientes).</summary>
+    public const string Saving = "saving";
+
+    /// <summary>Valor en riesgo (solución, metas).</summary>
+    public const string Risk = "risk";
+}
+
+/// <summary>Acciones manuales registrables sobre una recomendación.</summary>
 public static class OptimizationContractAction
 {
     public const string Accept = "ACCEPT";
     public const string Discard = "DISCARD";
 }
 
-/// <summary>Ítems del catálogo de costos/precios (OPT-03).</summary>
+/// <summary>Ítems del catálogo de costos/precios (hoy solo se usa el precio por kg).</summary>
 public static class OptimizationContractCostItem
 {
     public const string PricePerKg = "price_per_kg";
@@ -64,33 +103,23 @@ public static class OptimizationContractCostItem
     public const string TransplantCostM2 = "transplant_cost_m2";
 }
 
-/// <summary>Destinos comerciales de la comparativa económica.</summary>
+/// <summary>Destinos comerciales del catálogo de precios.</summary>
 public static class OptimizationContractDestination
 {
     public const string BabyLeaf = "baby_leaf";
     public const string Conventional = "conventional";
 }
 
-/// <summary>
-/// Contrato del módulo de optimización: constantes compartidas, versión de
-/// reglas y textos canónicos. Fuente única para no divergir entre UI/API/tests.
-/// </summary>
+/// <summary>Constantes compartidas del módulo de optimización.</summary>
 public static class OptimizationContract
 {
-    public const string RuleVersion = "optimization-v1";
+    public const string RuleVersion = "optimization-v2";
 
-    /// <summary>Umbral por defecto de diferencia de rentabilidad (configurable vía OptimizationOptions).</summary>
-    public const decimal DefaultProfitabilityThresholdPercent = 10m;
+    /// <summary>Mínimos por defecto para recomendar cambiar de estrategia (Ajustes &gt; Parámetros).</summary>
+    public const decimal DefaultStrategyMinGainAmount = 10_000m;
+    public const decimal DefaultStrategyMinGainPercent = 10m;
 
-    /// <summary>Cantidad de lecturas consecutivas consistentes para confianza alta.</summary>
-    public const int DefaultConsistentReadingCount = 2;
-
-    /// <summary>Ventana de frescura por defecto para lecturas de pH/CE (minutos).</summary>
-    public const int DefaultMaxReadingAgeMinutes = 60;
-
-    /// <summary>Horas de vigencia de una recomendación PENDING antes de EXPIRED.</summary>
-    public const int DefaultPendingExpirationHours = 24;
-
-    /// <summary>Motivo canónico cuando la comparación económica no puede calcularse.</summary>
-    public const string NotCalculableReason = "Comparación no calculable";
+    /// <summary>Motivos de descarte (lista corta; "Otro" pide el texto).</summary>
+    public static readonly IReadOnlyList<string> DiscardReasons =
+        ["Precio distinto", "Sin mano de obra", "Dato erróneo", "Otro"];
 }

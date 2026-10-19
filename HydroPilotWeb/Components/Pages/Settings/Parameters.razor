@@ -1,6 +1,7 @@
 @page "/settings/parametros"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Models.Optimization
 @inject SystemParametersService ParametersService
 @inject AuthenticationStateProvider AuthState
 
@@ -49,7 +50,7 @@
                     <span class="settings-eyebrow">Gastos del sistema</span>
                     <h3>Precio de nutrientes</h3>
                     <p class="panel__subtitle">
-                        Con este precio la Simulación calcula el gasto en nutrientes de cada ciclo: litros que se consumen
+                        Con este precio Simulación y Optimización calculan el gasto en nutrientes: litros que se consumen
                         según las plantas vivas y la etapa × precio por litro.
                     </p>
                 </div>
@@ -95,6 +96,65 @@
                 }
             }
         </article>
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Optimización</span>
+                    <h3>Cambio de estrategia</h3>
+                    <p class="panel__subtitle">
+                        Optimización recomienda cambiar la estrategia de un lote solo si gana más que los dos mínimos.
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (current is not null)
+            {
+                <div class="lot-editor">
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-gain-amount">Ganancia mínima (@current.Currency por lote)</label>
+                        <input id="param-gain-amount" type="number" class="form-control" min="0" step="1"
+                               @bind="minGainAmount" @bind:event="oninput" disabled="@(!canEdit)"
+                               placeholder="@OptimizationContract.DefaultStrategyMinGainAmount.ToString("0")" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-gain-percent">Ganancia mínima (% del margen)</label>
+                        <input id="param-gain-percent" type="number" class="form-control" min="0" step="0.1"
+                               @bind="minGainPercent" @bind:event="oninput" disabled="@(!canEdit)"
+                               placeholder="@OptimizationContract.DefaultStrategyMinGainPercent.ToString("0")" />
+                    </div>
+                </div>
+
+                @if (strategyErrors.Count > 0)
+                {
+                    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+                        <ul class="mb-0">
+                            @foreach (var strategyError in strategyErrors)
+                            {
+                                <li>@strategyError</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (canEdit)
+                {
+                    <div class="lot-editor__actions">
+                        @if (!string.IsNullOrEmpty(strategySavedMessage))
+                        {
+                            <span class="lot-muted mt-0 me-auto">@strategySavedMessage</span>
+                        }
+                        <button class="btn btn-success btn-sm" @onclick="SaveStrategyThresholdsAsync" disabled="@savingStrategy">
+                            @(savingStrategy ? "Guardando…" : "Guardar mínimos")
+                        </button>
+                    </div>
+                }
+            }
+        </article>
     </div>
 </section>
 
@@ -112,6 +172,12 @@
     private IReadOnlyList<string> nutrientErrors = [];
     private string? nutrientSavedMessage;
 
+    private decimal? minGainAmount;
+    private decimal? minGainPercent;
+    private bool savingStrategy;
+    private IReadOnlyList<string> strategyErrors = [];
+    private string? strategySavedMessage;
+
     protected override async Task OnInitializedAsync()
     {
         try
@@ -120,10 +186,42 @@
             canEdit = SystemParametersService.CanEdit(user);
             current = await ParametersService.GetYieldParametersAsync();
             nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
+            await LoadStrategyThresholdsAsync();
         }
         catch (Exception ex)
         {
             error = $"No se pudieron cargar los parámetros: {ex.Message}";
+        }
+    }
+
+    private async Task LoadStrategyThresholdsAsync()
+    {
+        var thresholds = await ParametersService.GetStrategyThresholdsAsync();
+        minGainAmount = Trim(thresholds.MinGainAmount);
+        minGainPercent = Trim(thresholds.MinGainPercent);
+    }
+
+    private async Task SaveStrategyThresholdsAsync()
+    {
+        savingStrategy = true;
+        strategySavedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateStrategyThresholdsAsync(minGainAmount, minGainPercent, user);
+            strategyErrors = result.Errors;
+            if (result.Succeeded)
+            {
+                await LoadStrategyThresholdsAsync();
+                strategySavedMessage = "Mínimos guardados.";
+            }
+        }
+        catch (Exception ex)
+        {
+            strategyErrors = [$"No se pudieron guardar los mínimos: {ex.Message}"];
+        }
+        finally
+        {
+            savingStrategy = false;
         }
     }
 
