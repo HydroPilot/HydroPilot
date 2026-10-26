@@ -48,8 +48,7 @@ public sealed class AnomaliesSqlFixture : IAsyncLifetime
         new(_factory, Options.Create(options ?? new AnomalyOptions()), NullLogger<AnomalyEventService>.Instance);
 
     public AnomalyQueryService NewQueryService(AnomalyOptions? options = null) =>
-        new(_factory, Options.Create(options ?? new AnomalyOptions()),
-            new AnomalyLotRiskEvaluator(_factory));
+        new(_factory, Options.Create(options ?? new AnomalyOptions()));
 
     public AnomalyRiskProvider NewRiskProvider() =>
         new(new AnomalyLotRiskEvaluator(_factory));
@@ -105,8 +104,8 @@ public sealed class AnomaliesSqlFixture : IAsyncLifetime
         context.CommercialStages.AddRange(
             new CommercialStage { CropTypeId = crop.Id, Name = "En desarrollo" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Candidata Baby Leaf" },
-            new CommercialStage { CropTypeId = crop.Id, Name = "Baby Leaf apta" },
-            new CommercialStage { CropTypeId = crop.Id, Name = "Cosecha convencional" },
+            new CommercialStage { CropTypeId = crop.Id, Name = "Baby Leaf" },
+            new CommercialStage { CropTypeId = crop.Id, Name = "Adulta" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Riesgo / fuera de ventana" });
         await context.SaveChangesAsync();
 
@@ -131,9 +130,13 @@ public sealed class AnomaliesSqlFixture : IAsyncLifetime
         context.MeasurementUnits.AddRange(phUnit, ecUnit, tempUnit, humUnit);
         await context.SaveChangesAsync();
 
+        var circuit = new Circuit { GreenhouseId = greenhouse.Id, NodeId = node.Id, Name = "Circuito 1", CreatedAt = DateTime.UtcNow };
+        context.Circuits.Add(circuit);
+        await context.SaveChangesAsync();
+
         context.Sensors.AddRange(
-            new Sensor { NodeId = node.Id, SensorTypeId = phType.Id, MeasurementUnitId = phUnit.Id, Name = "ph-solucion", TechnicalKey = "ph-solucion", IsActive = true, CreatedAt = DateTime.UtcNow },
-            new Sensor { NodeId = node.Id, SensorTypeId = ecType.Id, MeasurementUnitId = ecUnit.Id, Name = "ec-solucion", TechnicalKey = "ec-solucion", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new Sensor { NodeId = node.Id, SensorTypeId = phType.Id, MeasurementUnitId = phUnit.Id, Name = "ph-solucion", TechnicalKey = "ph-solucion", CircuitId = circuit.Id, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new Sensor { NodeId = node.Id, SensorTypeId = ecType.Id, MeasurementUnitId = ecUnit.Id, Name = "ec-solucion", TechnicalKey = "ec-solucion", CircuitId = circuit.Id, IsActive = true, CreatedAt = DateTime.UtcNow },
             new Sensor { NodeId = node.Id, SensorTypeId = tempType.Id, MeasurementUnitId = tempUnit.Id, Name = "temp-ambiente", TechnicalKey = "temp-ambiente", IsActive = true, CreatedAt = DateTime.UtcNow },
             new Sensor { NodeId = node.Id, SensorTypeId = humType.Id, MeasurementUnitId = humUnit.Id, Name = "hum-ambiente", TechnicalKey = "hum-ambiente", IsActive = true, CreatedAt = DateTime.UtcNow });
         await context.SaveChangesAsync();
@@ -185,7 +188,7 @@ public sealed class AnomaliesSqlFixture : IAsyncLifetime
 
     public static async Task<Plant> AddPlantAsync(HydroPilotDbContext context, Lot lot, int row, int col)
     {
-        var stage = await context.CommercialStages.FirstAsync(s => s.Name == "Baby Leaf apta");
+        var stage = await context.CommercialStages.FirstAsync(s => s.Name == "Baby Leaf");
         var pheno = await context.PhenologicalStages.FirstAsync(s => s.Name == "Crecimiento vegetativo");
         var plant = new Plant
         {

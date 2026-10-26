@@ -70,8 +70,8 @@ public static class ControlContract
     /// </summary>
     public static readonly IReadOnlyList<ActuatorDefault> DefaultActuators =
     [
-        new(KindPhUp, "pH Up", UnitMl, 50m, 250m, 2.5m),
-        new(KindPhDown, "pH Down", UnitMl, 50m, 250m, 2.5m),
+        new(KindPhUp, "Subir pH", UnitMl, 50m, 250m, 2.5m),
+        new(KindPhDown, "Bajar pH", UnitMl, 50m, 250m, 2.5m),
         new(KindNutrient, "Nutrientes", UnitMl, 500m, 2_000m, 0.3m),
         new(KindWater, "Agua", UnitLiters, 50m, 150m, null),
     ];

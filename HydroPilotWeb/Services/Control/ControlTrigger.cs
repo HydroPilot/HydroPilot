@@ -3,7 +3,7 @@ using System.Threading.Channels;
 namespace HydroPilotWeb.Services.Control;
 
 /// <summary>
-/// Aviso de "llegaron lecturas de pH/CE de este nodo" de la ingesta al motor. La ingesta no espera al motor: si
+/// Aviso de "llegaron lecturas de pH/CE de este circuito" de la ingesta al motor. La ingesta no espera al motor: si
 /// la cola se llena se descartan los avisos más viejos (el barrido de cada minuto cubre lo que falte).
 /// </summary>
 public sealed class ControlTrigger
@@ -16,10 +16,10 @@ public sealed class ControlTrigger
 
     public ChannelReader<int> Reader => _channel.Reader;
 
-    public void ReadingsArrived(int nodeId) => _channel.Writer.TryWrite(nodeId);
+    public void ReadingsArrived(int circuitId) => _channel.Writer.TryWrite(circuitId);
 }
 
-/// <summary>Evalúa el tanque de cada nodo que recibió lecturas, fuera del request de la ingesta.</summary>
+/// <summary>Evalúa el tanque de cada circuito que recibió lecturas, fuera del request de la ingesta.</summary>
 public sealed class ControlWorker : BackgroundService
 {
     private readonly ControlTrigger _trigger;
@@ -39,22 +39,22 @@ public sealed class ControlWorker : BackgroundService
         {
             await foreach (var first in _trigger.Reader.ReadAllAsync(stoppingToken))
             {
-                // Varios batches del mismo nodo seguidos → una sola evaluación.
-                var nodes = new HashSet<int> { first };
+                // Varios batches del mismo circuito seguidos → una sola evaluación.
+                var circuits = new HashSet<int> { first };
                 while (_trigger.Reader.TryRead(out var next))
-                    nodes.Add(next);
+                    circuits.Add(next);
 
-                foreach (var nodeId in nodes)
+                foreach (var circuitId in circuits)
                 {
                     try
                     {
                         using var scope = _scopeFactory.CreateScope();
                         await scope.ServiceProvider.GetRequiredService<ControlService>()
-                            .EvaluateNodeAsync(nodeId, DateTime.UtcNow, stoppingToken);
+                            .EvaluateCircuitAsync(circuitId, DateTime.UtcNow, stoppingToken);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        _logger.LogError(ex, "Falló el control automático del nodo {NodeId}.", nodeId);
+                        _logger.LogError(ex, "Falló el control automático del circuito {CircuitId}.", circuitId);
                     }
                 }
             }

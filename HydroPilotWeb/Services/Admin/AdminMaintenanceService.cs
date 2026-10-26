@@ -17,7 +17,6 @@ public sealed record DatabaseSummaryDto(
     int SensorReadingsCount,
     int PredictionsCount,
     int AnomalyEventsCount,
-    int OptimizationRecommendationsCount,
     string GreenhouseTimeZone
 );
 
@@ -57,7 +56,6 @@ public class AdminMaintenanceService
         var readings = await context.SensorReadings.CountAsync(ct);
         var predictions = await context.Predictions.CountAsync(ct);
         var anomalies = await context.AnomalyEvents.CountAsync(ct);
-        var recommendations = await context.OptimizationRecommendations.CountAsync(ct);
 
         var firstGh = await context.Greenhouses.AsNoTracking().FirstOrDefaultAsync(ct);
         var timeZone = firstGh?.TimeZoneId ?? "No configurada (UTC)";
@@ -75,14 +73,13 @@ public class AdminMaintenanceService
             readings,
             predictions,
             anomalies,
-            recommendations,
             timeZone
         );
     }
 
     /// <summary>
     /// Limpia todos los datos transaccionales y de prueba (lotes, plantas, lecturas, predicciones,
-    /// anomalías, recomendaciones) preservando usuarios, catálogos, nodos, sensores y configuraciones.
+    /// anomalías) preservando usuarios, catálogos, nodos, sensores y configuraciones.
     /// </summary>
     public async Task<MaintenanceActionResult> ClearTransactionalDataAsync(CancellationToken ct = default)
     {
@@ -97,9 +94,6 @@ BEGIN TRANSACTION;
 IF OBJECT_ID('Greenhouses', 'U') IS NOT NULL
     UPDATE Greenhouses SET TimeZoneId = 'America/Argentina/Buenos_Aires' WHERE TimeZoneId IS NULL OR TimeZoneId = '';
 
-IF OBJECT_ID('RecommendationActions', 'U') IS NOT NULL DELETE FROM RecommendationActions;
-IF OBJECT_ID('RecommendationDetails', 'U') IS NOT NULL DELETE FROM RecommendationDetails;
-IF OBJECT_ID('OptimizationRecommendations', 'U') IS NOT NULL DELETE FROM OptimizationRecommendations;
 IF OBJECT_ID('AnomalyEvents', 'U') IS NOT NULL DELETE FROM AnomalyEvents;
 
 IF OBJECT_ID('PlantStageHistories', 'U') IS NOT NULL DELETE FROM PlantStageHistories;
@@ -110,15 +104,18 @@ IF OBJECT_ID('Plants', 'U') IS NOT NULL DELETE FROM Plants;
 
 IF OBJECT_ID('ActuatorCommands', 'U') IS NOT NULL DELETE FROM ActuatorCommands;
 IF OBJECT_ID('ControlPauses', 'U') IS NOT NULL DELETE FROM ControlPauses;
+IF OBJECT_ID('SensorFaults', 'U') IS NOT NULL DELETE FROM SensorFaults;
 IF OBJECT_ID('LotSetpointHistories', 'U') IS NOT NULL DELETE FROM LotSetpointHistories;
 IF OBJECT_ID('LotRecipes', 'U') IS NOT NULL DELETE FROM LotRecipes;
 
-IF OBJECT_ID('NodeLotAssignments', 'U') IS NOT NULL DELETE FROM NodeLotAssignments;
+IF OBJECT_ID('CircuitAssignments', 'U') IS NOT NULL DELETE FROM CircuitAssignments;
 IF OBJECT_ID('Predictions', 'U') IS NOT NULL DELETE FROM Predictions;
 IF OBJECT_ID('SensorReadings', 'U') IS NOT NULL DELETE FROM SensorReadings;
 IF OBJECT_ID('TelemetryRejections', 'U') IS NOT NULL DELETE FROM TelemetryRejections;
 IF OBJECT_ID('TelemetryBatches', 'U') IS NOT NULL DELETE FROM TelemetryBatches;
 
+IF OBJECT_ID('LotComments', 'U') IS NOT NULL DELETE FROM LotComments;
+IF OBJECT_ID('UserRecentVisits', 'U') IS NOT NULL DELETE FROM UserRecentVisits;
 IF OBJECT_ID('Lots', 'U') IS NOT NULL DELETE FROM Lots;
 
 IF OBJECT_ID('DailyWeatherForecasts', 'U') IS NOT NULL DELETE FROM DailyWeatherForecasts;
@@ -169,17 +166,14 @@ COMMIT TRANSACTION;
                 var plants = await context.Plants.Where(p => p.LotId == demoId).ToListAsync(ct);
                 context.Plants.RemoveRange(plants);
 
-                var assignments = await context.NodeLotAssignments.Where(a => a.LotId == demoId).ToListAsync(ct);
-                context.NodeLotAssignments.RemoveRange(assignments);
+                var assignments = await context.CircuitAssignments.Where(a => a.LotId == demoId).ToListAsync(ct);
+                context.CircuitAssignments.RemoveRange(assignments);
 
                 var predictions = await context.Predictions.Where(p => p.LotId == demoId).ToListAsync(ct);
                 context.Predictions.RemoveRange(predictions);
 
                 var anomalies = await context.AnomalyEvents.Where(a => a.LotId == demoId).ToListAsync(ct);
                 context.AnomalyEvents.RemoveRange(anomalies);
-
-                var recommendations = await context.OptimizationRecommendations.Where(r => r.LotId == demoId).ToListAsync(ct);
-                context.OptimizationRecommendations.RemoveRange(recommendations);
 
                 context.Lots.Remove(existingDemo);
                 await context.SaveChangesAsync(ct);

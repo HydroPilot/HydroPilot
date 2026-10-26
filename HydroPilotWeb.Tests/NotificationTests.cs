@@ -148,9 +148,9 @@ public class NotificationTests
         // Alerta Media -> no debe generar email
         var fp2 = $"test-pref-media-{Guid.NewGuid():N}";
         var alert2 = await service.CreateAlertAsync(new CreateAlertDto(
-            NotificationTypes.RecomendacionEstrategica,
+            NotificationTypes.CosechaInminente,
             NotificationSeverities.Media,
-            "Recomendación media",
+            "Aviso medio",
             "Mensaje",
             fp2
         ));

@@ -13,8 +13,8 @@ public class SensorReading
 
     public int? LotId { get; set; }
 
-    /// <summary>Asignación temporal nodo→lote que resolvió esta lectura (por fecha de observación).</summary>
-    public int? NodeLotAssignmentId { get; set; }
+    /// <summary>Lote del circuito que resolvió esta lectura (por fecha de observación). Null en las del invernadero.</summary>
+    public int? CircuitAssignmentId { get; set; }
 
     public decimal Value { get; set; }
 
@@ -54,5 +54,5 @@ public class SensorReading
     public IotNode? Node { get; set; }
     public MeasurementUnit? MeasurementUnit { get; set; }
     public Lot? Lot { get; set; }
-    public NodeLotAssignment? LotAssignment { get; set; }
+    public CircuitAssignment? Assignment { get; set; }
 }

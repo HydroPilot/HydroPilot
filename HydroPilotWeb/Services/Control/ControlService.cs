@@ -5,6 +5,7 @@ using HydroPilotWeb.Models.Control;
 using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
+using HydroPilotWeb.Services.SensorFaults;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -12,7 +13,7 @@ using Microsoft.Extensions.Options;
 namespace HydroPilotWeb.Services.Control;
 
 /// <summary>
-/// Control de pH y CE por nodo. La vista Control pide dosis manuales y cambia el modo; en AUTO, el motor
+/// Control de pH y CE por circuito (tanque). La vista Optimización pide dosis manuales y cambia el modo; en AUTO, el motor
 /// (<see cref="ControlEngine"/>) evalúa el tanque cada vez que llegan lecturas y en cada barrido, y crea las dosis
 /// él mismo. La Pi pide sus comandos y responde el resultado. El barrido vence lo que nadie tomó, mide el efecto
 /// de cada dosis (autocalibra la bomba y pausa la magnitud tras varias dosis sin efecto) y guarda el nivel vigente
@@ -36,6 +37,7 @@ public sealed class ControlService
     private readonly IControlEventSink _events;
     private readonly ICommandChannel _channel;
     private readonly ILogger<ControlService> _logger;
+    private readonly int _silenceFactor;
 
     public ControlService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
@@ -43,7 +45,8 @@ public sealed class ControlService
         IOptions<DashboardOptions> dashboardOptions,
         IControlEventSink events,
         ICommandChannel channel,
-        ILogger<ControlService> logger)
+        ILogger<ControlService> logger,
+        IOptions<TelemetryOptions>? telemetryOptions = null)
     {
         _dbFactory = dbFactory;
         _options = options.Value;
@@ -51,6 +54,7 @@ public sealed class ControlService
         _events = events;
         _channel = channel;
         _logger = logger;
+        _silenceFactor = telemetryOptions?.Value.DegradedIntervalFactor ?? SensorFaultRules.DefaultSilenceFactor;
     }
 
     /// <summary>Pedir y cancelar dosis, reanudar el control pausado: Administrador, Productor y Operador.</summary>
@@ -71,42 +75,48 @@ public sealed class ControlService
     // Vista Control
     // ------------------------------------------------------------------
 
-    public async Task<IReadOnlyList<ControlNodeOption>> GetNodesAsync(CancellationToken ct = default)
+    /// <summary>Circuitos activos con su lote en curso (el desplegable de Optimización).</summary>
+    public async Task<IReadOnlyList<ControlCircuitOption>> GetCircuitsAsync(CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var nodes = await context.IotNodes.AsNoTracking()
-            .OrderBy(n => n.Identifier)
-            .Select(n => new { n.Id, n.Identifier })
+        var circuits = await context.Circuits.AsNoTracking()
+            .Where(c => c.IsActive)
+            .OrderBy(c => c.GreenhouseId).ThenBy(c => c.Name)
+            .Select(c => new { c.Id, c.Name })
             .ToListAsync(ct);
-        var lots = await CurrentLotsAsync(context, nodes.Select(n => n.Id).ToList(), DateTime.UtcNow, ct);
-        return nodes
-            .Select(n => new ControlNodeOption(n.Id, n.Identifier, lots.GetValueOrDefault(n.Id)?.Name))
+        var lots = await CurrentLotsAsync(context, circuits.Select(c => c.Id).ToList(), DateTime.UtcNow, ct);
+        return circuits
+            .Select(c => new ControlCircuitOption(c.Id, c.Name, lots.GetValueOrDefault(c.Id)?.Name))
             .ToList();
     }
 
-    /// <summary>Nodo asignado hoy al lote (para abrir Control desde un lote).</summary>
-    public async Task<int?> NodeForLotAsync(int lotId, CancellationToken ct = default)
+    /// <summary>Circuito donde está plantado el lote (para abrir Optimización desde un lote).</summary>
+    public async Task<int?> CircuitForLotAsync(int lotId, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var now = DateTime.UtcNow;
-        return await context.NodeLotAssignments.AsNoTracking()
+        return await context.CircuitAssignments.AsNoTracking()
             .Where(a => a.LotId == lotId && a.ValidFromUtc <= now && (a.ValidUntilUtc == null || a.ValidUntilUtc > now))
             .OrderByDescending(a => a.ValidFromUtc)
-            .Select(a => (int?)a.NodeId)
-            .FirstOrDefaultAsync(ct);
+            .Select(a => (int?)a.CircuitId)
+            .FirstOrDefaultAsync(ct)
+            ?? await context.Lots.AsNoTracking().Where(l => l.Id == lotId).Select(l => l.CircuitId).FirstOrDefaultAsync(ct);
     }
 
-    public async Task<ControlViewDto?> GetViewAsync(int nodeId, CancellationToken ct = default)
+    public async Task<ControlViewDto?> GetViewAsync(int circuitId, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var now = DateTime.UtcNow;
 
-        var snapshot = await SnapshotAsync(context, nodeId, now, ct);
+        var snapshot = await SnapshotAsync(context, circuitId, now, ct);
         if (snapshot is null)
             return null;
 
         var node = snapshot.Node;
-        var day = now.AddHours(-24);
+        var circuit = snapshot.Circuit;
+        // Todo lo que se ve es del lote en curso: lo anterior a su asignación (otro lote) no se muestra.
+        var lotSince = snapshot.Lot is null ? null : await LotSinceAsync(context, circuitId, now, ct);
+        var day = Later(now.AddHours(-24), lotSince);
         var dtos = snapshot.Commands.Select(c => ToDto(c.Command, c.Kind, c.Name)).ToList();
 
         var actuators = snapshot.Actuators
@@ -128,18 +138,18 @@ public sealed class ControlService
         var decision = ControlEngine.Decide(snapshot.Input);
         var status = new ControlStatusDto(
             decision.Outcome.ToString(), decision.Code, decision.Parameter, decision.Pump?.Name,
-            decision.Amount, decision.Pump?.Unit, decision.Strength, decision.UntilUtc);
+            decision.Amount, decision.Pump?.Unit, decision.Strength, decision.UntilUtc, decision.SensorFaultKind);
 
         // Conversación: lecturas de pH/CE, mensajes de comandos y pausas de las últimas TimelineHours.
-        var timelineSince = now.AddHours(-Math.Max(1, _options.TimelineHours));
-        var readings = await UsableReadings(context, nodeId)
+        var timelineSince = Later(now.AddHours(-Math.Max(1, _options.TimelineHours)), lotSince);
+        var readings = await UsableReadings(context, circuitId)
             .Where(r => r.ObservedAtUtc >= timelineSince)
             .OrderByDescending(r => r.ObservedAtUtc)
             .Take(5_000)
             .Select(r => new ControlRules.ReadingPoint(r.ObservedAtUtc, r.Sensor!.SensorType!.Name, r.Value))
             .ToListAsync(ct);
         var pauses = await context.ControlPauses.AsNoTracking()
-            .Where(p => p.NodeId == nodeId && (p.ResumedAtUtc == null || p.ResumedAtUtc >= timelineSince))
+            .Where(p => p.CircuitId == circuitId && (p.ResumedAtUtc == null || p.ResumedAtUtc >= timelineSince))
             .OrderByDescending(p => p.PausedAtUtc)
             .ToListAsync(ct);
         var pauseDtos = pauses.Select(ToDto).ToList();
@@ -149,19 +159,24 @@ public sealed class ControlService
             Math.Max(1, _options.TimelineMaxEntries),
             pauseDtos);
 
+        // Ambiente del invernadero (sensores sin circuito): solo se muestra, no entra en el control.
+        var temperature = await LatestAmbientAsync(context, circuit.GreenhouseId, AnomalyContract.SensorTypeTemperatura, ct);
+        var humidity = await LatestAmbientAsync(context, circuit.GreenhouseId, AnomalyContract.SensorTypeHumedad, ct);
+
         return new ControlViewDto(
-            node.Id,
+            circuit.Id,
+            circuit.Name,
             node.Identifier,
             node.ConnectionState,
             Utc(node.LastCommandPollAtUtc),
-            node.ControlMode,
-            node.ReservoirLiters,
-            node.SourceWaterEc,
+            circuit.ControlMode,
+            circuit.ReservoirLiters,
+            circuit.SourceWaterEc,
             snapshot.Lot?.Id,
             snapshot.Lot is null ? null : LotName(snapshot.Lot.Id, snapshot.Lot.Name),
             snapshot.Lot?.AppliedPhenologicalStage?.Name,
-            snapshot.Input.Ph.Status,
-            snapshot.Input.Ec.Status,
+            snapshot.Ph,
+            snapshot.Ec,
             actuators,
             kpis,
             status,
@@ -171,7 +186,23 @@ public sealed class ControlService
             snapshot.Recipe is { } r
                 ? new ControlRecipeDto(r.PhOffset, r.EcOffset, r.HistoryPhOffset, r.HistoryEcOffset, r.Trust, r.SimilarLots,
                     r.ScoreTrend, r.Reason, Utc(r.UpdatedAtUtc))
-                : null);
+                : null,
+            temperature,
+            humidity,
+            lotSince);
+    }
+
+    private static async Task<ControlAmbientReading?> LatestAmbientAsync(
+        HydroPilotDbContext context, int greenhouseId, string sensorType, CancellationToken ct)
+    {
+        var latest = await context.SensorReadings.AsNoTracking()
+            .Where(TelemetryQualityPolicy.OperationallyUsableReading)
+            .Where(r => r.Sensor!.CircuitId == null && r.Sensor.Node!.GreenhouseId == greenhouseId
+                        && r.Sensor.SensorType!.Name == sensorType)
+            .OrderByDescending(r => r.ObservedAtUtc)
+            .Select(r => new { r.Value, r.ObservedAtUtc })
+            .FirstOrDefaultAsync(ct);
+        return latest is null ? null : new ControlAmbientReading(latest.Value, Utc(latest.ObservedAtUtc));
     }
 
     /// <summary>
@@ -179,7 +210,7 @@ public sealed class ControlService
     /// lectura que la motivó, el nivel buscado y el efecto esperado. Queda PENDING hasta que la Pi la pida.
     /// </summary>
     public async Task<ControlActionResult> RequestDoseAsync(
-        int nodeId,
+        int circuitId,
         int actuatorId,
         decimal amount,
         string? requestedBy,
@@ -189,15 +220,15 @@ public sealed class ControlService
         var now = DateTime.UtcNow;
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
-        var node = await context.IotNodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId, ct);
-        if (node is null)
-            return ControlActionResult.Fail("El nodo no existe.");
-        var actuator = await context.Actuators.AsNoTracking().FirstOrDefaultAsync(a => a.Id == actuatorId && a.NodeId == nodeId, ct);
+        var circuit = await context.Circuits.AsNoTracking().Include(c => c.Node).FirstOrDefaultAsync(c => c.Id == circuitId, ct);
+        if (circuit is null)
+            return ControlActionResult.Fail("El circuito no existe.");
+        var actuator = await context.Actuators.AsNoTracking().FirstOrDefaultAsync(a => a.Id == actuatorId && a.CircuitId == circuitId, ct);
         if (actuator is null)
-            return ControlActionResult.Fail("La bomba no existe en este nodo.");
+            return ControlActionResult.Fail("La bomba no existe en este circuito.");
 
         // Lo vencido deja de estar "en curso" antes de validar.
-        await ExpireAsync(context, now, nodeId, ct);
+        await ExpireAsync(context, now, circuitId: circuitId, ct: ct);
 
         var recent = await context.ActuatorCommands.AsNoTracking()
             .Where(c => c.ActuatorId == actuatorId
@@ -211,24 +242,25 @@ public sealed class ControlService
             .Sum(c => ControlRules.UsedAmount(c.Status, c.Amount, c.ExecutedAmount));
 
         var error = ControlRules.ValidateManualDose(
-            node.ControlMode, actuator.IsActive, recent.Any(c => ControlRules.IsInFlight(c.Status)),
+            circuit.ControlMode, actuator.IsActive, recent.Any(c => ControlRules.IsInFlight(c.Status)),
             amount, actuator.MaxPerCommand, actuator.MaxPerDay, used, actuator.Unit);
         if (error is not null)
             return ControlActionResult.Fail(error);
 
         var parameter = ControlRules.ParameterFor(actuator.Kind);
-        var trigger = await LatestReadingWithIdAsync(context, nodeId, parameter, ct);
-        var lot = await LotWithBandsAsync(context, nodeId, now, ct);
+        var trigger = await LatestReadingWithIdAsync(context, circuitId, parameter, ct);
+        var lot = await LotWithBandsAsync(context, circuitId, now, ct);
         var recipe = lot is null ? null : await RecipeService.CurrentAsync(context, lot.Id, ct);
         var band = BandFor(lot, recipe, parameter);
         var expected = trigger is null
             ? (decimal?)null
-            : ControlEngine.ExpectedEffect(actuator.Kind, amount, node.ReservoirLiters, EffectOf(actuator), trigger.Value, node.SourceWaterEc);
+            : ControlEngine.ExpectedEffect(actuator.Kind, amount, circuit.ReservoirLiters, EffectOf(actuator), trigger.Value, circuit.SourceWaterEc);
 
         var created = await AddCommandAsync(context, new ActuatorCommand
         {
             Id = Guid.NewGuid(),
-            NodeId = nodeId,
+            NodeId = circuit.NodeId,
+            CircuitId = circuitId,
             ActuatorId = actuatorId,
             LotId = lot?.Id,
             Source = ControlContract.SourceManual,
@@ -251,18 +283,18 @@ public sealed class ControlService
         if (!created)
             return ControlActionResult.Fail("Ya hay una dosis en curso para esta bomba.");
 
-        _logger.LogInformation("Dosis manual pedida en {Node}: {Actuator} {Amount} {Unit} por {User}.",
-            node.Identifier, actuator.TechnicalKey, amount, actuator.Unit, requestedBy);
+        _logger.LogInformation("Dosis manual pedida en {Circuit}: {Actuator} {Amount} {Unit} por {User}.",
+            circuit.Name, actuator.TechnicalKey, amount, actuator.Unit, requestedBy);
         return ControlActionResult.Ok();
     }
 
     /// <summary>Cancela una dosis que la Pi todavía no pidió.</summary>
-    public async Task<ControlActionResult> CancelAsync(int nodeId, Guid commandId, string? user, CancellationToken ct = default)
+    public async Task<ControlActionResult> CancelAsync(int circuitId, Guid commandId, string? user, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var rows = await context.ActuatorCommands
-            .Where(c => c.Id == commandId && c.NodeId == nodeId && c.Status == ControlContract.StatusPending
+            .Where(c => c.Id == commandId && c.CircuitId == circuitId && c.Status == ControlContract.StatusPending
                         && c.DispatchedAtUtc == null)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(c => c.Status, ControlContract.StatusCancelled)
@@ -274,52 +306,52 @@ public sealed class ControlService
         return ControlActionResult.Ok();
     }
 
-    public async Task<ControlActionResult> SetReservoirAsync(int nodeId, decimal liters, string? user, CancellationToken ct = default)
+    public async Task<ControlActionResult> SetReservoirAsync(int circuitId, decimal liters, string? user, CancellationToken ct = default)
     {
         liters = Math.Round(liters, 1);
         if (liters <= 0m || liters > ControlContract.MaxReservoirLiters)
             return ControlActionResult.Fail($"El tanque tiene que tener entre 1 y {ControlContract.MaxReservoirLiters:0} litros.");
 
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var rows = await context.IotNodes
-            .Where(n => n.Id == nodeId)
-            .ExecuteUpdateAsync(s => s.SetProperty(n => n.ReservoirLiters, liters), ct);
+        var rows = await context.Circuits
+            .Where(c => c.Id == circuitId)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ReservoirLiters, liters), ct);
         if (rows == 0)
-            return ControlActionResult.Fail("El nodo no existe.");
+            return ControlActionResult.Fail("El circuito no existe.");
 
-        _logger.LogInformation("Tanque del nodo {NodeId}: {Liters} L (por {User}).", nodeId, liters, user);
+        _logger.LogInformation("Tanque del circuito {CircuitId}: {Liters} L (por {User}).", circuitId, liters, user);
         return ControlActionResult.Ok();
     }
 
     /// <summary>Manual o Automático. Al pasar a Automático, el motor evalúa el tanque en el momento.</summary>
-    public async Task<ControlActionResult> SetModeAsync(int nodeId, string mode, string? user, CancellationToken ct = default)
+    public async Task<ControlActionResult> SetModeAsync(int circuitId, string mode, string? user, CancellationToken ct = default)
     {
         if (mode is not (ControlContract.ModeManual or ControlContract.ModeAuto or ControlContract.ModeOff))
             return ControlActionResult.Fail("Modo desconocido.");
 
         await using (var context = await _dbFactory.CreateDbContextAsync(ct))
         {
-            var rows = await context.IotNodes
-                .Where(n => n.Id == nodeId)
-                .ExecuteUpdateAsync(s => s.SetProperty(n => n.ControlMode, mode), ct);
+            var rows = await context.Circuits
+                .Where(c => c.Id == circuitId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.ControlMode, mode), ct);
             if (rows == 0)
-                return ControlActionResult.Fail("El nodo no existe.");
+                return ControlActionResult.Fail("El circuito no existe.");
         }
 
-        _logger.LogInformation("Modo de control del nodo {NodeId}: {Mode} (por {User}).", nodeId, mode, user);
+        _logger.LogInformation("Modo de control del circuito {CircuitId}: {Mode} (por {User}).", circuitId, mode, user);
         if (mode == ControlContract.ModeAuto)
-            await EvaluateNodeAsync(nodeId, DateTime.UtcNow, ct);
+            await EvaluateCircuitAsync(circuitId, DateTime.UtcNow, ct);
         return ControlActionResult.Ok();
     }
 
     /// <summary>Reanuda el control automático de una magnitud pausada (después de revisar bidón, bomba y sonda).</summary>
-    public async Task<ControlActionResult> ResumeAsync(int nodeId, string parameter, string? user, CancellationToken ct = default)
+    public async Task<ControlActionResult> ResumeAsync(int circuitId, string parameter, string? user, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
         await using (var context = await _dbFactory.CreateDbContextAsync(ct))
         {
             var rows = await context.ControlPauses
-                .Where(p => p.NodeId == nodeId && p.Parameter == parameter && p.ResumedAtUtc == null)
+                .Where(p => p.CircuitId == circuitId && p.Parameter == parameter && p.ResumedAtUtc == null)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(p => p.ResumedAtUtc, now)
                     .SetProperty(p => p.ResumedBy, user), ct);
@@ -327,9 +359,9 @@ public sealed class ControlService
                 return ControlActionResult.Fail("No estaba pausado.");
         }
 
-        await _events.OnResumedAsync(nodeId, parameter, ct);
-        _logger.LogInformation("Control de {Parameter} del nodo {NodeId} reanudado por {User}.", parameter, nodeId, user);
-        await EvaluateNodeAsync(nodeId, DateTime.UtcNow, ct);
+        await _events.OnResumedAsync(circuitId, parameter, ct);
+        _logger.LogInformation("Control de {Parameter} del circuito {CircuitId} reanudado por {User}.", parameter, circuitId, user);
+        await EvaluateCircuitAsync(circuitId, DateTime.UtcNow, ct);
         return ControlActionResult.Ok();
     }
 
@@ -338,24 +370,24 @@ public sealed class ControlService
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Evalúa el tanque de un nodo en AUTO y, si corresponde, crea la dosis. La llama la ingesta (vía
+    /// Evalúa el tanque de un circuito en AUTO y, si corresponde, crea la dosis. La llama la ingesta (vía
     /// <see cref="ControlWorker"/>) al llegar lecturas de pH/CE, el barrido y los cambios de modo.
     /// </summary>
-    public async Task<ControlEngine.Decision> EvaluateNodeAsync(int nodeId, DateTime nowUtc, CancellationToken ct = default)
+    public async Task<ControlEngine.Decision> EvaluateCircuitAsync(int circuitId, DateTime nowUtc, CancellationToken ct = default)
     {
         await EvaluationGate.WaitAsync(ct);
         try
         {
             await using var context = await _dbFactory.CreateDbContextAsync(ct);
-            var mode = await context.IotNodes.AsNoTracking()
-                .Where(n => n.Id == nodeId)
-                .Select(n => n.ControlMode)
+            var mode = await context.Circuits.AsNoTracking()
+                .Where(c => c.Id == circuitId)
+                .Select(c => c.ControlMode)
                 .FirstOrDefaultAsync(ct);
             if (mode != ControlContract.ModeAuto)
                 return new ControlEngine.Decision(ControlEngine.Outcome.Off, ControlEngine.Codes.Manual);
 
-            await ExpireAsync(context, nowUtc, nodeId, ct);
-            var snapshot = await SnapshotAsync(context, nodeId, nowUtc, ct);
+            await ExpireAsync(context, nowUtc, circuitId: circuitId, ct: ct);
+            var snapshot = await SnapshotAsync(context, circuitId, nowUtc, ct);
             if (snapshot is null)
                 return new ControlEngine.Decision(ControlEngine.Outcome.Off, ControlEngine.Codes.Manual);
 
@@ -371,17 +403,18 @@ public sealed class ControlService
     }
 
     private async Task CreateAutoDoseAsync(
-        HydroPilotDbContext context, NodeSnapshot snapshot, ControlEngine.Decision decision, DateTime nowUtc, CancellationToken ct)
+        HydroPilotDbContext context, CircuitSnapshot snapshot, ControlEngine.Decision decision, DateTime nowUtc, CancellationToken ct)
     {
         var pump = decision.Pump!;
         var parameter = decision.Parameter!;
-        var trigger = await LatestReadingWithIdAsync(context, snapshot.Node.Id, parameter, ct);
+        var trigger = await LatestReadingWithIdAsync(context, snapshot.Circuit.Id, parameter, ct);
         var band = BandFor(snapshot.Lot, snapshot.Recipe, parameter);
 
         var created = await AddCommandAsync(context, new ActuatorCommand
         {
             Id = Guid.NewGuid(),
-            NodeId = snapshot.Node.Id,
+            NodeId = snapshot.Circuit.NodeId,
+            CircuitId = snapshot.Circuit.Id,
             ActuatorId = pump.Id,
             LotId = snapshot.Lot?.Id,
             Source = ControlContract.SourceAuto,
@@ -404,8 +437,66 @@ public sealed class ControlService
 
         if (created)
             _logger.LogInformation(
-                "Dosis automática en {Node}: {Pump} {Amount} {Unit} ({Parameter} {Value} → {Target}, fuerza {Strength:P0}).",
-                snapshot.Node.Identifier, pump.Kind, decision.Amount, pump.Unit, parameter, decision.Value, decision.Target, decision.Strength);
+                "Dosis automática en {Circuit}: {Pump} {Amount} {Unit} ({Parameter} {Value} → {Target}, fuerza {Strength:P0}).",
+                snapshot.Circuit.Name, pump.Kind, decision.Amount, pump.Unit, parameter, decision.Value, decision.Target, decision.Strength);
+    }
+
+    /// <summary>Puntos por magnitud como mucho en la tendencia (las lecturas se promedian por tramo).</summary>
+    public const int TrendMaxPoints = 180;
+
+    /// <summary>
+    /// pH y CE del nodo en las últimas <paramref name="hours"/> horas: lecturas promediadas por tramo, la banda del lote
+    /// (etapa + receta), la banda en la que actúa el motor y las dosis de la ventana. Null si el nodo no existe.
+    /// </summary>
+    public async Task<ControlTrendDto?> GetTrendAsync(int circuitId, int hours, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var now = DateTime.UtcNow;
+        if (!await context.Circuits.AnyAsync(c => c.Id == circuitId, ct))
+            return null;
+
+        var from = now.AddHours(-Math.Clamp(hours, 1, 72));
+        var lot = await LotWithBandsAsync(context, circuitId, now, ct);
+        var recipe = lot is null ? null : await RecipeService.CurrentAsync(context, lot.Id, ct);
+        // Solo el lote en curso: lo de antes de su asignación (otro lote) no se dibuja.
+        var since = Later(from, lot is null ? null : await LotSinceAsync(context, circuitId, now, ct));
+
+        var readings = await UsableReadings(context, circuitId)
+            .Where(r => r.ObservedAtUtc >= since && r.ObservedAtUtc <= now)
+            .OrderBy(r => r.ObservedAtUtc)
+            .Select(r => new { r.ObservedAtUtc, Type = r.Sensor!.SensorType!.Name, r.Value })
+            .ToListAsync(ct);
+        var doses = await context.ActuatorCommands.AsNoTracking()
+            .Where(c => c.CircuitId == circuitId && c.CreatedAtUtc >= since)
+            .OrderBy(c => c.CreatedAtUtc)
+            .Select(c => new
+            {
+                c.CompletedAtUtc, c.CreatedAtUtc, c.Parameter, c.Actuator!.Kind, c.Actuator.Name, c.Amount, c.ExecutedAmount, c.Unit,
+                c.Status, c.Source, c.Strength, c.Effective,
+            })
+            .ToListAsync(ct);
+
+        var bucket = TimeSpan.FromTicks(Math.Max(TimeSpan.FromSeconds(1).Ticks, (now - from).Ticks / TrendMaxPoints));
+        ControlTrendSeries Series(string parameter)
+        {
+            var points = readings
+                .Where(r => r.Type == parameter)
+                .GroupBy(r => r.ObservedAtUtc.Ticks / bucket.Ticks)
+                .Select(g => new ControlTrendPoint(Utc(g.Last().ObservedAtUtc), Math.Round(g.Average(r => r.Value), 3)))
+                .ToList();
+            var band = BandFor(lot, recipe, parameter);
+            return new ControlTrendSeries(
+                parameter,
+                points,
+                band,
+                ControlEngine.ActionBand(band),
+                doses.Where(d => d.Parameter == parameter)
+                    .Select(d => new ControlTrendDose(Utc(d.CompletedAtUtc ?? d.CreatedAtUtc), d.Parameter, d.Kind, d.Name,
+                        d.ExecutedAmount ?? d.Amount, d.Unit, d.Status, d.Source, d.Strength, d.Effective))
+                    .ToList());
+        }
+
+        return new ControlTrendDto(from, now, Series(ControlContract.ParameterPh), Series(ControlContract.ParameterEc));
     }
 
     // ------------------------------------------------------------------
@@ -423,7 +514,7 @@ public sealed class ControlService
         if (node is null)
             return null;
 
-        await ExpireAsync(context, nowUtc, node.Id, ct);
+        await ExpireAsync(context, nowUtc, nodeId: node.Id, ct: ct);
 
         await context.ActuatorCommands
             .Where(c => c.NodeId == node.Id && c.Status == ControlContract.StatusPending && c.ExpiresAtUtc > nowUtc)
@@ -536,18 +627,18 @@ public sealed class ControlService
 
     /// <summary>
     /// Vence comandos, mide el efecto de las dosis ya mezcladas (autocalibra y pausa), registra el nivel vigente
-    /// de cada lote en curso cuando cambia y evalúa los nodos en AUTO.
+    /// de cada lote en curso cuando cambia y evalúa los circuitos en AUTO.
     /// </summary>
     public async Task<ControlSweepResult> SweepAsync(DateTime nowUtc, CancellationToken ct = default)
     {
         int expired, unconfirmed, setpoints, measured, paused;
-        List<int> autoNodes;
+        List<int> autoCircuits;
 
         await EvaluationGate.WaitAsync(ct);
         try
         {
             await using var context = await _dbFactory.CreateDbContextAsync(ct);
-            (expired, unconfirmed) = await ExpireAsync(context, nowUtc, null, ct);
+            (expired, unconfirmed) = await ExpireAsync(context, nowUtc, ct: ct);
             if (_channel.PushesCommands)
             {
                 // IoT Hub: lo que no se pudo mandar al crearse (hub caído) se reintenta mientras no venza.
@@ -558,9 +649,9 @@ public sealed class ControlService
             }
             (measured, paused) = await MeasureEffectsAsync(context, nowUtc, ct);
             setpoints = await RecordSetpointsAsync(context, nowUtc, ct);
-            autoNodes = await context.IotNodes.AsNoTracking()
-                .Where(n => n.ControlMode == ControlContract.ModeAuto)
-                .Select(n => n.Id)
+            autoCircuits = await context.Circuits.AsNoTracking()
+                .Where(c => c.IsActive && c.ControlMode == ControlContract.ModeAuto)
+                .Select(c => c.Id)
                 .ToListAsync(ct);
         }
         finally
@@ -569,9 +660,9 @@ public sealed class ControlService
         }
 
         var doses = 0;
-        foreach (var nodeId in autoNodes)
+        foreach (var circuitId in autoCircuits)
         {
-            if ((await EvaluateNodeAsync(nodeId, nowUtc, ct)).Outcome == ControlEngine.Outcome.Dose)
+            if ((await EvaluateCircuitAsync(circuitId, nowUtc, ct)).Outcome == ControlEngine.Outcome.Dose)
                 doses++;
         }
 
@@ -587,11 +678,13 @@ public sealed class ControlService
     /// margen → UNCONFIRMED (pudo haberse aplicado; si después llega el resultado, se acepta).
     /// </summary>
     private async Task<(int Expired, int Unconfirmed)> ExpireAsync(
-        HydroPilotDbContext context, DateTime nowUtc, int? nodeId, CancellationToken ct)
+        HydroPilotDbContext context, DateTime nowUtc, int? nodeId = null, int? circuitId = null, CancellationToken ct = default)
     {
         var commands = context.ActuatorCommands.AsQueryable();
         if (nodeId is { } id)
             commands = commands.Where(c => c.NodeId == id);
+        if (circuitId is { } circuit)
+            commands = commands.Where(c => c.CircuitId == circuit);
 
         var expired = await commands
             .Where(c => c.Status == ControlContract.StatusPending && c.ExpiresAtUtc <= nowUtc)
@@ -620,7 +713,7 @@ public sealed class ControlService
         var ready = nowUtc.AddMinutes(-settings.MixingMinutes);
         var pending = await context.ActuatorCommands
             .Include(c => c.Actuator)
-            .Include(c => c.Node)
+            .Include(c => c.Circuit)
             .Where(c => c.EffectEvaluatedAtUtc == null && c.CompletedAtUtc != null && c.CompletedAtUtc <= ready
                         && (c.Status == ControlContract.StatusExecuted
                             || (c.Status == ControlContract.StatusFailed && c.ExecutedAmount > 0)))
@@ -630,12 +723,12 @@ public sealed class ControlService
         if (pending.Count == 0)
             return (0, 0);
 
-        var touched = new HashSet<(int NodeId, string Parameter)>();
+        var touched = new HashSet<(int CircuitId, string Parameter)>();
         var measured = 0;
         foreach (var command in pending)
         {
             var actuator = command.Actuator!;
-            var node = command.Node!;
+            var circuit = command.Circuit!;
             var amount = command.ExecutedAmount ?? command.Amount;
             var settled = command.CompletedAtUtc!.Value.AddMinutes(settings.MixingMinutes);
 
@@ -645,7 +738,7 @@ public sealed class ControlService
                 continue;
             }
 
-            var after = await UsableReadings(context, command.NodeId, command.Parameter)
+            var after = await UsableReadings(context, command.CircuitId, command.Parameter)
                 .Where(r => r.ObservedAtUtc >= settled)
                 .OrderBy(r => r.ObservedAtUtc)
                 .Select(r => new { r.Value, r.ObservedAtUtc })
@@ -663,13 +756,13 @@ public sealed class ControlService
                     .Select(r => (DateTime?)r.ObservedAtUtc)
                     .FirstOrDefaultAsync(ct) ?? command.CreatedAtUtc
                 : command.CreatedAtUtc;
-            var drift = ControlEngine.TrendPerHour(await UsableReadings(context, command.NodeId, command.Parameter)
+            var drift = ControlEngine.TrendPerHour(await UsableReadings(context, command.CircuitId, command.Parameter)
                 .Where(r => r.ObservedAtUtc >= beforeAt.AddMinutes(-settings.TrendMinutes) && r.ObservedAtUtc <= beforeAt)
                 .Select(r => new ControlEngine.Point(r.ObservedAtUtc, r.Value))
                 .ToListAsync(ct));
 
             var expected = command.ExpectedEffect
-                ?? ControlEngine.ExpectedEffect(actuator.Kind, amount, node.ReservoirLiters, EffectOf(actuator), before, node.SourceWaterEc);
+                ?? ControlEngine.ExpectedEffect(actuator.Kind, amount, circuit.ReservoirLiters, EffectOf(actuator), before, circuit.SourceWaterEc);
             var hours = (decimal)(after.ObservedAtUtc - beforeAt).TotalHours;
             var measure = ControlEngine.MeasureEffect(before, after.Value, drift, hours, expected);
 
@@ -679,10 +772,10 @@ public sealed class ControlService
             command.Effective = measure.Effective;
             command.EffectEvaluatedAtUtc = nowUtc;
             measured++;
-            touched.Add((command.NodeId, command.Parameter));
+            touched.Add((command.CircuitId, command.Parameter));
 
             if (measure.Effective
-                && ControlEngine.Calibrate(actuator.Kind, actuator.EffectPerUnit, measure.Observed, amount, node.ReservoirLiters) is { } calibrated
+                && ControlEngine.Calibrate(actuator.Kind, actuator.EffectPerUnit, measure.Observed, amount, circuit.ReservoirLiters) is { } calibrated
                 && calibrated != actuator.EffectPerUnit)
             {
                 actuator.EffectPerUnit = calibrated;
@@ -692,27 +785,27 @@ public sealed class ControlService
         await context.SaveChangesAsync(ct);
 
         var paused = 0;
-        foreach (var (nodeId, parameter) in touched)
+        foreach (var (circuitId, parameter) in touched)
         {
-            if (await PauseIfNoEffectAsync(context, nodeId, parameter, nowUtc, ct))
+            if (await PauseIfNoEffectAsync(context, circuitId, parameter, nowUtc, ct))
                 paused++;
         }
         return (measured, paused);
     }
 
     private async Task<bool> PauseIfNoEffectAsync(
-        HydroPilotDbContext context, int nodeId, string parameter, DateTime nowUtc, CancellationToken ct)
+        HydroPilotDbContext context, int circuitId, string parameter, DateTime nowUtc, CancellationToken ct)
     {
         var doses = Math.Max(1, _options.NoEffectDoses);
-        if (await context.ControlPauses.AnyAsync(p => p.NodeId == nodeId && p.Parameter == parameter && p.ResumedAtUtc == null, ct))
+        if (await context.ControlPauses.AnyAsync(p => p.CircuitId == circuitId && p.Parameter == parameter && p.ResumedAtUtc == null, ct))
             return false;
 
         // Solo cuentan las dosis posteriores a la última reanudación: si no, la misma racha volvería a pausar.
         var lastResume = await context.ControlPauses
-            .Where(p => p.NodeId == nodeId && p.Parameter == parameter && p.ResumedAtUtc != null)
+            .Where(p => p.CircuitId == circuitId && p.Parameter == parameter && p.ResumedAtUtc != null)
             .MaxAsync(p => p.ResumedAtUtc, ct);
         var latest = await context.ActuatorCommands.AsNoTracking()
-            .Where(c => c.NodeId == nodeId && c.Parameter == parameter && c.Effective != null
+            .Where(c => c.CircuitId == circuitId && c.Parameter == parameter && c.Effective != null
                         && (lastResume == null || c.CompletedAtUtc > lastResume))
             .OrderByDescending(c => c.CompletedAtUtc)
             .Take(doses)
@@ -722,7 +815,7 @@ public sealed class ControlService
             return false;
 
         var reason = $"{doses} dosis seguidas sin efecto";
-        context.ControlPauses.Add(new ControlPause { NodeId = nodeId, Parameter = parameter, PausedAtUtc = nowUtc, Reason = reason });
+        context.ControlPauses.Add(new ControlPause { CircuitId = circuitId, Parameter = parameter, PausedAtUtc = nowUtc, Reason = reason });
         try
         {
             await context.SaveChangesAsync(ct);
@@ -732,10 +825,10 @@ public sealed class ControlService
             return false; // otra evaluación ya la pausó
         }
 
-        var node = await context.IotNodes.AsNoTracking().Where(n => n.Id == nodeId).Select(n => n.Identifier).SingleAsync(ct);
-        var lotId = (await CurrentLotsAsync(context, [nodeId], nowUtc, ct)).GetValueOrDefault(nodeId)?.LotId;
-        _logger.LogWarning("Control de {Parameter} del nodo {Node} pausado: {Reason}.", parameter, node, reason);
-        await _events.OnPausedAsync(new ControlPauseEvent(nodeId, node, lotId, parameter, reason, nowUtc), ct);
+        var name = await context.Circuits.AsNoTracking().Where(c => c.Id == circuitId).Select(c => c.Name).SingleAsync(ct);
+        var lotId = (await CurrentLotsAsync(context, [circuitId], nowUtc, ct)).GetValueOrDefault(circuitId)?.LotId;
+        _logger.LogWarning("Control de {Parameter} del circuito {Circuit} pausado: {Reason}.", parameter, name, reason);
+        await _events.OnPausedAsync(new ControlPauseEvent(circuitId, name, lotId, parameter, reason, nowUtc), ct);
         return true;
     }
 
@@ -796,68 +889,54 @@ public sealed class ControlService
     }
 
     // ------------------------------------------------------------------
-    // Para otros módulos
-    // ------------------------------------------------------------------
-
-    /// <summary>
-    /// Magnitudes que el control automático mantiene en el lote (vía el nodo asignado hoy): pH y CE si el nodo está
-    /// en AUTO, menos las pausadas. Optimización no recomienda corregir a mano lo que ya corrige el motor.
-    /// </summary>
-    public static async Task<IReadOnlySet<string>> AutoControlledForLotAsync(
-        HydroPilotDbContext context, int lotId, DateTime nowUtc, CancellationToken ct = default)
-    {
-        var node = await context.NodeLotAssignments.AsNoTracking()
-            .Where(a => a.LotId == lotId && a.ValidFromUtc <= nowUtc && (a.ValidUntilUtc == null || a.ValidUntilUtc > nowUtc))
-            .OrderByDescending(a => a.ValidFromUtc)
-            .Select(a => new { a.NodeId, a.Node!.ControlMode })
-            .FirstOrDefaultAsync(ct);
-        if (node is null || node.ControlMode != ControlContract.ModeAuto)
-            return new HashSet<string>();
-
-        var paused = await context.ControlPauses.AsNoTracking()
-            .Where(p => p.NodeId == node.NodeId && p.ResumedAtUtc == null)
-            .Select(p => p.Parameter)
-            .ToListAsync(ct);
-        return ControlEngine.AutoControlled(node.ControlMode, paused);
-    }
-
-    // ------------------------------------------------------------------
     // Auxiliares
     // ------------------------------------------------------------------
 
     private static readonly SolutionBand Undefined = new(null, null, null);
 
-    private sealed record CurrentLot(int NodeId, int LotId, string Name);
+    /// <summary>Lote en curso del circuito y desde cuándo está plantado ahí (lo que muestra la vista empieza ahí).</summary>
+    private sealed record CurrentLot(int CircuitId, int LotId, string Name, DateTime SinceUtc);
 
     private sealed record CommandRow(ActuatorCommand Command, string Kind, string Name);
 
-    /// <summary>Todo lo que mira el motor de un nodo, armado igual para la vista y para la evaluación.</summary>
-    private sealed record NodeSnapshot(
+    /// <summary>
+    /// Todo lo que mira el motor de un circuito, armado igual para la vista y para la evaluación. Ph/Ec: el estado con la
+    /// banda del lote (lo que se muestra); el motor lo mira con su banda de acción (<see cref="ControlEngine.ActionBand"/>).
+    /// </summary>
+    private sealed record CircuitSnapshot(
+        Circuit Circuit,
         IotNode Node,
         Lot? Lot,
         List<Actuator> Actuators,
         List<CommandRow> Commands,
         ControlEngine.Input Input,
-        LotRecipe? Recipe);
+        LotRecipe? Recipe,
+        SolutionParameterStatus Ph,
+        SolutionParameterStatus Ec,
+        IReadOnlyList<SensorFault> Faults);
 
-    private async Task<NodeSnapshot?> SnapshotAsync(HydroPilotDbContext context, int nodeId, DateTime nowUtc, CancellationToken ct)
+    private async Task<CircuitSnapshot?> SnapshotAsync(HydroPilotDbContext context, int circuitId, DateTime nowUtc, CancellationToken ct)
     {
-        var node = await context.IotNodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId, ct);
-        if (node is null)
+        var circuit = await context.Circuits.AsNoTracking().Include(c => c.Node).FirstOrDefaultAsync(c => c.Id == circuitId, ct);
+        if (circuit?.Node is not { } node)
             return null;
 
-        var lot = await LotWithBandsAsync(context, nodeId, nowUtc, ct);
+        var lot = await LotWithBandsAsync(context, circuitId, nowUtc, ct);
         var recipe = lot is null ? null : await RecipeService.CurrentAsync(context, lot.Id, ct);
         var freshMinutes = Math.Max(1, _dashboardOptions.KpiFreshnessMinutes);
-        var ph = SolutionRules.Evaluate(ControlContract.ParameterPh, "pH",
-            await LatestReadingsAsync(context, nodeId, ControlContract.ParameterPh, SolutionRules.LookbackReadings, ct),
-            null, BandFor(lot, recipe, ControlContract.ParameterPh), nowUtc, freshMinutes);
-        var ec = SolutionRules.Evaluate(ControlContract.ParameterEc, "mS/cm",
-            await LatestReadingsAsync(context, nodeId, ControlContract.ParameterEc, SolutionRules.LookbackReadings, ct),
-            null, BandFor(lot, recipe, ControlContract.ParameterEc), nowUtc, freshMinutes);
+        var phBand = BandFor(lot, recipe, ControlContract.ParameterPh);
+        var ecBand = BandFor(lot, recipe, ControlContract.ParameterEc);
+        var phReadings = await LatestReadingsAsync(context, circuitId, ControlContract.ParameterPh, SolutionRules.LookbackReadings, ct);
+        var ecReadings = await LatestReadingsAsync(context, circuitId, ControlContract.ParameterEc, SolutionRules.LookbackReadings, ct);
+        var ph = SolutionRules.Evaluate(ControlContract.ParameterPh, "pH", phReadings, null, phBand, nowUtc, freshMinutes);
+        var ec = SolutionRules.Evaluate(ControlContract.ParameterEc, "mS/cm", ecReadings, null, ecBand, nowUtc, freshMinutes);
+        var phAction = SolutionRules.Evaluate(ControlContract.ParameterPh, "pH", phReadings, null,
+            ControlEngine.ActionBand(phBand), nowUtc, freshMinutes);
+        var ecAction = SolutionRules.Evaluate(ControlContract.ParameterEc, "mS/cm", ecReadings, null,
+            ControlEngine.ActionBand(ecBand), nowUtc, freshMinutes);
 
         var recentSince = nowUtc.AddMinutes(-Math.Max(RecentReadingsMinutes, _options.TrendMinutes));
-        var recent = await UsableReadings(context, nodeId)
+        var recent = await UsableReadings(context, circuitId)
             .Where(r => r.ObservedAtUtc >= recentSince)
             .OrderBy(r => r.ObservedAtUtc)
             .Take(2_000)
@@ -869,7 +948,7 @@ public sealed class ControlService
         // Comandos de las últimas 24 h (o TimelineHours) y los abiertos más viejos, que siguen contando.
         var since = nowUtc.AddHours(-Math.Max(24, _options.TimelineHours));
         var commands = (await context.ActuatorCommands.AsNoTracking()
-                .Where(c => c.NodeId == nodeId
+                .Where(c => c.CircuitId == circuitId
                             && (c.CreatedAtUtc >= since
                                 || c.Status == ControlContract.StatusPending
                                 || c.Status == ControlContract.StatusDelivered))
@@ -879,12 +958,15 @@ public sealed class ControlService
             .Select(c => new CommandRow(c.Command, c.Kind, c.Name))
             .ToList();
 
-        var actuators = (await context.Actuators.AsNoTracking().Where(a => a.NodeId == nodeId).ToListAsync(ct))
+        var actuators = (await context.Actuators.AsNoTracking().Where(a => a.CircuitId == circuitId).ToListAsync(ct))
             .OrderBy(a => KindOrder(a.Kind))
             .ToList();
         var paused = await context.ControlPauses.AsNoTracking()
-            .Where(p => p.NodeId == nodeId && p.ResumedAtUtc == null)
+            .Where(p => p.CircuitId == circuitId && p.ResumedAtUtc == null)
             .Select(p => p.Parameter)
+            .ToListAsync(ct);
+        var faults = await context.SensorFaults.AsNoTracking()
+            .Where(f => f.Sensor!.CircuitId == circuitId && f.ResolvedAtUtc == null)
             .ToListAsync(ct);
 
         var day = nowUtc.AddHours(-24);
@@ -902,19 +984,42 @@ public sealed class ControlService
 
         var input = new ControlEngine.Input(
             nowUtc,
-            node.ControlMode,
+            circuit.ControlMode,
             lot is not null,
             Utc(node.LastCommandPollAtUtc),
-            node.ReservoirLiters,
-            node.SourceWaterEc,
-            new ControlEngine.Magnitude(ph, Points(ControlContract.ParameterPh), paused.Contains(ControlContract.ParameterPh)),
-            new ControlEngine.Magnitude(ec, Points(ControlContract.ParameterEc), paused.Contains(ControlContract.ParameterEc)),
+            circuit.ReservoirLiters,
+            circuit.SourceWaterEc,
+            new ControlEngine.Magnitude(phAction, Points(ControlContract.ParameterPh), paused.Contains(ControlContract.ParameterPh)),
+            new ControlEngine.Magnitude(ecAction, Points(ControlContract.ParameterEc), paused.Contains(ControlContract.ParameterEc)),
             pumps,
             commands.Any(c => ControlRules.IsInFlight(c.Command.Status)),
             applied,
-            EngineSettings with { PollStaleMinutes = PiContactStaleMinutes(node) });
+            EngineSettings with { PollStaleMinutes = PiContactStaleMinutes(node) },
+            SensorIssuesFor(faults, phReadings, ecReadings, node, nowUtc));
 
-        return new NodeSnapshot(node, lot, actuators, commands, input, recipe);
+        return new CircuitSnapshot(circuit, node, lot, actuators, commands, input, recipe, ph, ec, faults);
+    }
+
+    /// <summary>
+    /// Errores de sensor que frenan el control, uno por parámetro como mucho: uno abierto de pH o CE o, aunque el
+    /// barrido todavía no lo haya abierto, la última lectura más vieja que lo que tarda un sensor en darse por sin datos.
+    /// </summary>
+    private IReadOnlyList<ControlEngine.SensorIssue> SensorIssuesFor(
+        IReadOnlyList<SensorFault> faults, IReadOnlyList<SolutionReading> ph, IReadOnlyList<SolutionReading> ec, IotNode node, DateTime nowUtc)
+    {
+        var silenceAfter = SensorFaultRules.SilenceAfter(node.ExpectedIntervalSeconds, _silenceFactor);
+        var issues = new List<ControlEngine.SensorIssue>();
+        foreach (var (parameter, readings) in new[] { (ControlContract.ParameterPh, ph), (ControlContract.ParameterEc, ec) })
+        {
+            var open = faults.Where(f => f.SensorType == parameter).OrderBy(f => f.DetectedAtUtc).FirstOrDefault();
+            // Sin ninguna lectura queda "sin datos" del motor (no hay con qué decidir); acá solo el corte.
+            var last = readings.Count == 0 ? (DateTime?)null : readings.Max(r => r.ObservedAtUtc);
+            if (open is not null)
+                issues.Add(new ControlEngine.SensorIssue(parameter, open.Kind));
+            else if (last is not null && SensorFaultRules.IsSilent(last, nowUtc, silenceAfter))
+                issues.Add(new ControlEngine.SensorIssue(parameter, SensorFaultKinds.SinDatos));
+        }
+        return issues;
     }
 
     /// <summary>Dosis que pudo llegar al tanque: ejecutada, fallida a medias o entregada sin respuesta.</summary>
@@ -1036,25 +1141,32 @@ public sealed class ControlService
     private static decimal? OffsetApplied(SolutionBand stage, SolutionBand shifted) =>
         stage.Target is { } a && shifted.Target is { } b && a != b ? b - a : null;
 
-    /// <summary>Lote asignado hoy a cada nodo, solo si está en curso (Activo / En pausa).</summary>
+    /// <summary>Lote en curso de cada circuito, solo si está en curso (Activo / En pausa).</summary>
     private static async Task<Dictionary<int, CurrentLot>> CurrentLotsAsync(
-        HydroPilotDbContext context, IReadOnlyList<int> nodeIds, DateTime nowUtc, CancellationToken ct)
+        HydroPilotDbContext context, IReadOnlyList<int> circuitIds, DateTime nowUtc, CancellationToken ct)
     {
-        var rows = await context.NodeLotAssignments.AsNoTracking()
-            .Where(a => nodeIds.Contains(a.NodeId)
+        var rows = await context.CircuitAssignments.AsNoTracking()
+            .Where(a => circuitIds.Contains(a.CircuitId)
                         && a.ValidFromUtc <= nowUtc && (a.ValidUntilUtc == null || a.ValidUntilUtc > nowUtc)
                         && a.Lot!.Status != null && OpenLotStatuses.Contains(a.Lot.Status.Name))
             .OrderByDescending(a => a.ValidFromUtc)
-            .Select(a => new { a.NodeId, a.LotId, a.Lot!.Name })
+            .Select(a => new { a.CircuitId, a.LotId, a.Lot!.Name, a.ValidFromUtc })
             .ToListAsync(ct);
         return rows
-            .GroupBy(r => r.NodeId)
-            .ToDictionary(g => g.Key, g => g.Select(r => new CurrentLot(r.NodeId, r.LotId, LotName(r.LotId, r.Name))).First());
+            .GroupBy(r => r.CircuitId)
+            .ToDictionary(g => g.Key, g => g.Select(r => new CurrentLot(r.CircuitId, r.LotId, LotName(r.LotId, r.Name), Utc(r.ValidFromUtc))).First());
     }
 
-    private static async Task<Lot?> LotWithBandsAsync(HydroPilotDbContext context, int nodeId, DateTime nowUtc, CancellationToken ct)
+    /// <summary>Desde cuándo el circuito tiene su lote en curso; null sin lote (entonces la vista muestra el circuito entero).</summary>
+    private static async Task<DateTime?> LotSinceAsync(HydroPilotDbContext context, int circuitId, DateTime nowUtc, CancellationToken ct) =>
+        (await CurrentLotsAsync(context, [circuitId], nowUtc, ct)).GetValueOrDefault(circuitId)?.SinceUtc;
+
+    /// <summary>El más reciente de dos momentos (null = sin límite).</summary>
+    private static DateTime Later(DateTime from, DateTime? other) => other is { } o && o > from ? o : from;
+
+    private static async Task<Lot?> LotWithBandsAsync(HydroPilotDbContext context, int circuitId, DateTime nowUtc, CancellationToken ct)
     {
-        var current = (await CurrentLotsAsync(context, [nodeId], nowUtc, ct)).GetValueOrDefault(nodeId);
+        var current = (await CurrentLotsAsync(context, [circuitId], nowUtc, ct)).GetValueOrDefault(circuitId);
         return current is null
             ? null
             : await context.Lots.AsNoTracking()
@@ -1063,12 +1175,12 @@ public sealed class ControlService
                 .FirstOrDefaultAsync(l => l.Id == current.LotId, ct);
     }
 
-    /// <summary>Lecturas usables (válida, sospechosa u obsoleta) de pH y CE del nodo, o de una sola magnitud.</summary>
-    private static IQueryable<SensorReading> UsableReadings(HydroPilotDbContext context, int nodeId, string? sensorType = null)
+    /// <summary>Lecturas usables (válida, sospechosa u obsoleta) de pH y CE del circuito, o de una sola magnitud.</summary>
+    private static IQueryable<SensorReading> UsableReadings(HydroPilotDbContext context, int circuitId, string? sensorType = null)
     {
         var readings = context.SensorReadings.AsNoTracking()
             .Where(TelemetryQualityPolicy.OperationallyUsableReading)
-            .Where(r => r.NodeId == nodeId && r.Sensor != null && r.Sensor.SensorType != null);
+            .Where(r => r.Sensor != null && r.Sensor.CircuitId == circuitId && r.Sensor.SensorType != null);
         return sensorType is null
             ? readings.Where(r => r.Sensor!.SensorType!.Name == ControlContract.ParameterPh
                                   || r.Sensor!.SensorType!.Name == ControlContract.ParameterEc)
@@ -1076,8 +1188,8 @@ public sealed class ControlService
     }
 
     private static async Task<IReadOnlyList<SolutionReading>> LatestReadingsAsync(
-        HydroPilotDbContext context, int nodeId, string sensorType, int take, CancellationToken ct) =>
-        await UsableReadings(context, nodeId, sensorType)
+        HydroPilotDbContext context, int circuitId, string sensorType, int take, CancellationToken ct) =>
+        await UsableReadings(context, circuitId, sensorType)
             .OrderByDescending(r => r.ObservedAtUtc)
             .Take(take)
             .Select(r => new SolutionReading(sensorType, r.Quality, r.Value, r.ObservedAtUtc))
@@ -1086,8 +1198,8 @@ public sealed class ControlService
     private sealed record TriggerReading(int Id, decimal Value);
 
     private static async Task<TriggerReading?> LatestReadingWithIdAsync(
-        HydroPilotDbContext context, int nodeId, string sensorType, CancellationToken ct) =>
-        await UsableReadings(context, nodeId, sensorType)
+        HydroPilotDbContext context, int circuitId, string sensorType, CancellationToken ct) =>
+        await UsableReadings(context, circuitId, sensorType)
             .OrderByDescending(r => r.ObservedAtUtc)
             .Select(r => new TriggerReading(r.Id, r.Value))
             .FirstOrDefaultAsync(ct);

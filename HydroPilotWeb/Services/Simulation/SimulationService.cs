@@ -226,7 +226,7 @@ public class SimulationService
                 new BabyLeafOutlookRequest(crop.Id, sowingDate, timeline, expectedAverage, lot?.Id), ct);
 
             if (outlook.AptRate is null)
-                warnings.Add("Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas las plantas llegan aptas a Baby Leaf.");
+                warnings.Add("Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas las plantas llegan a Baby Leaf.");
             if (outlook.History.EarlyLossRate is null && outlook.History.LateLossRate is null)
                 warnings.Add("Sin historial de pérdidas por etapa: no se descuentan pérdidas.");
             if (outlook.History.UsedAllLots)

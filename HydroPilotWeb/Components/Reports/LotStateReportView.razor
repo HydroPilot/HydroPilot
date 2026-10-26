@@ -136,7 +136,7 @@
                     @if (state.HarvestReadiness is { } readiness)
                     {
                         <div class="alert @(readiness.IsReady == true ? "alert-success" : "alert-info") small mt-2 mb-1 py-2 px-2">
-                            Cosecha Baby Leaf: @readiness.AptaPlantCount/@readiness.TotalActivePlants aptas
+                            Cosecha Baby Leaf: @readiness.AptaPlantCount/@readiness.TotalActivePlants Baby Leafs
                             (@readiness.AptaPercent.ToString("0.#")%, objetivo @(readiness.TargetPercent?.ToString() ?? "sin definir")).
                             @foreach (var w in readiness.Warnings)
                             {

@@ -93,7 +93,7 @@ public class BabyLeafOutlookService : ILotHistorySource
 
     /// <summary>
     /// Ciclos cerrados del cultivo con plantas. Lo cargado a mano en el lote manda; lo que falta se
-    /// calcula: aptas en el óptimo = cortadas como Baby Leaf + las que estuvieron "Baby Leaf apta" y
+    /// calcula: aptas en el óptimo = cortadas como Baby Leaf + las que estuvieron "Baby Leaf" y
     /// siguieron; pérdidas tempranas/tardías = descartes antes/después de que el GDD medido cruzó el
     /// cierre de la ventana Baby Leaf; clima = GDD diario promedio medido.
     /// </summary>

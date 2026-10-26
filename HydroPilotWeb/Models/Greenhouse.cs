@@ -31,4 +31,5 @@ public class Greenhouse
 
     public User? User { get; set; }
     public ICollection<IotNode> IotNodes { get; set; } = [];
+    public ICollection<Circuit> Circuits { get; set; } = [];
 }

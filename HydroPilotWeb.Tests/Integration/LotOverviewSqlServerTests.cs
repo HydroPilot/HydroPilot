@@ -14,7 +14,7 @@ namespace HydroPilotWeb.Tests.Integration;
 
 /// <summary>
 /// Vista de situación del lote (LotOverviewService) sobre SQL Server: composición de
-/// plantas, metas del ciclo, solución nutritiva, ciclos cerrados y edición de
+/// plantas, metas del ciclo, ciclos cerrados y edición de
 /// objetivos restringida a Administrador/Productor. Cada prueba crea su propio lote.
 /// </summary>
 [Collection("forecast-sql")]
@@ -33,7 +33,6 @@ public class LotOverviewSqlServerTests
         _fixture.Forecast,
         _fixture.Gdd,
         Parameters(),
-        Options.Create(new DashboardOptions()),
         NullLogger<LotOverviewService>.Instance);
 
     private SystemParametersService Parameters() => new(
@@ -45,13 +44,12 @@ public class LotOverviewSqlServerTests
         [new Claim(ClaimTypes.Name, $"test-{role}"), new Claim(ClaimTypes.Role, role)], "test"));
 
     /// <summary>Lote con 6 plantas: 2 aptas, 1 candidata, 1 en desarrollo, 1 cosechada apta y 1 descartada.</summary>
-    private async Task<Lot> CreateLotWithPlantsAsync(decimal? babyLeafGoal = 50m, decimal? maxLoss = 20m)
+    private async Task<Lot> CreateLotWithPlantsAsync(decimal? babyLeafGoal = 50m, decimal? expectedActive = 80m)
     {
         await using var context = _fixture.Factory.CreateDbContext();
         var lot = await ForecastTestData.CreateActiveLotAsync(context, DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-10), rows: 2, columns: 5);
         lot.BabyLeafGoalPercent = babyLeafGoal;
-        lot.MaxLossPercent = maxLoss;
-        lot.CurrentPh = 7.2m; // fuera de la banda del cultivo (5,5-6,5), sin lecturas de sensor
+        lot.ExpectedActivePercent = expectedActive;
 
         var stages = await context.CommercialStages.ToDictionaryAsync(s => s.Name, s => s.Id);
         void Add(int col, string stage, PlantOperationalState state) => context.Plants.Add(new Plant
@@ -84,7 +82,7 @@ public class LotOverviewSqlServerTests
     }
 
     [Fact]
-    public async Task Overview_Compone_Plantas_Metas_Y_Solucion_Del_Lote()
+    public async Task Overview_Compone_Plantas_Y_Metas_Del_Lote()
     {
         var lot = await CreateLotWithPlantsAsync();
 
@@ -104,16 +102,10 @@ public class LotOverviewSqlServerTests
         Assert.Equal(1, plants.Discarded);
         Assert.Equal(4, plants.EmptyPositions); // grilla 2x5 con 6 plantas
 
-        // Meta Baby Leaf 50%: 1 cosechada + 2 aptas = 3 de 6 → cumplida. Pérdidas 1 de 6 (16,7%) ≤ 20%.
-        Assert.Equal(BabyLeafGoalStatus.Cumplida, overview.Goals.BabyLeafStatus);
+        // Meta Baby Leaf 50%: 1 cosechada + 2 aptas = 3 de 6. Activas 5 de 6 (83,3%) ≥ 80% esperado.
         Assert.Equal(50m, overview.Goals.AchievedPercent);
-        Assert.Equal(LossGoalStatus.Dentro, overview.Goals.LossStatus);
-
-        // Sin lecturas de sensor: el pH es el valor manual del lote, contra la banda del cultivo.
-        var ph = Assert.Single(overview.Solution, s => s.SensorType == AnomalyContract.SensorTypePh);
-        Assert.True(ph.IsManualValue);
-        Assert.Equal(7.2m, ph.Value);
-        Assert.False(ph.InBand);
+        Assert.Equal(83.3m, overview.Goals.ActivePercent);
+        Assert.Equal(ActiveGoalStatus.Dentro, overview.Goals.ActiveStatus);
 
         // Sin lecturas de temperatura el lote está en desarrollo (GDD 0).
         Assert.NotNull(overview.Timeline);
@@ -123,42 +115,42 @@ public class LotOverviewSqlServerTests
     [Fact]
     public async Task Productor_Guarda_Objetivos_Redondeados()
     {
-        var lot = await CreateLotWithPlantsAsync(babyLeafGoal: null, maxLoss: null);
+        var lot = await CreateLotWithPlantsAsync(babyLeafGoal: null, expectedActive: null);
 
         var result = await Service().UpdateObjectivesAsync(
-            lot.Id, new LotObjectives(70.126m, 80m, 10m), UserWithRole("Productor"));
+            lot.Id, new LotObjectives(70.126m, 80m, 90m), UserWithRole("Productor"));
 
         Assert.True(result.Succeeded);
         await using var context = _fixture.Factory.CreateDbContext();
         var saved = await context.Lots.AsNoTracking().FirstAsync(l => l.Id == lot.Id);
         Assert.Equal(70.13m, saved.BabyLeafHarvestTargetPercent);
         Assert.Equal(80m, saved.BabyLeafGoalPercent);
-        Assert.Equal(10m, saved.MaxLossPercent);
+        Assert.Equal(90m, saved.ExpectedActivePercent);
     }
 
     [Fact]
     public async Task Operador_No_Puede_Editar_Objetivos()
     {
-        var lot = await CreateLotWithPlantsAsync(babyLeafGoal: 50m, maxLoss: 20m);
+        var lot = await CreateLotWithPlantsAsync(babyLeafGoal: 50m, expectedActive: 80m);
 
         var result = await Service().UpdateObjectivesAsync(
-            lot.Id, new LotObjectives(90m, 90m, 1m), UserWithRole("Operador"));
+            lot.Id, new LotObjectives(90m, 90m, 99m), UserWithRole("Operador"));
 
         Assert.False(result.Succeeded);
         Assert.Single(result.Errors);
         await using var context = _fixture.Factory.CreateDbContext();
         var saved = await context.Lots.AsNoTracking().FirstAsync(l => l.Id == lot.Id);
         Assert.Equal(50m, saved.BabyLeafGoalPercent);
-        Assert.Equal(20m, saved.MaxLossPercent);
+        Assert.Equal(80m, saved.ExpectedActivePercent);
     }
 
     [Fact]
     public async Task Objetivos_Fuera_De_Rango_No_Se_Guardan()
     {
-        var lot = await CreateLotWithPlantsAsync(babyLeafGoal: 50m, maxLoss: 20m);
+        var lot = await CreateLotWithPlantsAsync(babyLeafGoal: 50m, expectedActive: 80m);
 
         var result = await Service().UpdateObjectivesAsync(
-            lot.Id, new LotObjectives(70m, 150m, 20m), UserWithRole("Administrador"));
+            lot.Id, new LotObjectives(70m, 150m, 80m), UserWithRole("Administrador"));
 
         Assert.False(result.Succeeded);
         await using var context = _fixture.Factory.CreateDbContext();
@@ -233,10 +225,10 @@ public class LotOverviewSqlServerTests
         var parameters = await SetHarvestReferenceAsync(lot);
         try
         {
-            // Cosecha masiva: 2 aptas como Baby Leaf; después la candidata y la en desarrollo como convencional.
+            // Cosecha de las activas elegidas: 2 Baby Leaf + la candidata como Baby Leaf; la en desarrollo como adulta.
             var lifecycle = new PlantLifecycleService(_fixture.Factory, parameters);
-            Assert.Equal(2, await lifecycle.HarvestManyAsync(lot.Id, HarvestDestination.BabyLeaf));
-            Assert.Equal(2, await lifecycle.HarvestManyAsync(lot.Id, HarvestDestination.Convencional));
+            var result = await lifecycle.HarvestPlantsAsync(lot.Id, await ActivePlantIdsAsync(lot));
+            Assert.Equal(new PlantBatchResult(3, 1, 0, LotStatusNames.Cosechado), result);
 
             // Los parámetros cambian después de la cosecha: el ciclo cerrado sigue con los suyos.
             Assert.True((await parameters.UpdateYieldParametersAsync(
@@ -249,9 +241,9 @@ public class LotOverviewSqlServerTests
             Assert.Equal(LotStatusNames.Cosechado, overview.State.StatusName);
             Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), overview.ClosedCycle?.HarvestDate);
             var real = overview.HarvestYield.Real;
-            Assert.Equal(new DestinationYield(3, 0.09m, 270m), real.BabyLeaf);    // 1 previa + 2 aptas × 30 g × $3000/kg
-            Assert.Equal(new DestinationYield(2, 0.4m, 800m), real.Conventional);  // 2 × 200 g × $2000/kg
-            Assert.Equal(1070m, overview.HarvestYield.TotalRevenue);
+            Assert.Equal(new DestinationYield(4, 0.12m, 360m), real.BabyLeaf);    // 1 previa + 2 Baby Leaf + 1 candidata × 30 g × $3000/kg
+            Assert.Equal(new DestinationYield(1, 0.2m, 400m), real.Conventional);  // 1 × 200 g × $2000/kg
+            Assert.Equal(760m, overview.HarvestYield.TotalRevenue);
         }
         finally
         {
@@ -311,28 +303,77 @@ public class LotOverviewSqlServerTests
         Assert.Null(closed.HarvestBabyLeafPricePerKg);
     }
 
+    private async Task<List<int>> ActivePlantIdsAsync(Lot lot)
+    {
+        await using var context = _fixture.Factory.CreateDbContext();
+        return await context.Plants.Where(p => p.LotId == lot.Id && p.OperationalState == PlantOperationalState.Activa)
+            .Select(p => p.Id).ToListAsync();
+    }
+
     [Fact]
-    public async Task Cosecha_Masiva_Convencional_Deja_Afuera_Las_Plantas_En_Riesgo()
+    public async Task Cosecha_De_Seleccion_Usa_El_Estado_De_Cada_Planta()
     {
         var lot = await CreateLotWithPlantsAsync();
+        int riskId, foreignId;
         await using (var context = _fixture.Factory.CreateDbContext())
         {
             var risk = await context.CommercialStages.FirstAsync(s => s.Name == CommercialStageNames.RiesgoFueraDeVentana);
-            context.Plants.Add(new Plant { LotId = lot.Id, Row = 2, Column = 2, CommercialStageId = risk.Id });
+            var riskPlant = new Plant { LotId = lot.Id, Row = 2, Column = 2, CommercialStageId = risk.Id };
+            context.Plants.Add(riskPlant);
             await context.SaveChangesAsync();
+            riskId = riskPlant.Id;
+            foreignId = await context.Plants.Where(p => p.LotId != lot.Id).Select(p => p.Id).FirstAsync();
         }
 
-        var harvested = await new PlantLifecycleService(_fixture.Factory, Parameters()).HarvestManyAsync(lot.Id, HarvestDestination.Convencional);
+        // Activas: 2 Baby Leaf, 1 candidata, 1 en desarrollo y 1 en riesgo. Se eligen todas menos la candidata
+        // (más una de otro lote, que se ignora).
+        var ids = await ActivePlantIdsAsync(lot);
+        await using (var context = _fixture.Factory.CreateDbContext())
+        {
+            var candidate = await context.Plants.FirstAsync(p => p.LotId == lot.Id && p.CommercialStage!.Name == CommercialStageNames.CandidataBabyLeaf);
+            ids.Remove(candidate.Id);
+        }
+        ids.Add(foreignId);
 
-        // Activas: 2 aptas, 1 candidata, 1 en desarrollo y 1 en riesgo: se cosechan 4, como convencional.
-        Assert.Equal(4, harvested);
+        var result = await new PlantLifecycleService(_fixture.Factory, Parameters()).HarvestPlantsAsync(lot.Id, ids);
+
+        Assert.Equal(new PlantBatchResult(2, 2, 0, null), result);   // 2 Baby Leaf; en desarrollo y riesgo como adultas
         await using var check = _fixture.Factory.CreateDbContext();
         var plants = await check.Plants.Include(p => p.CommercialStage).Where(p => p.LotId == lot.Id).ToListAsync();
-        var stillActive = Assert.Single(plants, p => p.OperationalState == PlantOperationalState.Activa);
-        Assert.Equal(CommercialStageNames.RiesgoFueraDeVentana, stillActive.CommercialStage!.Name);
-        Assert.Equal(4, plants.Count(p => p.CommercialStage!.Name == CommercialStageNames.CosechaConvencional
-                                          && p.OperationalState == PlantOperationalState.Cosechada));
+        Assert.Equal(CommercialStageNames.CosechaConvencional, plants.Single(p => p.Id == riskId).CommercialStage!.Name);
+        Assert.Equal(CommercialStageNames.CandidataBabyLeaf, Assert.Single(plants, p => p.OperationalState == PlantOperationalState.Activa).CommercialStage!.Name);
         Assert.Equal(4, await check.PlantStageHistories.CountAsync(h => h.Plant!.LotId == lot.Id && h.Source == "harvest-bulk"));
+    }
+
+    [Fact]
+    public async Task Descarte_De_Seleccion_Con_El_Mismo_Motivo_Y_Cierra_El_Lote_Si_No_Quedan()
+    {
+        var lot = await CreateLotWithPlantsAsync();
+        var lifecycle = new PlantLifecycleService(_fixture.Factory, Parameters());
+
+        var result = await lifecycle.DiscardPlantsAsync(lot.Id, await ActivePlantIdsAsync(lot), "granizo");
+
+        // Quedaban 4 activas y ya había una cosechada: el lote se cierra como cosechado.
+        Assert.Equal(new PlantBatchResult(0, 0, 4, LotStatusNames.Cosechado), result);
+        await using var check = _fixture.Factory.CreateDbContext();
+        var discarded = await check.Plants.Where(p => p.LotId == lot.Id && p.OperationalState == PlantOperationalState.Descartada).ToListAsync();
+        Assert.Equal(5, discarded.Count);                                    // 4 de ahora + 1 que ya estaba
+        Assert.Equal(4, discarded.Count(p => p.DiscardReason == "granizo"));
+
+        // Volver a pedirlo no hace nada: ya no hay activas.
+        Assert.Equal(new PlantBatchResult(0, 0, 0, null), await lifecycle.DiscardPlantsAsync(lot.Id, discarded.Select(p => p.Id).ToList(), "otra"));
+    }
+
+    [Theory]
+    [InlineData(CommercialStageNames.BabyLeafApta, HarvestDestination.BabyLeaf)]
+    [InlineData(CommercialStageNames.CandidataBabyLeaf, HarvestDestination.BabyLeaf)]
+    [InlineData(CommercialStageNames.EnDesarrollo, HarvestDestination.Convencional)]
+    [InlineData(CommercialStageNames.CosechaConvencional, HarvestDestination.Convencional)]
+    [InlineData(CommercialStageNames.RiesgoFueraDeVentana, HarvestDestination.Convencional)]
+    [InlineData(null, HarvestDestination.Convencional)]
+    public void Destino_De_Cosecha_Por_Estado(string? stage, HarvestDestination expected)
+    {
+        Assert.Equal(expected, PlantHarvestRules.DestinationFor(stage));
     }
 
     [Fact]
@@ -344,7 +385,7 @@ public class LotOverviewSqlServerTests
             new YieldReferenceInput(40m, 250m, 2500m, 1500m), UserWithRole("Productor"));
         Assert.True(saved.Succeeded);
 
-        // Precio propio del lote: le gana al del cultivo y al global (precedencia de Optimización).
+        // Precio propio del lote: le gana al del cultivo y al global.
         await using (var context = _fixture.Factory.CreateDbContext())
         {
             foreach (var (destination, price) in new[] { ("baby_leaf", 3000m), ("conventional", 2000m) })
@@ -373,8 +414,11 @@ public class LotOverviewSqlServerTests
             Assert.Equal(new YieldReference(40m, 250m), yield.Reference);
             Assert.Equal(new DestinationYield(2, 0.08m, 240m), yield.Current.BabyLeaf);       // 2 × 40 g × $3000/kg
             Assert.Equal(new DestinationYield(0, 0m, 0m), yield.Current.Conventional);
-            Assert.Equal(new DestinationYield(3, 0.12m, 360m), yield.Potential.BabyLeaf);     // + 1 candidata
-            Assert.Equal(new DestinationYield(1, 0.25m, 500m), yield.Potential.Conventional); // 1 en desarrollo × 250 g × $2000/kg
+            // Esperado: lo arma la regla con la situación del lote (y el histórico del invernadero, si hay).
+            var expected = LotYieldRules.Estimate(
+                new LotYieldRules.Input(Apta: 2, Candidate: 1, Developing: 1, Conventional: 0, Risk: 0, HarvestedBabyLeaf: 1),
+                yield.Reference, yield.Prices, yield.Basis.History, yield.Basis.LotWeight);
+            Assert.Equal(expected.Expected, yield.Expected);
         }
         finally
         {
@@ -429,7 +473,7 @@ public class LotOverviewSqlServerTests
         Assert.True((await parameters.UpdateYieldParametersAsync(new YieldReferenceInput(30m, 200m, 2900m, 1900m), admin)).Succeeded);
         Assert.True((await parameters.UpdateYieldParametersAsync(new YieldReferenceInput(30m, 200m, 3100m, 1900m), admin)).Succeeded);
 
-        // El precio global vale para el lote (y para Optimización: el demo del cultivo quedó cerrado).
+        // El precio global vale para el lote (el demo del cultivo quedó cerrado).
         var overview = await Service().GetOverviewAsync(lot.Id);
         Assert.Equal(3100m, overview!.Yield.Prices.BabyLeafPerKg);
         Assert.Equal(1900m, overview.Yield.Prices.ConventionalPerKg);
@@ -454,11 +498,11 @@ public class LotOverviewSqlServerTests
 
         Assert.True((await parameters.UpdateYieldParametersAsync(new YieldReferenceInput(30m, 200m, 3000m, null), admin)).Succeeded);
 
-        // Sin precio cargado queda sin definir: el demo no cuenta para Lotes, pero sigue vigente para Optimización.
+        // Sin precio cargado queda sin definir: el demo no cuenta para Lotes y se deja como estaba.
         Assert.Null((await parameters.GetYieldParametersAsync()).ConventionalPricePerKg);
         var overview = await Service().GetOverviewAsync(lot.Id);
         Assert.Null(overview!.Yield.Prices.ConventionalPerKg);
-        Assert.Null(overview.Yield.Potential.Conventional.Revenue);
+        Assert.Null(overview.Yield.Expected.Conventional.Revenue);
 
         await using var context = _fixture.Factory.CreateDbContext();
         var demo = await context.CostPriceCatalogs.AsNoTracking().FirstAsync(c => c.Id == demoId);

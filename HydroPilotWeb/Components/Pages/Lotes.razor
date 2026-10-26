@@ -4,7 +4,9 @@
 @using System.Security.Claims
 @using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Services.Dashboard
 @inject LotOverviewService LotOverview
+@inject RecentVisitService RecentVisits
 @inject LotCreationService LotCreation
 @inject LotAggregateService LotAggregate
 @inject PlantLifecycleService PlantLifecycle
@@ -59,17 +61,13 @@ else
             </select>
             @if (canCreateLot)
             {
-                <button type="button" class="btn btn-success lot-toolbar__new" @onclick="OpenCreateLotAsync"
+                <button type="button" class="btn lot-toolbar__new" @onclick="OpenCreateLotAsync"
                         disabled="@creatingLot">+ Nuevo lote</button>
             }
 
-            @* Sin chip de estado ni área/siembra: el estado ya va en el texto del selector. *@
+            @* Sin chip de estado, área/siembra ni pH/CE: el estado va en el selector y la solución en Optimización. *@
             @if (overview is { IsClosed: false } current)
             {
-                @foreach (var reading in current.Solution)
-                {
-                    <span class="lot-chip lot-chip--@SolutionTone(reading)" title="@SolutionTitle(reading)">@SolutionText(reading)</span>
-                }
                 @if (current.DataAlerts.Count > 0)
                 {
                     @* Mismo aviso que la sección "Detalles y calidad de los datos" (en rojo): al tocarlo la abre. *@
@@ -86,6 +84,12 @@ else
                 <span class="lot-loading" role="status">
                     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Cargando…
                 </span>
+            }
+
+            @* Comentarios del lote: a la derecha de todo (margin-left: auto). *@
+            @if (selectedLotId is { } commentsLotId)
+            {
+                <LotComments LotId="commentsLotId" LotName="@(lots.FirstOrDefault(l => l.Id == commentsLotId)?.Name ?? "Lote")" User="user" />
             }
 
             @* "Ver al" (fecha simulada): oculto por ahora, quizás vuelva. Mezclaba el GDD de esa fecha con el
@@ -126,11 +130,44 @@ else
                 @* Columna izquierda: mapa y, debajo, los detalles técnicos (mismo ancho). *@
                 <div class="lot-layout__main">
                     <section class="panel">
+                        @* Título con el botón Seleccionar / Cancelar a la derecha; los filtros siempre en la línea de abajo. *@
                         <div class="lot-panel-head">
                             <h3 class="lot-panel-title">Mapa del lote</h3>
+                            @if (!overview.IsClosed)
+                            {
+                                @if (!selecting)
+                                {
+                                    <button type="button" class="btn btn-sm lot-select-bar__btn" @onclick="StartSelecting" disabled="@operating">Seleccionar</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="btn btn-sm lot-select-bar__btn" @onclick="StopSelecting">Cancelar</button>
+                                }
+                            }
+                        </div>
+                        <div class="lot-map-filters">
                             @* Ojo: los parámetros string van con @ (sin @ Razor pasa el texto literal "highlightKey"). *@
                             <LotMapFilters Plants="overview.Plants" Selected="@highlightKey" OnSelected="OnFilterChanged" />
                         </div>
+                        @if (!overview.IsClosed && selecting)
+                        {
+                            @* Elegir varias plantas para cosecharlas o descartarlas juntas. "Seleccionar todas" respeta el
+                               filtro del mapa (con un filtro activo marca solo esas). *@
+                            <div class="lot-select-bar">
+                                <span class="lot-select-bar__count">@LotFormat.Count(picked.Count, "seleccionada", "seleccionadas")</span>
+                                <button type="button" class="btn btn-sm lot-select-bar__btn" @onclick="SelectAll" disabled="@(Selectable().Count == 0)">@SelectAllLabel</button>
+                                @if (picked.Count > 0)
+                                {
+                                    <button type="button" class="btn btn-sm lot-select-bar__btn" @onclick="() => picked.Clear()">Limpiar</button>
+                                }
+                                <span class="lot-select-bar__actions">
+                                    <button type="button" class="btn btn-success btn-sm" disabled="@(picked.Count == 0 || operating)"
+                                            @onclick="() => AskBatch(BatchAction.Harvest)">Cosechar</button>
+                                    <button type="button" class="btn btn-outline-danger btn-sm" disabled="@(picked.Count == 0 || operating)"
+                                            @onclick="() => AskBatch(BatchAction.Discard)">Descartar</button>
+                                </span>
+                            </div>
+                        }
                         @* El detalle de la planta se abre como popover anclado a la celda (no reserva espacio fijo). *@
                         <div class="lot-map-stage @(detail is not null ? "lot-map-stage--open" : null)" style="@MapStageStyle">
                             <LotMap Rows="overview.State.GridRows ?? 0"
@@ -138,6 +175,8 @@ else
                                     Cells="overview.State.Cells"
                                     SelectedPosition="selectedPosition"
                                     HighlightKey="@highlightKey"
+                                    SelectionMode="selecting"
+                                    PickedPlantIds="picked"
                                     OnCellSelected="SelectCellAsync" />
                             @if (detail is not null && Popover is { } popover)
                             {
@@ -155,27 +194,11 @@ else
                             <LotStatusBar Plants="overview.Plants" />
                         </div>
                         <div class="lot-map-foot">
-                            <p class="lot-muted mb-0">Tocá una planta del mapa para ver su detalle@(overview.IsClosed ? "." : ", cosecharla o descartarla.")</p>
-                            @if (!overview.IsClosed && (BulkCount(HarvestDestination.BabyLeaf) > 0 || BulkCount(HarvestDestination.Convencional) > 0))
-                            {
-                                @* Cosecha masiva: piden confirmación (modal) antes de cambiar el estado de las plantas. *@
-                                <div class="lot-map-foot__actions">
-                                    @if (BulkCount(HarvestDestination.BabyLeaf) is var bl and > 0)
-                                    {
-                                        <button type="button" class="btn btn-success btn-sm" disabled="@operating"
-                                                @onclick="() => AskBulkHarvest(HarvestDestination.BabyLeaf)">
-                                            Cosechar Baby Leafs (@bl)
-                                        </button>
-                                    }
-                                    @if (BulkCount(HarvestDestination.Convencional) is var conv and > 0)
-                                    {
-                                        <button type="button" class="btn btn-sm lot-btn-conv" disabled="@operating"
-                                                @onclick="() => AskBulkHarvest(HarvestDestination.Convencional)">
-                                            Cosechar Lechugas convencionales (@conv)
-                                        </button>
-                                    }
-                                </div>
-                            }
+                            <p class="lot-muted mb-0">
+                                @(overview.IsClosed ? "Tocá una planta del mapa para ver su detalle."
+                                    : selecting ? "Tocá las plantas activas para marcarlas o desmarcarlas."
+                                    : "Tocá una planta para ver su detalle, o usá Seleccionar para cosechar o descartar varias.")
+                            </p>
                         </div>
                     </section>
 
@@ -185,9 +208,9 @@ else
                 <div class="lot-layout__side">
                     <LotWindowCard Overview="overview" />
                     <LotBabyLeafCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
-                    <LotLossCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
+                    <LotActiveCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
 
-                    @* Umbral de cosecha (% de aptas para cortar el lote): oculto por ahora, en revisión si aporta valor.
+                    @* Umbral de cosecha (% de Baby Leafs para cortar el lote): oculto por ahora, en revisión si aporta valor.
                     <LotThresholdCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
                     *@
 
@@ -205,7 +228,7 @@ else
     </div>
 }
 
-@* Modales: alta de lote (con metas opcionales), metas del ciclo (lápiz de las cards) y cosecha masiva. *@
+@* Modales: alta de lote (con metas opcionales), metas del lote (lápiz de las cards) y cosecha masiva. *@
 @if (creatingLot && newLotOptions is not null)
 {
     <LotModal Title="Nuevo lote" Busy="savingLot" OnClose="CloseCreateLot">
@@ -213,38 +236,45 @@ else
                        OnSave="CreateLotAsync" OnCancel="CloseCreateLot" />
     </LotModal>
 }
-@if (bulkHarvest is { } bulk && overview is not null)
+@if (batchAction is { } action && overview is not null)
 {
-    <LotModal Title="@(bulk == HarvestDestination.BabyLeaf ? "Cosechar Baby Leafs" : "Cosechar Lechugas convencionales")"
-              Busy="operating" OnClose="CloseBulkHarvest">
-        <p class="mt-0">
-            Se van a cosechar <strong>@LotFormat.Plants(BulkCount(bulk))</strong>
-            @(bulk == HarvestDestination.BabyLeaf
-                ? "aptas para Baby Leaf."
-                : "activas que no están en riesgo: quedan registradas como cosecha convencional.")
-            La fecha de cosecha es hoy (@LotFormat.Day(DateOnly.FromDateTime(DateTime.UtcNow))) y no se puede deshacer.
-        </p>
-        @if (BulkCount(bulk) >= overview.Plants.Active)
+    var harvest = action == BatchAction.Harvest;
+    var count = LotFormat.Plants(picked.Count);
+    <LotModal Title="@(harvest ? "Cosechar plantas" : "Descartar plantas")" Busy="operating" OnClose="CloseBatch">
+        @if (harvest)
         {
-            <p class="lot-muted">No quedan otras plantas activas: el lote se cierra como cosechado.</p>
+            <p class="mt-0">
+                Se van a cosechar <strong>@count</strong>: @SplitText(HarvestSplit()).
+                La fecha de cosecha es hoy (@LotFormat.Day(DateOnly.FromDateTime(DateTime.UtcNow))) y no se puede deshacer.
+            </p>
         }
-        @if (bulkError is not null)
+        else
         {
-            <div class="alert alert-danger py-2 small mb-0">@bulkError</div>
+            <p class="mt-0">Se van a descartar <strong>@count</strong>. No se puede deshacer.</p>
+            <label class="form-label small mb-1" for="batch-reason">Motivo (opcional, vale para todas)</label>
+            <input id="batch-reason" class="form-control form-control-sm" maxlength="300" placeholder="Ej.: granizo, tipburn"
+                   @bind="batchReason" />
+        }
+        @if (picked.Count >= overview.Plants.Active)
+        {
+            <p class="lot-muted mt-2 mb-0">No quedan otras plantas activas: el lote se cierra.</p>
+        }
+        @if (batchError is not null)
+        {
+            <div class="alert alert-danger py-2 small mt-2 mb-0">@batchError</div>
         }
         <div class="lot-editor__actions">
-            <button class="btn btn-outline-secondary btn-sm" @onclick="CloseBulkHarvest" disabled="@operating">Cancelar</button>
-            <button class="btn btn-sm @(bulk == HarvestDestination.BabyLeaf ? "btn-success" : "lot-btn-conv")"
-                    @onclick="ConfirmBulkHarvestAsync" disabled="@operating">
-                @(operating ? "Cosechando…" : $"Cosechar {LotFormat.Plants(BulkCount(bulk))}")
+            <button class="btn btn-outline-secondary btn-sm" @onclick="CloseBatch" disabled="@operating">Cancelar</button>
+            <button class="btn btn-sm @(harvest ? "btn-success" : "btn-danger")" @onclick="ConfirmBatchAsync" disabled="@operating">
+                @(operating ? (harvest ? "Cosechando…" : "Descartando…") : $"{(harvest ? "Cosechar" : "Descartar")} {count}")
             </button>
         </div>
     </LotModal>
 }
 @if (editingObjectives && overview is not null)
 {
-    <LotModal Title="Metas del ciclo" Busy="savingObjectives" OnClose="CloseEditor">
-        <LotObjectivesEditor Current="overview.Objectives" Saving="savingObjectives" Errors="objectiveErrors"
+    <LotModal Title="Metas del lote" Busy="savingObjectives" OnClose="CloseEditor">
+        <LotObjectivesEditor Current="overview.Objectives" TotalPlants="overview.Plants.TotalPlants" Saving="savingObjectives" Errors="objectiveErrors"
                              OnSave="SaveObjectivesAsync" OnCancel="CloseEditor" />
     </LotModal>
 }
@@ -266,10 +296,16 @@ else
     private string? error;
     private bool loading;
     private int loadVersion;
+    private int? visitedLotId;
     private bool operating;
     private string? notice;
-    private HarvestDestination? bulkHarvest;
-    private string? bulkError;
+    // Selección de plantas en el mapa para cosechar o descartar varias.
+    private enum BatchAction { Harvest, Discard }
+    private bool selecting;
+    private readonly HashSet<int> picked = [];
+    private BatchAction? batchAction;
+    private string? batchReason;
+    private string? batchError;
 
     private ClaimsPrincipal user = new();
     private bool canEdit;
@@ -305,6 +341,7 @@ else
 
     private async Task OnLotChangedAsync()
     {
+        StopSelecting();
         highlightKey = null;
         editingObjectives = false;
         notice = null;
@@ -330,6 +367,12 @@ else
             selectedPosition = null;
             if (overview is null)
                 error = "El lote seleccionado ya no existe.";
+            else if (visitedLotId != lotId)
+            {
+                // "Últimos accedidos" del dashboard: una vez por lote abierto (no en cada recarga).
+                visitedLotId = lotId;
+                await RecentVisits.RecordAsync(user, HydroPilotWeb.Models.RecentVisitKinds.Lotes, lotId);
+            }
         }
         catch (Exception ex)
         {
@@ -351,6 +394,13 @@ else
 
     private async Task SelectCellAsync(PlantCellDto cell)
     {
+        if (selecting)
+        {
+            if (IsSelectable(cell) && !picked.Remove(cell.PlantId!.Value))
+                picked.Add(cell.PlantId.Value);
+            return;
+        }
+
         // Tocar la misma planta cierra el detalle; otra planta lo mueve a esa celda.
         if (detail is not null && selectedPosition == (cell.Row, cell.Column))
         {
@@ -449,7 +499,7 @@ else
         return new PlantDetailDto(
             0, cell.Row, cell.Column, null, null, default,
             null, null, null, state.GddAccumulated,
-            state.CurrentPh, state.CurrentEc, null, null, null, null, null,
+            state.CurrentPh, state.CurrentEc, null, null, null, null,
             false, null, null, [], []);
     }
 
@@ -567,50 +617,96 @@ else
         await OperateAsync(() => PlantLifecycle.HarvestPlantAsync(plant.PlantId), "No se pudo cosechar");
     }
 
-    /// <summary>
-    /// Plantas de la cosecha masiva. Baby Leaf: las aptas. Convencional: desde la ventana convencional,
-    /// todas las activas que no están en riesgo (sin análisis de imagen, la aptitud la da el GDD del lote).
-    /// </summary>
-    private int BulkCount(HarvestDestination destination)
-    {
-        if (overview is not { IsClosed: false } current)
-            return 0;
-        if (destination == HarvestDestination.BabyLeaf)
-            return current.Plants.Apta;
-        return current.Timeline?.Phase is CyclePhase.VentanaConvencional or CyclePhase.Sobremadurez
-            ? Math.Max(0, current.Plants.Active - current.Plants.Risk)
-            : 0;
-    }
+    // --- Selección de plantas: cosechar o descartar varias ---
 
-    private void AskBulkHarvest(HarvestDestination destination)
+    private static bool IsSelectable(PlantCellDto cell) =>
+        cell.PlantId is not null && cell.OperationalState == PlantOperationalState.Activa;
+
+    /// <summary>Plantas activas que marca "Seleccionar todas": con un filtro del mapa activo, solo las de ese filtro.</summary>
+    private List<PlantCellDto> Selectable() =>
+        overview?.State.Cells
+            .Where(c => IsSelectable(c) && (highlightKey is null || LotCellKeys.For(c) == highlightKey))
+            .ToList() ?? [];
+
+    private string SelectAllLabel => highlightKey is null
+        ? $"Seleccionar todas ({Selectable().Count})"
+        : $"Seleccionar las filtradas ({Selectable().Count})";
+
+    private void StartSelecting()
     {
         ClosePopover();
-        bulkError = null;
-        bulkHarvest = destination;
+        notice = null;
+        picked.Clear();
+        selecting = true;
     }
 
-    private void CloseBulkHarvest()
+    private void StopSelecting()
     {
-        bulkError = null;
-        bulkHarvest = null;
+        selecting = false;
+        picked.Clear();
+        batchAction = null;
     }
 
-    private async Task ConfirmBulkHarvestAsync()
+    private void SelectAll()
     {
-        if (bulkHarvest is not { } destination || selectedLotId is not { } lotId)
+        foreach (var cell in Selectable())
+            picked.Add(cell.PlantId!.Value);
+    }
+
+    private void AskBatch(BatchAction action)
+    {
+        batchError = null;
+        batchReason = null;
+        batchAction = action;
+    }
+
+    private void CloseBatch()
+    {
+        batchError = null;
+        batchAction = null;
+    }
+
+    /// <summary>Cuántas de las marcadas van a Baby Leaf y cuántas a adultas, por su estado (como lo decide el servicio).</summary>
+    private (int BabyLeaf, int Adult) HarvestSplit()
+    {
+        var states = overview?.State.Cells
+            .Where(c => c.PlantId is { } id && picked.Contains(id))
+            .Select(c => PlantHarvestRules.DestinationFor(c.CommercialStageName))
+            .ToList() ?? [];
+        var babyLeaf = states.Count(d => d == HarvestDestination.BabyLeaf);
+        return (babyLeaf, states.Count - babyLeaf);
+    }
+
+    private static string SplitText((int BabyLeaf, int Adult) split) => split switch
+    {
+        (1, 0) => "como Baby Leaf",
+        (0, 1) => "como adulta",
+        (_, 0) => "todas como Baby Leaf",
+        (0, _) => "todas como adultas",
+        var (bl, adult) => $"{bl} como Baby Leaf y {adult} como {(adult == 1 ? "adulta" : "adultas")}"
+    };
+
+    private async Task ConfirmBatchAsync()
+    {
+        if (batchAction is not { } action || selectedLotId is not { } lotId || picked.Count == 0)
             return;
 
         operating = true;
         try
         {
-            var harvested = await PlantLifecycle.HarvestManyAsync(lotId, destination);
-            bulkHarvest = null;
-            notice = $"Se cosecharon {LotFormat.Plants(harvested)} como {(destination == HarvestDestination.BabyLeaf ? "Baby Leaf" : "convencional")}.";
+            var ids = picked.ToList();
+            var result = action == BatchAction.Harvest
+                ? await PlantLifecycle.HarvestPlantsAsync(lotId, ids)
+                : await PlantLifecycle.DiscardPlantsAsync(lotId, ids, string.IsNullOrWhiteSpace(batchReason) ? null : batchReason.Trim());
+            StopSelecting();
+            notice = action == BatchAction.Harvest
+                ? $"Se cosecharon {LotFormat.Plants(result.Harvested)}: {SplitText((result.BabyLeaf, result.Adult))}."
+                : $"Se descartaron {LotFormat.Plants(result.Discarded)}.";
             await ReloadAfterPlantChangeAsync();
         }
         catch (Exception ex)
         {
-            bulkError = $"No se pudo cosechar: {ex.Message}";
+            batchError = $"No se pudo {(action == BatchAction.Harvest ? "cosechar" : "descartar")}: {ex.Message}";
         }
         finally
         {
@@ -676,39 +772,4 @@ else
         "DESCARTADO" => "Descartado",
         _ => status ?? "Sin estado"
     };
-
-    private static string SolutionTone(SolutionReadingDto reading) => reading.InBand switch
-    {
-        true => "success",
-        false => "danger",
-        _ => "info"
-    };
-
-    private static string SolutionText(SolutionReadingDto reading)
-    {
-        if (reading.Value is not { } value)
-            return $"{reading.SensorType} sin datos";
-
-        var number = value.ToString("0.0#", LotFormat.Culture);
-        var unit = reading.SensorType == "CE" ? " mS/cm" : string.Empty;
-        var band = reading.InBand switch
-        {
-            true => " · en rango",
-            false => " · fuera de rango",
-            _ => string.Empty
-        };
-        var source = reading.IsManualValue ? " (manual)" : reading.IsFresh ? string.Empty : " (desactualizado)";
-        return $"{(reading.InBand == false ? "⚠ " : null)}{reading.SensorType} {number}{unit}{band}{source}";
-    }
-
-    private static string SolutionTitle(SolutionReadingDto reading)
-    {
-        var band = reading.BandMin is { } min && reading.BandMax is { } max
-            ? $"Rango {min.ToString("0.0#", LotFormat.Culture)}–{max.ToString("0.0#", LotFormat.Culture)}"
-            : "Sin rango configurado";
-        var origin = reading.ObservedAtUtc is { } observed
-            ? $"última lectura {observed.ToLocalTime():dd/MM HH:mm}"
-            : reading.IsManualValue ? "valor cargado a mano en el lote (sin lecturas del sensor)" : "sin lecturas";
-        return $"{band} · {origin}";
-    }
 }

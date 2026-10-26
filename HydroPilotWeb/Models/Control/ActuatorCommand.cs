@@ -11,11 +11,15 @@ public class ActuatorCommand
     /// <summary>commandId del contrato con la Pi (clave de idempotencia).</summary>
     public Guid Id { get; set; }
 
+    /// <summary>La Pi que lo ejecuta (la que lo pide).</summary>
     public int NodeId { get; set; }
+
+    /// <summary>Circuito (tanque) de la bomba.</summary>
+    public int CircuitId { get; set; }
 
     public int ActuatorId { get; set; }
 
-    /// <summary>Lote asignado al nodo al crear el comando (null si el nodo no tenía lote).</summary>
+    /// <summary>Lote en curso del circuito al crear el comando (null si el circuito no tenía lote).</summary>
     public int? LotId { get; set; }
 
     /// <summary>MANUAL | AUTO | EDGE.</summary>
@@ -108,6 +112,7 @@ public class ActuatorCommand
     public DateTime? EffectEvaluatedAtUtc { get; set; }
 
     public IotNode? Node { get; set; }
+    public Circuit? Circuit { get; set; }
     public Actuator? Actuator { get; set; }
     public Lot? Lot { get; set; }
 }

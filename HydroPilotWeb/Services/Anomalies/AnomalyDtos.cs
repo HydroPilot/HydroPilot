@@ -37,58 +37,30 @@ public sealed record AnomalyEventDto(
     string Origin,
     DateTime? AcknowledgedAtUtc,
     DateTime? ResolvedAtUtc,
-    string? ResolutionReason);
+    string? ResolutionReason,
+    decimal? PeakValue = null);
 
-/// <summary>
-/// Resumen del módulo (consumible por dashboard/reports): contadores en vez de la lista completa.
-/// HasOperationalData false = sin lecturas usables en la ventana: la UI NO puede afirmar normalidad.
-/// </summary>
-public sealed record AnomalySummaryDto(
-    int OpenTotal,
-    int OpenCritical,
-    int OpenAdvertencias,
-    int ResolvedLast7Days,
-    int SeguimientoActive,
-    int TotalEvents,
-    bool HasOperationalData);
-
-/// <summary>Regla del catálogo con su banda resuelta (para la UI y para documentar pendientes).</summary>
-public sealed record AnomalyRuleDto(
-    int Id,
-    string Code,
-    string Name,
-    string SensorTypeName,
-    int ConsecutiveToOpen,
-    int CooldownMinutes,
-    bool IsActive,
-    string Source,
-    string? Notes,
-    decimal? PhysicalMin,
-    decimal? PhysicalMax,
-    decimal? OperationalMin,
-    decimal? OperationalMax,
-    decimal? TargetValue,
-    bool Pending); // true = sin valor aprobado / inactiva → nunca dispara (pendiente visible)
-
-/// <summary>Filtros de la timeline de la UI (ANO-05).</summary>
+/// <summary>Filtros de los episodios (Optimización usa el nodo).</summary>
 public sealed record AnomalyFilter(
     string? Severity,
     string? Type,
     int? LotId,
     string? Status,
     DateOnly? From,
-    DateOnly? To);
+    DateOnly? To,
+    int? NodeId = null);
 
-/// <summary>Riesgo por lote (ANO-08): conteo de plantas en riesgo, SIN umbral inventado de evento de lote.</summary>
-public sealed record LotRiskSummaryDto(
-    int LotId,
-    string? LotName,
-    int ActivePlants,
-    int PlantsAtRisk,
-    int OpenCriticalEpisodes,
-    string? RiskReason);
+/// <summary>
+/// Regla de anomalía para Parámetros (solo lectura). Bands: una sola (pH, o temp/humedad con umbral
+/// aprobado) o una por etapa (CE); vacía = sin umbral aprobado, no se evalúa.
+/// </summary>
+public sealed record AnomalyRuleOverview(
+    string Name,
+    string SensorTypeName,
+    IReadOnlyList<AnomalyRuleBand> Bands,
+    int ConsecutiveToOpen,
+    int CooldownMinutes,
+    bool Active);
 
-/// <summary>Resumen del carril futuro de visión (ANO-06): no hay detector hoy; los eventos quedan pendientes.</summary>
-public sealed record VisionAnomalyAdapterNote(
-    string State,        // "pendiente"
-    string Reason);      // por qué no hay detección por imágenes todavía
+/// <summary>Banda de una regla; Stage = etapa fenológica (solo CE), null = vale para todo el ciclo.</summary>
+public sealed record AnomalyRuleBand(string? Stage, decimal? Min, decimal? Max, decimal? Target);

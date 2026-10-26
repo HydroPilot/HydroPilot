@@ -4,22 +4,21 @@ namespace HydroPilotWeb.Services.Lotes;
 
 /// <summary>
 /// Objetivos editables del lote. El umbral de cosecha decide el "listo" de la regla híbrida
-/// en Forecasting, Simulación y Optimización; la vista Lotes no lo usa (sus cortes van por
-/// GDD). Las dos metas del ciclo MIDEN la producción planificada.
+/// en Forecasting y Simulación; la vista Lotes no lo usa (sus cortes van por
+/// GDD). Las dos metas del ciclo MIDEN la producción planificada: el % de plantas que se
+/// cosechan como Baby Leaf y el % de plantas que se espera que lleguen al final sin descartarse.
 /// Null = sin definir (nunca se reemplaza por una constante).
 /// </summary>
 public sealed record LotObjectives(
     decimal? HarvestThresholdPercent,
     decimal? BabyLeafGoalPercent,
-    decimal? MaxLossPercent);
+    decimal? ExpectedActivePercent);
 
-public enum BabyLeafGoalStatus { SinMeta, SinPlantas, Cumplida, Alcanzable, PorDebajo }
-
-public enum LossGoalStatus { SinMeta, SinPlantas, Dentro, EnRiesgo, Excedida }
+public enum ActiveGoalStatus { SinMeta, SinPlantas, Dentro, PorDebajo }
 
 /// <summary>
-/// Metas de producción del ciclo (lote): avance de la meta Baby Leaf y control de
-/// pérdidas. Se miden sobre las plantas del lote (activas + cosechadas +
+/// Metas de producción del ciclo (lote): avance de la meta Baby Leaf y plantas activas contra
+/// las esperadas al final. Se miden sobre las plantas del lote (activas + cosechadas +
 /// descartadas); las posiciones vacías de la grilla no cuentan. Lógica pura.
 /// </summary>
 public static class LotGoalsRules
@@ -30,21 +29,17 @@ public static class LotGoalsRules
         int AptaActive,
         int CandidateActive,
         int Discarded,
-        int RiskActive,
         decimal? BabyLeafGoalPercent,
-        decimal? MaxLossPercent);
+        decimal? ExpectedActivePercent);
 
     public sealed record Result(
         int AchievedCount,           // cosechadas como Baby Leaf + aptas
         decimal AchievedPercent,
         int PotentialCount,          // + candidatas (si llegan a aptas)
         decimal PotentialPercent,
-        int PlantsMissingForGoal,    // plantas que faltan para la meta con lo logrado
-        int? GoalPlants,             // plantas que representa la meta: ceil(meta × total); null sin meta
-        BabyLeafGoalStatus BabyLeafStatus,
-        decimal LossPercent,         // descartadas / total
-        decimal LossWithRiskPercent, // (descartadas + en riesgo) / total
-        LossGoalStatus LossStatus);
+        int ActiveCount,             // plantas no descartadas (activas + cosechadas)
+        decimal ActivePercent,       // ActiveCount / total
+        ActiveGoalStatus ActiveStatus);
 
     public static Result Evaluate(Input input)
     {
@@ -54,35 +49,25 @@ public static class LotGoalsRules
 
         var achievedPct = Percent(achieved, total);
         var potentialPct = Percent(potential, total);
-        var lossPct = Percent(input.Discarded, total);
-        var lossWithRiskPct = Percent(input.Discarded + input.RiskActive, total);
+        // Una planta cosechada no se perdió: cuenta como activa hasta el final del ciclo.
+        var active = Math.Max(0, total - input.Discarded);
+        int? expectedPlants = input.ExpectedActivePercent is { } expected ? PlantsFor(expected, total) : null;
 
-        int? goalPlants = input.BabyLeafGoalPercent is { } goal
-            ? (int)Math.Ceiling(goal * total / 100m)
-            : null;
-        var missing = goalPlants is { } needed ? Math.Max(0, needed - achieved) : 0;
-
-        var babyLeafStatus = input.BabyLeafGoalPercent switch
+        // Se compara en plantas (ceil(meta × total)), no en % redondeado: 55 de 60 = 91,7 % no llega a una meta de 91,7 % (56).
+        var activeStatus = expectedPlants switch
         {
-            null => BabyLeafGoalStatus.SinMeta,
-            _ when total == 0 => BabyLeafGoalStatus.SinPlantas,
-            { } g when achievedPct >= g => BabyLeafGoalStatus.Cumplida,
-            { } g when potentialPct >= g => BabyLeafGoalStatus.Alcanzable,
-            _ => BabyLeafGoalStatus.PorDebajo
+            null => ActiveGoalStatus.SinMeta,
+            _ when total == 0 => ActiveGoalStatus.SinPlantas,
+            { } needed when active < needed => ActiveGoalStatus.PorDebajo,
+            _ => ActiveGoalStatus.Dentro
         };
 
-        var lossStatus = input.MaxLossPercent switch
-        {
-            null => LossGoalStatus.SinMeta,
-            _ when total == 0 => LossGoalStatus.SinPlantas,
-            { } max when lossPct > max => LossGoalStatus.Excedida,
-            { } max when lossWithRiskPct > max => LossGoalStatus.EnRiesgo,
-            _ => LossGoalStatus.Dentro
-        };
-
-        return new Result(achieved, achievedPct, potential, potentialPct, missing, goalPlants,
-            babyLeafStatus, lossPct, lossWithRiskPct, lossStatus);
+        return new Result(achieved, achievedPct, potential, potentialPct, active, Percent(active, total), activeStatus);
     }
+
+    /// <summary>Plantas que representa un % del lote: ceil(% × total), lo mínimo para llegar al %.</summary>
+    public static int PlantsFor(decimal percent, int total) =>
+        (int)Math.Ceiling(percent * Math.Max(0, total) / 100m);
 
     private static decimal Percent(int count, int total) =>
         total > 0 ? Math.Round(count * 100m / total, 1) : 0m;
@@ -122,8 +107,8 @@ public static class LotObjectivesRules
         if (input.BabyLeafGoalPercent is { } goal && (goal < 0m || goal > 100m))
             errors.Add("La meta Baby Leaf tiene que estar entre 0 % y 100 %.");
 
-        if (input.MaxLossPercent is { } loss && (loss < 0m || loss > 100m))
-            errors.Add("Las pérdidas máximas tienen que estar entre 0 % y 100 %.");
+        if (input.ExpectedActivePercent is { } active && (active < 0m || active > 100m))
+            errors.Add("Las plantas activas esperadas tienen que estar entre 0 % y 100 %.");
 
         return errors;
     }
@@ -132,7 +117,7 @@ public static class LotObjectivesRules
     public static LotObjectives Normalize(LotObjectives input) => new(
         Round(input.HarvestThresholdPercent),
         Round(input.BabyLeafGoalPercent),
-        Round(input.MaxLossPercent));
+        Round(input.ExpectedActivePercent));
 
     private static decimal? Round(decimal? value) =>
         value is { } v ? Math.Round(v, 2, MidpointRounding.AwayFromZero) : null;
@@ -165,10 +150,24 @@ public sealed record DestinationYield(int Plants, decimal? Kg, decimal? Revenue)
 public sealed record YieldScenario(DestinationYield BabyLeaf, DestinationYield Conventional);
 
 /// <summary>
-/// Rendimiento del lote por destino. Actual: aptas (Baby Leaf) y convencionales.
-/// Potencial: aptas + candidatas (Baby Leaf) y en desarrollo + convencionales.
+/// Cómo terminaron los lotes cerrados del invernadero y cultivo que se usan para el esperado: % de las
+/// plantas sembradas cosechadas como Baby Leaf y como convencional (el resto se descartó).
+/// SameSeason = lotes sembrados en la misma época del año; false = todos los cerrados (no había suficientes).
 /// </summary>
-public sealed record LotYieldEstimate(YieldScenario Current, YieldScenario Potential, YieldReference Reference, YieldPrices Prices);
+public sealed record YieldHistory(int Lots, bool SameSeason, decimal BabyLeafShare, decimal ConventionalShare);
+
+/// <summary>
+/// De dónde sale el esperado: LotWeight = peso de la situación actual del lote (0 = solo el histórico,
+/// 1 = solo el lote), según la fase del ciclo; History = null si no hay lotes cerrados.
+/// </summary>
+public sealed record YieldBasis(decimal LotWeight, YieldHistory? History);
+
+/// <summary>
+/// Rendimiento del lote por destino. Actual: lo que se puede cosechar hoy (aptas para Baby Leaf,
+/// convencionales). Esperado: lo que va a dar el ciclo completo (incluye lo ya cosechado), mezclando el
+/// histórico con la situación del lote según la fase (ver LotYieldRules.Estimate).
+/// </summary>
+public sealed record LotYieldEstimate(YieldScenario Current, YieldScenario Expected, YieldBasis Basis, YieldReference Reference, YieldPrices Prices);
 
 /// <summary>
 /// Rendimiento real de un ciclo cerrado: plantas cosechadas de cada destino × peso y precio
@@ -186,19 +185,69 @@ public sealed record LotHarvestYield(YieldScenario Real, YieldReference Referenc
 
 public static class LotYieldRules
 {
-    public sealed record Input(int Apta, int Candidate, int Developing, int Conventional);
+    /// <summary>Plantas del lote por estado; las cosechadas cuentan para el esperado (son parte del ciclo).</summary>
+    public sealed record Input(
+        int Apta, int Candidate, int Developing, int Conventional,
+        int Risk = 0, int HarvestedBabyLeaf = 0, int HarvestedConventional = 0);
 
-    public static LotYieldEstimate Estimate(Input plants, YieldReference reference, YieldPrices prices)
+    /// <summary>
+    /// Actual: aptas × peso Baby Leaf y convencionales × peso convencional.
+    /// Esperado del ciclo = (1 − w) × histórico + w × situación del lote, con w = LotWeight:
+    /// - Situación del lote: cosechadas de cada destino + aptas y candidatas a Baby Leaf; en desarrollo
+    ///   y convencionales, a convencional (las en riesgo se cuentan como pérdida).
+    /// - Histórico: cosechadas + las activas repartidas con el % de Baby Leaf y de convencional de los
+    ///   lotes cerrados (el resto de ese reparto es lo que se suele descartar).
+    /// Sin histórico, solo la situación del lote. Las plantas se redondean al entero.
+    /// </summary>
+    public static LotYieldEstimate Estimate(
+        Input plants, YieldReference reference, YieldPrices prices, YieldHistory? history = null, decimal lotWeight = 1m)
     {
         DestinationYield BabyLeaf(int count) => Destination(count, reference.BabyLeafGramsPerPlant, prices.BabyLeafPerKg);
         DestinationYield Conventional(int count) => Destination(count, reference.ConventionalGramsPerPlant, prices.ConventionalPerKg);
 
+        var weight = history is null ? 1m : Math.Clamp(lotWeight, 0m, 1m);
+        decimal lotBabyLeaf = plants.HarvestedBabyLeaf + plants.Apta + plants.Candidate;
+        decimal lotConventional = plants.HarvestedConventional + plants.Developing + plants.Conventional;
+        var (babyLeaf, conventional) = (lotBabyLeaf, lotConventional);
+
+        if (history is not null)
+        {
+            var active = plants.Apta + plants.Candidate + plants.Developing + plants.Conventional + plants.Risk;
+            var historyBabyLeaf = plants.HarvestedBabyLeaf + history.BabyLeafShare * active;
+            var historyConventional = plants.HarvestedConventional + history.ConventionalShare * active;
+            babyLeaf = (1m - weight) * historyBabyLeaf + weight * lotBabyLeaf;
+            conventional = (1m - weight) * historyConventional + weight * lotConventional;
+        }
+
         return new LotYieldEstimate(
             new YieldScenario(BabyLeaf(plants.Apta), Conventional(plants.Conventional)),
-            new YieldScenario(BabyLeaf(plants.Apta + plants.Candidate), Conventional(plants.Developing + plants.Conventional)),
+            new YieldScenario(BabyLeaf(Plants(babyLeaf)), Conventional(Plants(conventional))),
+            new YieldBasis(weight, history),
             reference,
             prices);
     }
+
+    /// <summary>
+    /// Peso de la situación del lote en el esperado, según la fase: en desarrollo 0 (todo histórico);
+    /// en la ventana Baby Leaf crece con el GDD, de 0 cuando abre a 1 cuando cierra; en la ventana
+    /// convencional y después, 1 (las plantas ya tienen destino). Sin línea de tiempo, 1.
+    /// </summary>
+    public static decimal LotWeight(CycleTimeline? timeline)
+    {
+        if (timeline is null)
+            return 1m;
+        var opens = timeline.BabyLeafOpens.Gdd;
+        var closes = timeline.BabyLeafCloses.Gdd;
+        return timeline.Phase switch
+        {
+            CyclePhase.Desarrollo => 0m,
+            CyclePhase.VentanaBabyLeaf when closes > opens =>
+                Math.Round(Math.Clamp((timeline.AccumulatedGdd - opens) / (closes - opens), 0m, 1m), 2),
+            _ => 1m
+        };
+    }
+
+    private static int Plants(decimal count) => (int)Math.Round(Math.Max(0m, count), MidpointRounding.AwayFromZero);
 
     /// <summary>Ciclo cerrado: cosechadas como Baby Leaf y como convencional, con la referencia de la cosecha.</summary>
     public static LotHarvestYield Harvested(int harvestedBabyLeaf, int harvestedConventional, YieldReference reference, YieldPrices prices) => new(
@@ -223,6 +272,45 @@ public static class LotYieldRules
 }
 
 /// <summary>
+/// Histórico para el rendimiento esperado: cómo terminaron los lotes cerrados (cosechados o
+/// descartados) del mismo invernadero y cultivo. Se usan los sembrados en la misma época del año
+/// (± SeasonDays, de cualquier año) si hay al menos MinSeasonLots; si no, todos los cerrados.
+/// Los % son sobre el total de plantas sembradas de esos lotes (un lote grande pesa más).
+/// </summary>
+public static class LotYieldHistoryRules
+{
+    public const int SeasonDays = 45;
+    public const int MinSeasonLots = 3;
+
+    public sealed record ClosedLot(DateOnly SowingDate, int TotalPlants, int HarvestedBabyLeaf, int HarvestedConventional);
+
+    public static YieldHistory? Build(DateOnly sowingDate, IEnumerable<ClosedLot> closedLots)
+    {
+        var usable = closedLots.Where(l => l.TotalPlants > 0).ToList();
+        if (usable.Count == 0)
+            return null;
+
+        var season = usable.Where(l => DaysApartInYear(l.SowingDate, sowingDate) <= SeasonDays).ToList();
+        var sameSeason = season.Count >= MinSeasonLots;
+        var lots = sameSeason ? season : usable;
+
+        decimal total = lots.Sum(l => l.TotalPlants);
+        return new YieldHistory(
+            lots.Count,
+            sameSeason,
+            lots.Sum(l => l.HarvestedBabyLeaf) / total,
+            lots.Sum(l => l.HarvestedConventional) / total);
+    }
+
+    /// <summary>Días entre dos fechas mirando solo el día del año (15/12 y 10/01 están a 26 días).</summary>
+    public static int DaysApartInYear(DateOnly a, DateOnly b)
+    {
+        var days = Math.Abs(a.DayOfYear - b.DayOfYear);
+        return Math.Min(days, 365 - days);
+    }
+}
+
+/// <summary>
 /// Parámetros de rendimiento del sistema (Ajustes &gt; Parámetros): peso promedio por planta y
 /// precio por kg de cada destino. Un campo vacío lo deja sin definir, como en las metas.
 /// </summary>
@@ -241,9 +329,9 @@ public static class YieldReferenceRules
     {
         var errors = new List<string>();
         Weight(input.BabyLeafGrams, "una planta Baby Leaf");
-        Weight(input.ConventionalGrams, "una lechuga convencional");
+        Weight(input.ConventionalGrams, "una lechuga adulta");
         Price(input.BabyLeafPricePerKg, "Baby Leaf");
-        Price(input.ConventionalPricePerKg, "convencional");
+        Price(input.ConventionalPricePerKg, "adulta");
         return errors;
 
         void Weight(decimal? grams, string what)
@@ -289,10 +377,10 @@ public static class LotDataQualityRules
     /// </summary>
     public static readonly IReadOnlyList<string> HarvestDateWarningPrefixes =
     [
-        "Porcentaje de aptas (",
-        "Porcentaje objetivo de plantas aptas no configurado",
+        "Porcentaje de Baby Leafs (",
+        "Porcentaje objetivo de Baby Leafs no configurado",
         "La fecha por GDD (",
-        "Cosecha convencional: sin criterio de tamaño",
+        "Cosecha adulta: sin criterio de tamaño",
     ];
 
     public static IReadOnlyList<DataQualityAlert> Alerts(ForecastSourceKind sourceKind, int coverageDays, int missingDays)

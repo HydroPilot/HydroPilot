@@ -35,7 +35,7 @@ public class BabyLeafCriterion
     /// <summary>Peso porcentual dentro del score (la suma de criterios activos debe ser 100).</summary>
     public decimal Weight { get; set; }
 
-    /// <summary>Si es excluyente: no aprobado impide "Baby Leaf apta".</summary>
+    /// <summary>Si es excluyente: no aprobado impide "Baby Leaf".</summary>
     public bool IsMandatory { get; set; }
 
     public bool IsActive { get; set; } = true;

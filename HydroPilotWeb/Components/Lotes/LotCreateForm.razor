@@ -2,7 +2,7 @@
 @namespace HydroPilotWeb.Components.Lotes
 
 @* Alta de un lote (va dentro del modal "Nuevo lote"): sin m² (cada planta tiene su hueco); la grilla
-   define cuántas plantas se crean. Las metas del ciclo son opcionales: vacías quedan sin definir. *@
+   define cuántas plantas se crean. Las metas del lote son opcionales: vacías quedan sin definir. *@
 @if (SingleChoices is { } single)
 {
     @* Con un solo cultivo o invernadero no hay nada que elegir: se muestra arriba, destacado. *@
@@ -31,7 +31,7 @@
     {
         <div class="lot-editor__field">
             <label class="form-label mb-1" for="new-lot-greenhouse">Invernadero</label>
-            <select id="new-lot-greenhouse" class="form-select" @bind="greenhouseId">
+            <select id="new-lot-greenhouse" class="form-select" @bind="greenhouseId" @bind:after="PickFreeCircuit">
                 @foreach (var greenhouse in Options.Greenhouses)
                 {
                     <option value="@greenhouse.Id">@greenhouse.Name</option>
@@ -39,6 +39,20 @@
             </select>
         </div>
     }
+    @* Circuito donde se planta: solo los libres (los que tienen un lote en curso se ven, deshabilitados). *@
+    <div class="lot-editor__field">
+        <label class="form-label mb-1" for="new-lot-circuit">Circuito</label>
+        <select id="new-lot-circuit" class="form-select" @bind="circuitId">
+            @if (!CircuitsOfGreenhouse.Any(c => c.IsFree))
+            {
+                <option value="0">Sin circuitos libres</option>
+            }
+            @foreach (var circuit in CircuitsOfGreenhouse)
+            {
+                <option value="@circuit.Id" disabled="@(!circuit.IsFree)">@circuit.Name@(circuit.IsFree ? null : $" · ocupado ({circuit.CurrentLot})")</option>
+            }
+        </select>
+    </div>
     <div class="lot-editor__field">
         <label class="form-label mb-1" for="new-lot-sowing">Fecha de siembra</label>
         <input id="new-lot-sowing" type="date" class="form-control" max="@Today.ToString("yyyy-MM-dd")"
@@ -57,9 +71,10 @@
     </div>
 </div>
 
-<h4 class="lot-modal__section">Metas del ciclo <span>(Dejá un campo vacío para no definirlo)</span></h4>
+<h4 class="lot-modal__section">Metas del lote <span>(Dejá un campo vacío para no definirlo)</span></h4>
 <div class="lot-editor">
-    <LotGoalFields @bind-BabyLeafGoal="babyLeafGoal" @bind-MaxLoss="maxLoss" />
+    <LotGoalFields @bind-BabyLeafGoal="babyLeafGoal" @bind-ExpectedActive="expectedActive"
+                   TotalPlants="@(rows is int r && r > 0 && columns is int c && c > 0 ? r * c : null)" />
 </div>
 
 @if (Errors.Count > 0)
@@ -91,12 +106,13 @@
     private string? name;
     private int cropTypeId;
     private int greenhouseId;
+    private int circuitId;
     private DateOnly sowingDate = Today;
     // Por defecto la grilla del lote demo (6 × 10).
     private int? rows = 6;
     private int? columns = 10;
     private decimal? babyLeafGoal;
-    private decimal? maxLoss;
+    private decimal? expectedActive;
     private NewLotOptions? loadedFrom;
 
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
@@ -108,9 +124,16 @@
             name = Options.SuggestedName;
             cropTypeId = Options.Crops.FirstOrDefault()?.Id ?? 0;
             greenhouseId = Options.Greenhouses.FirstOrDefault()?.Id ?? 0;
+            PickFreeCircuit();
             loadedFrom = Options;
         }
     }
+
+    private IEnumerable<NewLotCircuitChoice> CircuitsOfGreenhouse =>
+        (Options.Circuits ?? []).Where(c => c.GreenhouseId == greenhouseId);
+
+    /// <summary>El primer circuito libre del invernadero elegido (0 si no hay).</summary>
+    private void PickFreeCircuit() => circuitId = CircuitsOfGreenhouse.FirstOrDefault(c => c.IsFree)?.Id ?? 0;
 
     private string PlantsHelp => rows is int r && r > 0 && columns is int c && c > 0
         ? $"{LotFormat.Plants(r * c)} en total."
@@ -131,5 +154,5 @@
     }
 
     private Task SaveAsync() => OnSave.InvokeAsync(new NewLotInput(
-        name, cropTypeId, greenhouseId, sowingDate, rows ?? 0, columns ?? 0, babyLeafGoal, maxLoss));
+        name, cropTypeId, greenhouseId, sowingDate, rows ?? 0, columns ?? 0, babyLeafGoal, expectedActive, circuitId));
 }

@@ -152,4 +152,35 @@ public static class IntegrationTestHelpers
         var node = await context.IotNodes.FirstAsync(n => n.Identifier == identifier);
         return node.Id;
     }
+
+    /// <summary>Segunda Pi que nunca se conectó (para ver el estado NEVER_CONNECTED).</summary>
+    public static async Task EnsureNeverConnectedNodeAsync(HydroPilotDbContext context)
+    {
+        if (await context.IotNodes.AnyAsync(n => n.Identifier == "rpi-inv-02"))
+            return;
+        var greenhouseId = await context.Greenhouses.OrderBy(g => g.Id).Select(g => g.Id).FirstAsync();
+        context.IotNodes.Add(new IotNode { GreenhouseId = greenhouseId, Identifier = "rpi-inv-02", Status = "ACTIVO", CreatedAt = DateTime.UtcNow });
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>Circuito del sensor de la Pi demo (por defecto el de "ph-solucion": el primer circuito).</summary>
+    public static async Task<int> CircuitIdAsync(HydroPilotDbContext context, string sensorKey = "ph-solucion") =>
+        await context.Sensors.Where(s => s.Node!.Identifier == "rpi-inv-01" && s.TechnicalKey == sensorKey)
+            .Select(s => s.CircuitId!.Value)
+            .FirstAsync();
+
+    /// <summary>Planta el lote en el circuito durante el lapso (lo que hace el alta de un lote en Lotes).</summary>
+    public static async Task AssignAsync(HydroPilotDbContext context, int circuitId, int lotId, DateTime fromUtc, DateTime? untilUtc = null)
+    {
+        context.CircuitAssignments.Add(new CircuitAssignment
+        {
+            CircuitId = circuitId,
+            LotId = lotId,
+            ValidFromUtc = fromUtc,
+            ValidUntilUtc = untilUtc,
+            Source = TelemetryContract.AssignmentSourceFixture,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+    }
 }

@@ -39,14 +39,34 @@ public static class LotFormat
     public static string Milestone(CycleMilestone milestone) =>
         milestone.Date is { } date ? (milestone.IsExtrapolated ? "≈ " : string.Empty) + Day(date) : "sin fecha";
 
-    /// <summary>Cantidad con singular/plural ("1 apta", "7 aptas").</summary>
+    /// <summary>Cantidad con singular/plural ("1 candidata", "7 candidatas").</summary>
     public static string Count(int count, string singular, string plural) => $"{count} {(count == 1 ? singular : plural)}";
 
     public static string Plants(int count) => Count(count, "planta", "plantas");
 
-    public static string AptaPlants(int count) => count == 1 ? "1 planta apta" : $"{count} plantas aptas";
-
     public static string Days(int count) => count == 1 ? "1 día" : $"{count} días";
+
+    /// <summary>
+    /// Cuándo se escribió un comentario, relativo a ahora (las dos en la zona del invernadero):
+    /// "recién", "hace 5 min", "hoy 14:05", "ayer 09:30", "12 oct 14:05"; de otro año, "12 oct 2025".
+    /// </summary>
+    public static string When(DateTime local, DateTime nowLocal)
+    {
+        var elapsed = nowLocal - local;
+        if (elapsed < TimeSpan.FromMinutes(1))
+            return "recién";
+        if (elapsed < TimeSpan.FromHours(1))
+            return $"hace {(int)elapsed.TotalMinutes} min";
+
+        var time = local.ToString("HH:mm", Culture);
+        if (local.Date == nowLocal.Date)
+            return $"hoy {time}";
+        if (local.Date == nowLocal.Date.AddDays(-1))
+            return $"ayer {time}";
+
+        var day = Day(DateOnly.FromDateTime(local));
+        return local.Year == nowLocal.Year ? $"{day} {time}" : $"{day} {local.Year}";
+    }
 }
 
 /// <summary>Clave de filtro de una celda del mapa (estado operativo o comercial).</summary>

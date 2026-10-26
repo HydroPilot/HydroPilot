@@ -16,10 +16,15 @@
             {
                 var style = CellStyleFor(cell);
                 var key = LotCellKeys.For(cell);
-                var selected = SelectedPosition == (cell.Row, cell.Column);
+                var selected = !SelectionMode && SelectedPosition == (cell.Row, cell.Column);
                 var harvested = cell.OperationalState == PlantOperationalState.Cosechada;
+                // Modo selección: solo las activas se pueden marcar; las marcadas llevan tilde.
+                var selectable = cell.PlantId is not null && cell.OperationalState == PlantOperationalState.Activa;
+                var picked = SelectionMode && cell.PlantId is { } plantId && PickedPlantIds.Contains(plantId);
                 var css = "lot-cell"
                           + (selected ? " lot-cell--selected" : null)
+                          + (picked ? " lot-cell--picked" : null)
+                          + (SelectionMode && !selectable ? " lot-cell--locked" : null)
                           + (key == LotCellKeys.Vacia ? " lot-cell--empty" : null)
                           + (harvested ? " lot-cell--harvested" : null)
                           + (HighlightKey is not null && key != HighlightKey ? " lot-cell--dim" : null);
@@ -28,6 +33,7 @@
                         style="background: @(key == LotCellKeys.Vacia ? "transparent" : style.Background); color: @style.Color;"
                         title="@TitleFor(cell, style)"
                         aria-label="@TitleFor(cell, style)"
+                        aria-pressed="@(SelectionMode && selectable ? (picked ? "true" : "false") : null)"
                         @onclick="() => OnCellSelected.InvokeAsync(cell)">
                     <span class="lot-cell__label">@(harvested ? "✓" : style.Label)</span>
                 </button>
@@ -46,6 +52,12 @@
 
     /// <summary>Clave de LotCellKeys a resaltar; el resto de las celdas se atenúa. Null = sin filtro.</summary>
     [Parameter] public string? HighlightKey { get; set; }
+
+    /// <summary>Modo selección: tocar una planta activa la marca o desmarca (lo resuelve el padre).</summary>
+    [Parameter] public bool SelectionMode { get; set; }
+
+    /// <summary>Plantas marcadas en modo selección.</summary>
+    [Parameter] public IReadOnlySet<int> PickedPlantIds { get; set; } = new HashSet<int>();
 
     private CommercialStagePalette.CellStyle CellStyleFor(PlantCellDto cell) => cell.CellKind switch
     {

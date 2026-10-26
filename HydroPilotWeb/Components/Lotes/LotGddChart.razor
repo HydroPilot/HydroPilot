@@ -85,7 +85,7 @@
         }
         @foreach (var band in Bands)
         {
-            <span><i class="lot-gdd__key lot-gdd__key--@band.Tone"></i>ventana @(band.Tone == "bl" ? "Baby Leaf" : "convencional")</span>
+            <span><i class="lot-gdd__key lot-gdd__key--@band.Tone"></i>ventana @(band.Tone == "bl" ? "Baby Leaf" : "adulta")</span>
         }
     </div>
 </div>
@@ -151,7 +151,7 @@
         new[]
         {
             new Optimum(Timeline.BabyLeafOptimum.Gdd, "Baby Leaf", "bl"),
-            new Optimum(Timeline.ConventionalOptimum.Gdd, "convencional", "conv"),
+            new Optimum(Timeline.ConventionalOptimum.Gdd, "adulta", "conv"),
         }.Where(o => o.Gdd < YMax);
 
     private string MeasuredPoints =>

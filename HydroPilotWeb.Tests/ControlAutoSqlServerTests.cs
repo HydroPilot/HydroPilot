@@ -52,11 +52,11 @@ public class ControlAutoSqlServerTests
             var outcome = await ingestion.IngestAsync(TelemetryContractParser.Parse(body).Envelope!, CancellationToken.None);
             Assert.Equal(IngestBatchStatus.Processed, outcome.Status);
 
-            Assert.True(trigger.Reader.TryRead(out var nodeId));
-            Assert.Equal(_fx.NodeId, nodeId);
+            Assert.True(trigger.Reader.TryRead(out var circuitId));
+            Assert.Equal(_fx.CircuitId, circuitId);
 
             // pH 6,9 firme (con el 6,82 anterior) y CE en rango: pH Down, recortado al máximo por dosis.
-            var decision = await _fx.Control.EvaluateNodeAsync(nodeId, DateTime.UtcNow);
+            var decision = await _fx.Control.EvaluateCircuitAsync(circuitId, DateTime.UtcNow);
             Assert.Equal(ControlEngine.Outcome.Dose, decision.Outcome);
             Assert.Equal(ControlContract.KindPhDown, decision.Pump!.Kind);
 
@@ -76,7 +76,7 @@ public class ControlAutoSqlServerTests
             }
 
             // Con la dosis en curso no crea otra.
-            Assert.Equal(ControlEngine.Codes.InFlight, (await _fx.Control.EvaluateNodeAsync(nodeId, DateTime.UtcNow)).Code);
+            Assert.Equal(ControlEngine.Codes.InFlight, (await _fx.Control.EvaluateCircuitAsync(circuitId, DateTime.UtcNow)).Code);
         }
         finally
         {
@@ -93,7 +93,7 @@ public class ControlAutoSqlServerTests
         await _fx.ResetCommandsAsync();
         await _fx.Control.PollAsync(ControlSqlFixture.NodeIdentifier, DateTime.UtcNow);
 
-        var decision = await _fx.Control.EvaluateNodeAsync(_fx.NodeId, DateTime.UtcNow);
+        var decision = await _fx.Control.EvaluateCircuitAsync(_fx.CircuitId, DateTime.UtcNow);
 
         Assert.Equal(ControlEngine.Outcome.Off, decision.Outcome);
         await using var context = _fx.NewContext();
@@ -105,6 +105,7 @@ public class ControlAutoSqlServerTests
     {
         await _fx.ResetCommandsAsync();
         var node = _fx.SpareNodeId;
+        var circuit = _fx.SpareCircuitId;
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown, node);
         var now = DateTime.UtcNow;
         var tag = Guid.NewGuid().ToString("N")[..8];
@@ -123,7 +124,7 @@ public class ControlAutoSqlServerTests
                 context.SensorReadings.Add(before);
                 context.SensorReadings.Add(Reading(node, after[i], now.AddMinutes(completedMinutes[i] + 11), $"eff-{tag}-a{i}"));
                 await context.SaveChangesAsync();
-                context.ActuatorCommands.Add(Executed(node, phDown, now.AddMinutes(completedMinutes[i]), before.Id));
+                context.ActuatorCommands.Add(Executed(node, circuit, phDown, now.AddMinutes(completedMinutes[i]), before.Id));
             }
             await context.SaveChangesAsync();
         }
@@ -144,16 +145,16 @@ public class ControlAutoSqlServerTests
             Assert.Equal(2.65m, pump.EffectPerUnit);
             Assert.Equal(1, pump.EffectSamples);
 
-            var pause = await check.ControlPauses.SingleAsync(p => p.NodeId == node && p.ResumedAtUtc == null);
+            var pause = await check.ControlPauses.SingleAsync(p => p.CircuitId == circuit && p.ResumedAtUtc == null);
             Assert.Equal(ControlContract.ParameterPh, pause.Parameter);
             Assert.Equal("3 dosis seguidas sin efecto", pause.Reason);
         }
-        Assert.Contains(_fx.Sink.Paused, p => p.NodeId == node && p.Parameter == ControlContract.ParameterPh);
+        Assert.Contains(_fx.Sink.Paused, p => p.CircuitId == circuit && p.Parameter == ControlContract.ParameterPh);
 
         // Reanudar cierra la pausa y avisa; la racha de antes no vuelve a pausar.
-        Assert.True((await _fx.Control.ResumeAsync(node, ControlContract.ParameterPh, "operador@test")).Succeeded);
-        Assert.Contains(_fx.Sink.Resumed, r => r.NodeId == node && r.Parameter == ControlContract.ParameterPh);
-        Assert.False((await _fx.Control.ResumeAsync(node, ControlContract.ParameterPh, "operador@test")).Succeeded);
+        Assert.True((await _fx.Control.ResumeAsync(circuit, ControlContract.ParameterPh, "operador@test")).Succeeded);
+        Assert.Contains(_fx.Sink.Resumed, r => r.CircuitId == circuit && r.Parameter == ControlContract.ParameterPh);
+        Assert.False((await _fx.Control.ResumeAsync(circuit, ControlContract.ParameterPh, "operador@test")).Succeeded);
 
         await using (var context = _fx.NewContext())
         {
@@ -161,7 +162,7 @@ public class ControlAutoSqlServerTests
             context.SensorReadings.Add(before);
             context.SensorReadings.Add(Reading(node, 6.90m, now.AddMinutes(-19), $"eff-{tag}-a9"));
             await context.SaveChangesAsync();
-            context.ActuatorCommands.Add(Executed(node, phDown, now.AddMinutes(-30), before.Id));
+            context.ActuatorCommands.Add(Executed(node, circuit, phDown, now.AddMinutes(-30), before.Id));
             await context.SaveChangesAsync();
         }
         var again = await _fx.Control.SweepAsync(now);
@@ -180,7 +181,7 @@ public class ControlAutoSqlServerTests
             {
                 context.ControlPauses.Add(new ControlPause
                 {
-                    NodeId = _fx.NodeId,
+                    CircuitId = _fx.CircuitId,
                     Parameter = ControlContract.ParameterPh,
                     PausedAtUtc = DateTime.UtcNow,
                     Reason = "prueba",
@@ -189,25 +190,15 @@ public class ControlAutoSqlServerTests
             }
 
             // pH alto pero pausado, CE en rango: el motor no dosifica y lo muestra.
-            var decision = await _fx.Control.EvaluateNodeAsync(_fx.NodeId, DateTime.UtcNow);
+            var decision = await _fx.Control.EvaluateCircuitAsync(_fx.CircuitId, DateTime.UtcNow);
             Assert.Equal((ControlEngine.Outcome.Paused, ControlContract.ParameterPh), (decision.Outcome, decision.Parameter));
 
-            var view = await _fx.Control.GetViewAsync(_fx.NodeId);
+            var view = await _fx.Control.GetViewAsync(_fx.CircuitId);
             Assert.Equal(ControlEngine.Codes.Paused, view!.Status.Code);
             Assert.Equal(ControlContract.ParameterPh, Assert.Single(view.OpenPauses).Parameter);
 
-            await using (var context = _fx.NewContext())
-            {
-                Assert.Equal([ControlContract.ParameterEc],
-                    await ControlService.AutoControlledForLotAsync(context, _fx.LotId, DateTime.UtcNow));
-            }
-
-            Assert.False((await _fx.Control.SetModeAsync(_fx.NodeId, "TURBO", "admin")).Succeeded);
-            Assert.True((await _fx.Control.SetModeAsync(_fx.NodeId, ControlContract.ModeManual, "admin")).Succeeded);
-            await using (var context = _fx.NewContext())
-            {
-                Assert.Empty(await ControlService.AutoControlledForLotAsync(context, _fx.LotId, DateTime.UtcNow));
-            }
+            Assert.False((await _fx.Control.SetModeAsync(_fx.CircuitId, "TURBO", "admin")).Succeeded);
+            Assert.True((await _fx.Control.SetModeAsync(_fx.CircuitId, ControlContract.ModeManual, "admin")).Succeeded);
         }
         finally
         {
@@ -221,8 +212,8 @@ public class ControlAutoSqlServerTests
     private async Task SetModeRawAsync(string mode)
     {
         await using var context = _fx.NewContext();
-        await context.IotNodes.Where(n => n.Id == _fx.NodeId)
-            .ExecuteUpdateAsync(s => s.SetProperty(n => n.ControlMode, mode));
+        await context.Circuits.Where(c => c.Id == _fx.CircuitId)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ControlMode, mode));
     }
 
     private SensorReading Reading(int nodeId, decimal value, DateTime observedAt, string externalId) => new()
@@ -239,10 +230,11 @@ public class ControlAutoSqlServerTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static ActuatorCommand Executed(int nodeId, int actuatorId, DateTime completedAt, int triggerReadingId) => new()
+    private static ActuatorCommand Executed(int nodeId, int circuitId, int actuatorId, DateTime completedAt, int triggerReadingId) => new()
     {
         Id = Guid.NewGuid(),
         NodeId = nodeId,
+        CircuitId = circuitId,
         ActuatorId = actuatorId,
         Source = ControlContract.SourceManual,
         Amount = 50m,

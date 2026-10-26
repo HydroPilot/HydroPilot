@@ -86,7 +86,7 @@ public sealed class RecipeService
 
         // El score del lote solo juzga un ajuste que ya estaba puesto.
         var wasAdjusted = row is not null && (row.PhOffset != 0m || row.EcOffset != 0m);
-        var trend = RecipeRules.ScoreTrendPerDay(await DailyScoresAsync(context, lotId, nowUtc, ct));
+        var trend = RecipeRules.ScoreTrendPerDay(await DailyScoreChangesAsync(context, lot, nowUtc, ct));
         var adjusted = history.PhOffset != 0m || history.EcOffset != 0m;
         var trust = RecipeRules.NextTrust(row?.Trust ?? 1m, wasAdjusted ? trend : null, adjusted);
         var ph = RecipeRules.Apply(history.PhOffset, trust);
@@ -198,32 +198,51 @@ public sealed class RecipeService
         return count == 0 ? (0m, 0) : (await readings.AverageAsync(r => r.Value, ct), count);
     }
 
-    /// <summary>Score Baby Leaf promedio del lote por día (evaluaciones de sus plantas).</summary>
-    private static async Task<IReadOnlyList<(DateOnly Day, decimal Score)>> DailyScoresAsync(
-        HydroPilotDbContext context, int lotId, DateTime nowUtc, CancellationToken ct)
+    /// <summary>Cambio diario del score de las mismas plantas del lote (sus evaluaciones de los últimos días).</summary>
+    private static async Task<IReadOnlyList<(DateOnly Day, decimal Change)>> DailyScoreChangesAsync(
+        HydroPilotDbContext context, Lot lot, DateTime nowUtc, CancellationToken ct)
     {
-        var since = nowUtc.Date.AddDays(-(RecipeRules.ScoreTrendDays + 2));
+        var since = nowUtc.Date.AddDays(-(RecipeRules.ScoreTrendDays + RecipeRules.MaxScoreGapDays + 1));
         var rows = await context.BabyLeafEvaluations.AsNoTracking()
-            .Where(e => e.Plant != null && e.Plant.LotId == lotId && e.EvaluatedAtUtc >= since)
-            .Select(e => new { e.EvaluatedAtUtc, e.BabyLeafScore })
+            .Where(e => e.Plant != null && e.Plant.LotId == lot.Id && e.EvaluatedAtUtc >= since)
+            .Select(e => new { e.PlantId, e.EvaluatedAtUtc, e.BabyLeafScore, e.GddAtEvaluation })
             .ToListAsync(ct);
-        return rows
-            .GroupBy(r => DateOnly.FromDateTime(r.EvaluatedAtUtc))
-            .Select(g => (g.Key, Math.Round(g.Average(r => r.BabyLeafScore), 2)))
-            .ToList();
+        var window = await context.BabyLeafConfigs.AsNoTracking()
+            .Where(c => c.CropTypeId == lot.CropTypeId && c.IsActive)
+            .OrderByDescending(c => c.Id)
+            .Select(c => new { c.GddMin, c.GddMax })
+            .FirstOrDefaultAsync(ct);
+        return RecipeRules.DailyScoreChanges(
+            rows.Select(r => new RecipeRules.ScoreSample(r.PlantId, DateOnly.FromDateTime(r.EvaluatedAtUtc), r.BabyLeafScore, r.GddAtEvaluation))
+                .ToList(),
+            window?.GddMin ?? 250m,
+            window?.GddMax ?? 450m);
     }
 
-    private static string Reason(RecipeRules.HistoryRecipe history, decimal trust, decimal? trend)
+    internal static string Reason(RecipeRules.HistoryRecipe history, decimal trust, decimal? trend)
     {
         if (history.SimilarLots == 0)
             return "Sin lotes cerrados parecidos (temporada y clima): rigen los niveles de la etapa.";
 
-        var lots = history.SimilarLots == 1 ? "1 lote parecido" : $"{history.SimilarLots} lotes parecidos";
-        if (history.PhOffset == 0m && history.EcOffset == 0m)
-            return $"{lots}: los de más Baby Leaf trabajaron con los niveles de la etapa.";
+        if (history.SimilarLots == 1)
+            return "1 lote parecido: hace falta compararlo con otros para ajustar; rigen los niveles de la etapa.";
 
-        var reason = $"{lots}; los de más Baby Leaf (≥ {(history.MeanBabyLeafRate ?? 0m).ToString("P0", Es)}) trabajaron con " +
-                     $"pH {Signed(history.PhOffset)} y CE {Signed(history.EcOffset)} respecto de la etapa.";
+        var lots = $"{history.SimilarLots} lotes parecidos";
+        if (history.PhOffset == 0m && history.EcOffset == 0m)
+            return $"{lots}: los de más Baby Leaf trabajaron con pH y CE parecidos al resto; rigen los niveles de la etapa.";
+
+        var worked = string.Join(" y ", new[]
+        {
+            history.PhOffset != 0m ? $"pH más {(history.PhOffset > 0m ? "alto" : "bajo")}" : null,
+            history.EcOffset != 0m ? $"CE más {(history.EcOffset > 0m ? "alta" : "baja")}" : null,
+        }.Where(p => p is not null));
+        var adjustment = string.Join(" · ", new[]
+        {
+            history.PhOffset != 0m ? $"pH {Signed(history.PhOffset)}" : null,
+            history.EcOffset != 0m ? $"CE {Signed(history.EcOffset)}" : null,
+        }.Where(p => p is not null));
+        var reason = $"{lots}: los de más Baby Leaf (≥ {(history.MeanBabyLeafRate ?? 0m).ToString("P0", Es)}) trabajaron con " +
+                     $"{worked} que el resto (ajuste {adjustment}).";
         if (trust < 1m)
             reason += trend is { } t
                 ? $" Confianza {trust.ToString("P0", Es)}: el score del lote viene {(t < 0m ? "bajando" : "estable")} ({Signed(t)} por día)."

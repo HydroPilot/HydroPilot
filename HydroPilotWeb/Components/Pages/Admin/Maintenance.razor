@@ -3,7 +3,9 @@
 @using HydroPilotWeb.Services.Admin
 @using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Notifications
+@using HydroPilotWeb.Services.SimulationEnvironment
 @inject AdminMaintenanceService MaintenanceService
+@inject SimulationEnvironmentService SimulationEnvironment
 @inject NotificationService NotificationService
 @inject LotOverviewService LotOverview
 @inject LotDailyFlowService DailyFlow
@@ -84,11 +86,6 @@
                     <strong class="metric-card__value">@_summary.AnomalyEventsCount</strong>
                     <small class="metric-card__hint">Eventos detectados por reglas</small>
                 </div>
-                <div class="metric-card">
-                    <span class="metric-card__label">Recomendaciones</span>
-                    <strong class="metric-card__value">@_summary.OptimizationRecommendationsCount</strong>
-                    <small class="metric-card__hint">Sugerencias de optimización</small>
-                </div>
             </div>
         }
     </div>
@@ -102,7 +99,7 @@
                     <h4>Limpiar datos transaccionales (Mock)</h4>
                     <p>
                         Elimina todas las lecturas de telemetría, predicciones, lotes de prueba, plantas,
-                        eventos de anomalías y recomendaciones.
+                        y eventos de anomalías.
                     </p>
                     <p class="action-card__warning">
                         <strong>Preserva intactos:</strong> usuarios, contraseñas, roles, configuraciones,
@@ -134,6 +131,45 @@
             </div>
         </div>
 
+        @if (SimulationEnvironment.Enabled)
+        {
+            <div class="action-card action-card--primary">
+                <div class="action-card__body">
+                    <div class="action-card__icon">🧪</div>
+                    <div>
+                        <h4>Entorno de simulación</h4>
+                        <p>
+                            Historial de @SimulationEnvironment.Options.HistoryMonths meses generado
+                            @(_simulationSeededAt is { } seeded ? $"el {seeded.ToLocalTime():dd/MM/yyyy HH:mm}" : "—").
+                            Regenerarlo lo lleva hasta hoy.
+                        </p>
+                        <p class="action-card__warning">
+                            <strong>Reemplaza</strong> lotes, telemetría, control, anomalías, notificaciones
+                            y precios de esta base (tarda unos minutos).
+                        </p>
+                    </div>
+                </div>
+                <div class="action-card__footer">
+                    @if (_showSimulationConfirm)
+                    {
+                        <div class="confirm-box">
+                            <span>¿Regenerar el historial de simulación?</span>
+                            <div class="confirm-box__buttons">
+                                <button class="btn btn-danger" @onclick="ExecuteRegenerateSimulationAsync" disabled="@_isProcessing">Sí, regenerar</button>
+                                <button class="btn btn-secondary" @onclick="() => _showSimulationConfirm = false" disabled="@_isProcessing">Cancelar</button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary" @onclick="() => _showSimulationConfirm = true" disabled="@_isProcessing">
+                            @(_isProcessing && _regenerating ? "Generando…" : "Regenerar historial")
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+
         <div class="action-card action-card--primary">
             <div class="action-card__body">
                 <div class="action-card__icon">🌱</div>
@@ -141,7 +177,7 @@
                     <h4>Recrear Lote Demo 01</h4>
                     <p>
                         Crea un lote demo activo (<strong>Lote Demo 01</strong>) con grilla de 6x10 posiciones,
-                        etapas comerciales representativas (Baby Leaf aptas, candidatas, en desarrollo y riesgo)
+                        etapas comerciales representativas (Baby Leafs, candidatas, en desarrollo y riesgo)
                         y asignación del nodo <code>rpi-inv-01</code>.
                     </p>
                     <p class="action-card__hint">
@@ -163,7 +199,7 @@
                     <h4>Ejecutar flujo diario de un lote</h4>
                     <p>
                         Reevalúa las plantas activas del lote con los GDD hasta la fecha elegida: etapa fenológica,
-                        estado comercial (apta, candidata, en desarrollo o riesgo) y estado predominante del lote.
+                        estado comercial (Baby Leaf, candidata, en desarrollo o riesgo) y estado predominante del lote.
                         Los cambios quedan en el historial de cada planta; las cosechadas y descartadas no se tocan.
                     </p>
                     <p class="action-card__warning">
@@ -182,7 +218,7 @@
                     <div class="flow-form">
                         <label class="flow-form__field">
                             <span>Lote</span>
-                            <select @bind="_flowLotId" disabled="@_isProcessing">
+                            <select class="form-select" @bind="_flowLotId" disabled="@_isProcessing">
                                 @foreach (var lot in _flowLots)
                                 {
                                     <option value="@lot.Id">@lot.Name</option>
@@ -440,7 +476,11 @@
         color: var(--text-muted, #8ea1b4);
     }
 
-    .flow-form__field select,
+    .flow-form__field .form-select {
+        min-width: 170px;
+        font-size: 14px;
+    }
+
     .flow-form__field input {
         min-width: 170px;
         padding: 8px 10px;
@@ -637,6 +677,8 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadSummaryAsync();
+        if (SimulationEnvironment.Enabled)
+            _simulationSeededAt = await SimulationEnvironment.SeededAtAsync();
     }
 
     private async Task LoadSummaryAsync()
@@ -750,6 +792,30 @@
         finally
         {
             _isProcessing = false;
+        }
+    }
+
+    private bool _showSimulationConfirm;
+    private bool _regenerating;
+    private DateTime? _simulationSeededAt;
+
+    private async Task ExecuteRegenerateSimulationAsync()
+    {
+        _isProcessing = true;
+        _regenerating = true;
+        _showSimulationConfirm = false;
+        try
+        {
+            var result = await SimulationEnvironment.RegenerateAsync();
+            _feedbackMessage = result.Message;
+            _isSuccess = result.Succeeded;
+            _simulationSeededAt = await SimulationEnvironment.SeededAtAsync();
+            await LoadSummaryAsync();
+        }
+        finally
+        {
+            _isProcessing = false;
+            _regenerating = false;
         }
     }
 

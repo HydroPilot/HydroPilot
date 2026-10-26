@@ -33,6 +33,20 @@ public static class AnomalyEvaluator
     /// Una corrida fuera de banda de largo &lt; consecutiveToOpen = "registro sin episodio
     /// crítico"; &gt;= consecutiveToOpen = episodio crítico (decisión del caller).
     /// </summary>
+    /// <summary>Cuánto se aleja un valor de la banda (0 si está adentro).</summary>
+    public static decimal DistanceOutside(decimal value, AnomalyBand band) =>
+        band.OperationalMin is { } min && value < min ? min - value
+        : band.OperationalMax is { } max && value > max ? value - max
+        : 0m;
+
+    /// <summary>El más lejano de la banda entre el pico que había y un valor nuevo (empate: el que había).</summary>
+    public static decimal Peak(decimal? current, decimal candidate, AnomalyBand band) =>
+        current is { } peak && DistanceOutside(peak, band) >= DistanceOutside(candidate, band) ? peak : candidate;
+
+    /// <summary>El más lejano de la banda de una corrida (su mínimo si quedó abajo, su máximo si quedó arriba).</summary>
+    public static decimal Peak(AnomalySegment segment, AnomalyBand band) =>
+        Peak(segment.MinValue, segment.MaxValue, band);
+
     public static IReadOnlyList<AnomalySegment> SegmentRuns(IReadOnlyList<AnomalyReadingPoint> ordered, AnomalyBand? band)
     {
         var segments = new List<AnomalySegment>();

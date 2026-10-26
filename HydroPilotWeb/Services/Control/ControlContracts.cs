@@ -6,7 +6,8 @@ namespace HydroPilotWeb.Services.Control;
 // Vista Control
 // ------------------------------------------------------------------
 
-public sealed record ControlNodeOption(int Id, string Identifier, string? LotName);
+/// <summary>Circuito del desplegable de Optimización: nombre y su lote en curso.</summary>
+public sealed record ControlCircuitOption(int Id, string Name, string? LotName);
 
 public sealed record ControlCommandDto(
     Guid Id,
@@ -66,11 +67,13 @@ public sealed record ControlStatusDto(
     decimal Amount,
     string? Unit,
     decimal Strength,
-    DateTime? UntilUtc);
+    DateTime? UntilUtc,
+    string? SensorFaultKind = null);
 
 public sealed record ControlViewDto(
-    int NodeId,
-    string Identifier,
+    int CircuitId,
+    string CircuitName,
+    string NodeIdentifier,
     string ConnectionState,
     DateTime? LastCommandPollAtUtc,
     string Mode,
@@ -87,7 +90,40 @@ public sealed record ControlViewDto(
     IReadOnlyList<ControlPauseDto> OpenPauses,
     IReadOnlyList<ControlTimelineEntry> Timeline,
     int PiContactStaleMinutes = 2,
-    ControlRecipeDto? Recipe = null);
+    ControlRecipeDto? Recipe = null,
+    ControlAmbientReading? Temperature = null,
+    ControlAmbientReading? Humidity = null,
+    DateTime? LotSinceUtc = null);
+
+/// <summary>Última lectura usable del ambiente del invernadero (sensor sin circuito): temperatura °C o humedad %.</summary>
+public sealed record ControlAmbientReading(decimal Value, DateTime ObservedAtUtc);
+
+/// <summary>Un punto de la tendencia: promedio de las lecturas de un tramo de tiempo.</summary>
+public sealed record ControlTrendPoint(DateTime AtUtc, decimal Value);
+
+/// <summary>Una dosis en la tendencia (cuándo llegó al tanque, o cuándo se pidió si no llegó).</summary>
+public sealed record ControlTrendDose(
+    DateTime AtUtc,
+    string Parameter,
+    string Kind,
+    string ActuatorName,
+    decimal Amount,
+    string Unit,
+    string Status,
+    string Source,
+    decimal? Strength,
+    bool? Effective);
+
+/// <summary>Tendencia de una magnitud: sus puntos, la banda del lote, la banda en la que actúa el motor y las dosis.</summary>
+public sealed record ControlTrendSeries(
+    string Parameter,
+    IReadOnlyList<ControlTrendPoint> Points,
+    SolutionBand Band,
+    SolutionBand ActionBand,
+    IReadOnlyList<ControlTrendDose> Doses);
+
+/// <summary>pH y CE del tanque en las últimas horas, con las dosis: para ver cómo corrige el control.</summary>
+public sealed record ControlTrendDto(DateTime FromUtc, DateTime ToUtc, ControlTrendSeries Ph, ControlTrendSeries Ec);
 
 /// <summary>Receta aprendida del lote del nodo (fase 5): ajuste aplicado a los objetivos de la etapa y por qué.</summary>
 public sealed record ControlRecipeDto(

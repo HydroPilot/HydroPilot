@@ -1,4 +1,7 @@
+@* Vista de Informes OCULTA desde 2026-10-26: no se sabe si se conserva. Sin @page no tiene ruta y no está en el menú
+   (NavMenu). El código queda igual; para volver a mostrarla, descomentar la ruta y la entrada del menú.
 @page "/reports"
+*@
 @attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
 @using HydroPilotWeb.Components.Reports

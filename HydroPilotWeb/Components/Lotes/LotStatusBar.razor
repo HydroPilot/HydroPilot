@@ -26,9 +26,9 @@
     /// <summary>Tramo a dibujar: ancho exacto y % mostrado (redondeado de forma acumulada).</summary>
     private sealed record PlacedSegment(Segment Segment, decimal Width, decimal Shown);
 
-    // El orden importa: cosechadas Baby Leaf + aptas es el "logrado" de la card Baby Leaf y,
+    // El orden importa: cosechadas Baby Leaf + Baby Leafs es el "logrado" de la card Baby Leaf y,
     // sumando candidatas, el potencial. Las cosechadas van rayadas con el color de su destino,
-    // justo antes de las activas de ese destino (Baby Leaf al principio, convencional después de ED).
+    // justo antes de las activas de ese destino (Baby Leaf al principio, adulta después de ED).
     private IEnumerable<Segment> Segments
     {
         get
@@ -41,11 +41,11 @@
             return
             [
                 new("Cosechadas Baby Leaf", Plants.HarvestedAsBabyLeaf, apta.Background, apta.Color, Striped: true),
-                new("Aptas", Plants.Apta, apta.Background, apta.Color),
+                new("Baby Leafs", Plants.Apta, apta.Background, apta.Color),
                 new("Candidatas", Plants.Candidate, candidate.Background, candidate.Color),
                 new("En desarrollo", Plants.Developing, developing.Background, developing.Color),
-                new("Cosechadas convencional", Plants.Harvested - Plants.HarvestedAsBabyLeaf, conventional.Background, conventional.Color, Striped: true),
-                new("Convencional", Plants.Conventional, conventional.Background, conventional.Color),
+                new("Cosechadas adultas", Plants.Harvested - Plants.HarvestedAsBabyLeaf, conventional.Background, conventional.Color, Striped: true),
+                new("Adultas", Plants.Conventional, conventional.Background, conventional.Color),
                 new("En riesgo", Plants.Risk, risk.Background, risk.Color),
                 new("Descartadas", Plants.Discarded, "#8a94a0", "#2b3440"),
             ];

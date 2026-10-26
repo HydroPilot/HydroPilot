@@ -5,9 +5,10 @@ namespace HydroPilotWeb.Services.Control;
 
 /// <summary>
 /// Motor del control automático de pH y CE (fase 2, niveles fijos de la etapa). Mira el tanque de un nodo y
-/// decide: nada, esperar, o una dosis de una bomba. Corrige primero la CE y después el pH (salvo pH crítico),
-/// una corrección por vez, apuntando al objetivo; espera la mezcla y dos lecturas nuevas antes de volver a
-/// dosificar. El tamaño de la dosis sale del volumen del tanque y del efecto por ml de la bomba, y se aplica
+/// decide: nada, esperar, o una dosis de una bomba. Actúa al salir de su banda de acción (<see cref="ActionBand"/>,
+/// adentro de la banda del lote) para corregir antes de que la solución salga de rango. Corrige primero la CE y
+/// después el pH (salvo pH crítico), una corrección por vez, apuntando al objetivo; espera la mezcla y dos lecturas
+/// nuevas antes de volver a dosificar. El tamaño de la dosis sale del volumen del tanque y del efecto por ml de la bomba, y se aplica
 /// solo una parte según una lógica difusa (cuánto se desvió y si se está acercando o alejando). Lógica pura,
 /// testeable sin I/O (notas/ux/logica-vista-control.md, sección 7).
 /// </summary>
@@ -22,11 +23,15 @@ public static class ControlEngine
     /// <summary>La tendencia necesita lecturas que cubran al menos este lapso.</summary>
     public const int TrendMinSpanMinutes = 5;
 
+    /// <summary>Parte del camino del objetivo a cada borde de la banda en la que el motor ya actúa.</summary>
+    public const decimal ActionBandShare = 0.7m;
+
     public static class Codes
     {
         public const string Manual = "manual";
         public const string NoLot = "no-lot";
         public const string PiSilent = "pi-silent";
+        public const string SensorFault = "sensor-fault";
         public const string InFlight = "in-flight";
         public const string Mixing = "mixing";
         public const string AwaitReading = "await-reading";
@@ -66,6 +71,9 @@ public static class ControlEngine
     /// <summary>Dosis que pudo llegar al tanque (ejecutada, fallida a medias o sin confirmar).</summary>
     public sealed record AppliedDose(string Kind, DateTime AppliedAtUtc);
 
+    /// <summary>Error de sensor de pH o CE que frena el control de ese parámetro (Kind: SensorFaultKinds).</summary>
+    public sealed record SensorIssue(string Parameter, string Kind);
+
     public sealed record Input(
         DateTime NowUtc,
         string Mode,
@@ -78,7 +86,8 @@ public static class ControlEngine
         IReadOnlyList<Pump> Pumps,
         bool HasInFlight,
         IReadOnlyList<AppliedDose> RecentDoses,
-        Settings Settings);
+        Settings Settings,
+        IReadOnlyList<SensorIssue>? Sensors = null);
 
     public sealed record Decision(
         Outcome Outcome,
@@ -91,7 +100,8 @@ public static class ControlEngine
         decimal? Value = null,
         decimal? Target = null,
         decimal? ExpectedEffect = null,
-        DateTime? UntilUtc = null);
+        DateTime? UntilUtc = null,
+        string? SensorFaultKind = null);
 
     // ------------------------------------------------------------------
     // Decisión
@@ -109,6 +119,11 @@ public static class ControlEngine
         if (input.HasInFlight)
             return new(Outcome.Waiting, Codes.InFlight);
 
+        // Sensor de pH o CE sin datos, fuera de lo normal o con un salto: no se corrige ese parámetro con lecturas
+        // dudosas; el otro sigue con su control.
+        var issues = input.Sensors ?? [];
+        SensorIssue? IssueOf(string parameter) => issues.FirstOrDefault(i => i.Parameter == parameter);
+
         DateTime? settledAt = null;
         var last = input.RecentDoses.MaxBy(d => d.AppliedAtUtc);
         if (last is not null)
@@ -116,21 +131,37 @@ public static class ControlEngine
             var until = last.AppliedAtUtc.AddMinutes(input.Settings.MixingMinutes);
             if (input.NowUtc < until)
                 return new(Outcome.Waiting, Codes.Mixing, UntilUtc: until);
-            if (PostMixReadings(input.Ph, until) < 2 || PostMixReadings(input.Ec, until) < 2)
+            // Las lecturas del parámetro frenado no se esperan (con el sensor sin datos no llegarían nunca).
+            if ((IssueOf(ControlContract.ParameterPh) is null && PostMixReadings(input.Ph, until) < 2)
+                || (IssueOf(ControlContract.ParameterEc) is null && PostMixReadings(input.Ec, until) < 2))
                 return new(Outcome.Waiting, Codes.AwaitReading);
             settledAt = until;
         }
 
-        // Primero CE (los nutrientes mueven el pH), salvo que el pH esté fuera del rango crítico.
+        // Primero CE (los nutrientes mueven el pH), salvo que el pH esté fuera del rango crítico. Si la primera no se
+        // puede corregir ahora (límite de 24 h, bomba apagada, el agua no alcanza, cambio de sentido) o vuelve sola,
+        // se corrige la otra: un bloqueo de la CE no deja al pH sin control todo el día.
         var order = IsCritical(input.Ph)
             ? new[] { (ControlContract.ParameterPh, input.Ph), (ControlContract.ParameterEc, input.Ec) }
             : new[] { (ControlContract.ParameterEc, input.Ec), (ControlContract.ParameterPh, input.Ph) };
+        Decision? held = null;
         foreach (var (parameter, magnitude) in order)
         {
-            if (!magnitude.Paused && IsOutOfBand(magnitude))
-                return DoseFor(input, parameter, magnitude, settledAt);
+            if (magnitude.Paused || IssueOf(parameter) is not null || !IsOutOfBand(magnitude))
+                continue;
+            var decision = DoseFor(input, parameter, magnitude, settledAt);
+            if (decision.Outcome == Outcome.Dose)
+                return decision;
+            held ??= decision;
         }
+        if (held is not null)
+            return held;
 
+        foreach (var (parameter, _) in order)
+        {
+            if (IssueOf(parameter) is { } issue)
+                return new(Outcome.Blocked, Codes.SensorFault, parameter, SensorFaultKind: issue.Kind);
+        }
         foreach (var (parameter, magnitude) in order)
         {
             if (magnitude.Paused && IsOutOfBand(magnitude))
@@ -200,6 +231,19 @@ public static class ControlEngine
     private static bool IsCritical(Magnitude ph) =>
         IsOutOfBand(ph) && ph.Status.Value is { } value
                         && (value < ControlContract.CriticalPhMin || value > ControlContract.CriticalPhMax);
+
+    /// <summary>
+    /// Banda en la que actúa el motor: el <see cref="ActionBandShare"/> del camino del objetivo a cada borde de la
+    /// banda del lote (pH 5,5–6,5 con objetivo 6,0 → 5,65–6,35). Así corrige antes de que la solución salga de rango,
+    /// y lo que sale de la banda del lote (Anomalías) queda para cuando el control no alcanza.
+    /// </summary>
+    public static SolutionBand ActionBand(SolutionBand band) =>
+        band is { Min: { } min, Max: { } max, Target: { } target } && max > min && target >= min && target <= max
+            ? new SolutionBand(
+                Math.Round(target - (target - min) * ActionBandShare, 3),
+                Math.Round(target + (max - target) * ActionBandShare, 3),
+                target)
+            : band;
 
     // ------------------------------------------------------------------
     // Dosis
@@ -370,14 +414,4 @@ public static class ControlEngine
     /// <summary>Se pausa la magnitud si las últimas <paramref name="doses"/> dosis medidas (más nueva primero) no tuvieron efecto.</summary>
     public static bool ShouldPause(IReadOnlyList<bool> latestEffective, int doses) =>
         doses > 0 && latestEffective.Count >= doses && latestEffective.Take(doses).All(effective => !effective);
-
-    /// <summary>Magnitudes que controla el motor: las dos en AUTO, salvo las pausadas.</summary>
-    public static IReadOnlySet<string> AutoControlled(string mode, IEnumerable<string> pausedParameters)
-    {
-        if (mode != ControlContract.ModeAuto)
-            return new HashSet<string>();
-        var controlled = new HashSet<string> { ControlContract.ParameterPh, ControlContract.ParameterEc };
-        controlled.ExceptWith(pausedParameters);
-        return controlled;
-    }
 }

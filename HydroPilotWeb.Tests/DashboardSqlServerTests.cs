@@ -70,7 +70,7 @@ public class DashboardSqlServerTests
         // Orden FK-safe: lecturas → asignaciones → rechazos → batches → plantas
         // → evaluaciones → imágenes → lotes → sensores → nodos → invernaderos → catálogos.
         ctx.SensorReadings.RemoveRange(ctx.SensorReadings);
-        ctx.NodeLotAssignments.RemoveRange(ctx.NodeLotAssignments);
+        ctx.CircuitAssignments.RemoveRange(ctx.CircuitAssignments);
         ctx.TelemetryRejections.RemoveRange(ctx.TelemetryRejections);
         ctx.TelemetryBatches.RemoveRange(ctx.TelemetryBatches);
         ctx.PlantStageHistories.RemoveRange(ctx.PlantStageHistories);
@@ -80,7 +80,11 @@ public class DashboardSqlServerTests
         ctx.Plants.RemoveRange(ctx.Plants);
         ctx.Predictions.RemoveRange(ctx.Predictions);
         ctx.Lots.RemoveRange(ctx.Lots);
+        ctx.SensorFaults.RemoveRange(ctx.SensorFaults);
+        ctx.ActuatorCommands.RemoveRange(ctx.ActuatorCommands);
+        ctx.Actuators.RemoveRange(ctx.Actuators);
         ctx.Sensors.RemoveRange(ctx.Sensors);
+        ctx.Circuits.RemoveRange(ctx.Circuits);
         ctx.IotNodes.RemoveRange(ctx.IotNodes);
         ctx.Greenhouses.RemoveRange(ctx.Greenhouses);
         ctx.SensorTypes.RemoveRange(ctx.SensorTypes);
@@ -442,7 +446,7 @@ public class DashboardSqlServerTests
     }
 
     [Fact]
-    public async Task AnomaliesAndRecommendations_AreEmpty_UntilModulesExist()
+    public async Task Anomalies_AreEmpty_UntilModuleExists()
     {
         await using (var ctx = _fixture.NewContext())
         {
@@ -455,6 +459,5 @@ public class DashboardSqlServerTests
         var snapshot = await service.GetSnapshotAsync(DashboardVariableKeys.Ph, DashboardTimeRange.Day1);
 
         Assert.Empty(snapshot.Anomalies);        // Sin módulo de anomalías integrado
-        Assert.Empty(snapshot.Recommendations);  // Sin módulo de optimization integrado
     }
 }

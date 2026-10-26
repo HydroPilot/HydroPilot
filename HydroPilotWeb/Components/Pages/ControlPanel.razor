@@ -1,22 +1,28 @@
-@page "/control"
+@page "/optimization"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
 @implements IDisposable
 
 @using System.Globalization
 @using System.Security.Claims
+@using HydroPilotWeb.Components.Control
 @using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Models
 @using HydroPilotWeb.Models.Control
 @using HydroPilotWeb.Services.Anomalies
 @using HydroPilotWeb.Services.Control
+@using HydroPilotWeb.Services.Dashboard
+@using HydroPilotWeb.Services.SensorFaults
 @inject ControlService ControlService
+@inject SensorFaultService SensorFaults
+@inject RecentVisitService RecentVisits
+@inject AnomalyQueryService AnomalyQuery
 @inject AuthenticationStateProvider AuthState
 @inject ILogger<ControlPanel> Logger
 
-<PageTitle>Control</PageTitle>
+<PageTitle>Optimización</PageTitle>
 
-@* pH y CE del tanque de cada nodo y sus 4 bombas: dosis manual y la conversación con la Pi.
+@* Optimización: pH y CE del tanque de cada circuito y sus 4 bombas: dosis manual y la conversación con la Pi.
    La lógica está en ControlRules / ControlService (notas/ux/logica-vista-control.md). *@
 
 @if (error is not null)
@@ -24,25 +30,25 @@
     <div class="alert alert-danger">@error</div>
 }
 
-@if (nodes is null)
+@if (circuits is null)
 {
     <div class="d-flex justify-content-center my-5">
         <div class="spinner-border" role="status"><span class="visually-hidden">Cargando...</span></div>
     </div>
 }
-else if (nodes.Count == 0)
+else if (circuits.Count == 0)
 {
-    <div class="alert alert-info">No hay nodos registrados.</div>
+    <div class="alert alert-info">No hay circuitos: se dan de alta en Ajustes &gt; Circuitos.</div>
 }
 else
 {
     <div class="ctl-view">
         <div class="lot-toolbar">
             <label class="visually-hidden" for="ctl-node">Nodo</label>
-            <select id="ctl-node" class="form-select lot-toolbar__select" @bind="selectedNodeId" @bind:after="ChangeNodeAsync">
-                @foreach (var node in nodes)
+            <select id="ctl-node" class="form-select lot-toolbar__select" @bind="selectedCircuitId" @bind:after="ChangeCircuitAsync">
+                @foreach (var circuit in circuits)
                 {
-                    <option value="@node.Id">@node.Identifier · @(node.LotName ?? "sin lote")</option>
+                    <option value="@circuit.Id">@circuit.Name · @(circuit.LotName ?? "sin lote")</option>
                 }
             </select>
 
@@ -60,14 +66,6 @@ else
                 else
                 {
                     <span class="lot-chip">Tanque @Liters(view.ReservoirLiters)</span>
-                }
-                @if (view.LotId is { } lotId)
-                {
-                    <a class="lot-link ctl-lot" href="lotes?lote=@lotId">@view.LotName@(view.StageName is { } stage ? $" · {stage}" : null)</a>
-                    @if (view.Recipe is { } recipe)
-                    {
-                        <span class="lot-chip lot-chip--@(IsAdjusted(recipe) ? "info" : "muted")" title="@recipe.Reason">@RecipeText(recipe)</span>
-                    }
                 }
             }
         </div>
@@ -168,6 +166,33 @@ else
                         }
                     </div>
                 </article>
+
+                @* Ambiente del invernadero (sensores sin circuito): dos cards chicas apiladas en una columna. *@
+                <div class="ctl-ambient">
+                    @Ambient("Temperatura", view.Temperature, "°C")
+                    @Ambient("Humedad", view.Humidity, "%")
+                </div>
+            </section>
+
+            @* --- Tendencia: cómo corrige el control --- *@
+            <section class="ctl-trends">
+                <header class="ctl-trends__head">
+                    <h3 class="lot-panel-title ctl-trends__title">Tendencia</h3>
+                    <div class="ctl-trends__window" role="group" aria-label="Ventana de la tendencia">
+                        @foreach (var hours in TrendWindows)
+                        {
+                            <button type="button" class="lot-chip @(trendHours == hours ? "lot-chip--info" : null)"
+                                    aria-pressed="@(trendHours == hours)" @onclick="() => SetTrendWindowAsync(hours)">@hours h</button>
+                        }
+                    </div>
+                </header>
+                @if (trend is not null)
+                {
+                    <div class="ctl-trends__grid">
+                        <ControlTrendChart Series="trend.Ph" From="trend.FromUtc" To="trend.ToUtc" />
+                        <ControlTrendChart Series="trend.Ec" From="trend.FromUtc" To="trend.ToUtc" />
+                    </div>
+                }
             </section>
 
             @* --- Bombas --- *@
@@ -233,54 +258,110 @@ else
                 }
             </section>
 
-            @* --- Conversación con la Pi --- *@
-            <h3 class="lot-panel-title ctl-timeline-title">Conversación</h3>
-            @if (view.Timeline.Count == 0)
+            @* --- Episodios del circuito, en una sola lista: "Solución" (la solución salió de la banda del lote, motor de
+                 anomalías) y "Sensor" (la lectura no es confiable: sin datos, fuera de lo normal o salto). Los errores de
+                 sensor abiertos que frenan el control van arriba, con el botón para marcarlos como resueltos. --- *@
+            <h3 class="lot-panel-title ctl-timeline-title">Episodios</h3>
+            var rows = EpisodeRows();
+            @if (rows.Count == 0)
             {
-                <div class="ctl-empty">Sin mensajes en las últimas 24 h.</div>
+                <div class="ctl-empty">Sin episodios: la solución no salió de la banda del lote y los sensores no fallaron.</div>
             }
             else
             {
-                <ol class="ctl-timeline">
-                    @foreach (var entry in view.Timeline)
+                <ol class="ctl-timeline ctl-episodes">
+                    @foreach (var row in rows)
                     {
-                        var line = Line(entry);
-                        <li class="ctl-msg">
-                            <span class="ctl-msg__time">@line.Time</span>
-                            <span class="ctl-msg__dir ctl-msg__dir--@line.Direction" title="@DirectionTitle(line.Direction)">@DirectionGlyph(line.Direction)</span>
-                            <span class="ctl-msg__title">@line.Title</span>
-                            <span class="ctl-msg__detail">@line.Detail</span>
-                            @if (line.Chip is not null)
-                            {
-                                <span class="lot-chip lot-chip--@line.Tone ctl-msg__chip">@line.Chip</span>
-                            }
+                        <li class="ctl-episode @(row.Closed ? "ctl-episode--closed" : null) @(row.Pinned ? "ctl-episode--pinned" : null)" title="@row.Hint">
+                            <span class="ctl-episode__time">@Moment(row.AtUtc)</span>
+                            <span class="ctl-episode__sev ctl-episode__sev--@row.Severity" aria-hidden="true">@(row.Severity == "critical" ? "!" : "•")</span>
+                            <span class="ctl-episode__body">
+                                <span class="ctl-episode__head">
+                                    <span class="ctl-episode__source ctl-episode__source--@(row.IsSensor ? "sensor" : "solution")">@(row.IsSensor ? "Sensor" : "Solución")</span>
+                                    <span class="ctl-episode__title">@row.Title</span>
+                                </span>
+                                <span class="ctl-episode__detail">@row.Detail</span>
+                            </span>
+                            <span class="ctl-episode__end">
+                                <span class="lot-chip lot-chip--@row.ChipTone">@row.Chip</span>
+                                @if (row.ResolvableFaultId is { } faultId && canDose)
+                                {
+                                    <button type="button" class="btn btn-sm hp-btn-secondary" disabled="@busy"
+                                            @onclick="() => ResolveFaultAsync(faultId)">Marcar como resuelto</button>
+                                }
+                            </span>
                         </li>
                     }
                 </ol>
+            }
+
+            @* --- Timeline IoT: los mensajes con la Pi (lecturas, dosis, comandos y respuestas). Arranca contraído;
+                 desplegado tiene scroll propio. --- *@
+            <h3 class="lot-panel-title ctl-timeline-title">
+                <button type="button" class="ctl-collapse" aria-expanded="@(timelineOpen ? "true" : "false")" aria-controls="ctl-timeline"
+                        @onclick="() => timelineOpen = !timelineOpen">
+                    <span class="ctl-collapse__chevron @(timelineOpen ? "ctl-collapse__chevron--open" : null)" aria-hidden="true"></span>
+                    Timeline IoT
+                </button>
+            </h3>
+            @if (timelineOpen)
+            {
+                @if (view.Timeline.Count == 0)
+                {
+                    <div class="ctl-empty">Sin mensajes en las últimas 24 h.</div>
+                }
+                else
+                {
+                    <ol id="ctl-timeline" class="ctl-timeline ctl-timeline--scroll">
+                        @foreach (var entry in view.Timeline)
+                        {
+                            var line = Line(entry);
+                            <li class="ctl-msg">
+                                <span class="ctl-msg__time">@line.Time</span>
+                                <span class="ctl-msg__dir ctl-msg__dir--@line.Direction" title="@DirectionTitle(line.Direction)">@DirectionGlyph(line.Direction)</span>
+                                <span class="ctl-msg__title">@line.Title</span>
+                                <span class="ctl-msg__detail">@line.Detail</span>
+                                @if (line.Chip is not null)
+                                {
+                                    <span class="lot-chip lot-chip--@line.Tone ctl-msg__chip">@line.Chip</span>
+                                }
+                            </li>
+                        }
+                    </ol>
+                }
             }
         }
     </div>
 }
 
 @code {
-    /// <summary>Nodo a abrir desde un enlace: /control?nodo=rpi-inv-01.</summary>
-    [SupplyParameterFromQuery(Name = "nodo")]
-    public string? NodeFromQuery { get; set; }
+    /// <summary>Circuito a abrir desde un enlace: /optimization?circuito=ID.</summary>
+    [SupplyParameterFromQuery(Name = "circuito")]
+    public int? CircuitFromQuery { get; set; }
 
-    /// <summary>Lote a abrir desde un enlace (Optimización): /control?lote=ID abre el nodo asignado al lote.</summary>
+    /// <summary>Lote a abrir desde un enlace: /optimization?lote=ID abre el circuito donde está plantado.</summary>
     [SupplyParameterFromQuery(Name = "lote")]
     public int? LotFromQuery { get; set; }
 
     private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(5);
 
-    private IReadOnlyList<ControlNodeOption>? nodes;
-    private int? selectedNodeId;
+    /// <summary>Timeline IoT desplegado (arranca contraído).</summary>
+    private bool timelineOpen;
+    private static readonly int[] TrendWindows = [1, 6, 24];
+
+    private IReadOnlyList<ControlCircuitOption>? circuits;
+    private int? selectedCircuitId;
     private ControlViewDto? view;
+    private ControlTrendDto? trend;
+    private IReadOnlyList<AnomalyEventDto> episodes = [];
+    private IReadOnlyList<SensorFaultDto> sensorFaults = [];
+    private int trendHours = 6;
     private string? error;
     private bool busy;
     private bool canDose;
     private bool canConfigure;
     private string? currentUser;
+    private ClaimsPrincipal user = new();
 
     private bool editingTank;
     private string tankText = string.Empty;
@@ -297,26 +378,28 @@ else
         try
         {
             var auth = await AuthState.GetAuthenticationStateAsync();
+            user = auth.User;
             currentUser = auth.User.Identity?.Name ?? auth.User.FindFirst(ClaimTypes.Email)?.Value;
             canDose = ControlService.CanDose(auth.User);
             canConfigure = ControlService.CanConfigure(auth.User);
 
-            nodes = await ControlService.GetNodesAsync();
-            var fromLot = LotFromQuery is { } lotId ? await ControlService.NodeForLotAsync(lotId) : null;
-            selectedNodeId = nodes.FirstOrDefault(n => n.Id == fromLot)?.Id
-                ?? nodes.FirstOrDefault(n => string.Equals(n.Identifier, NodeFromQuery, StringComparison.OrdinalIgnoreCase))?.Id
-                ?? nodes.FirstOrDefault(n => n.LotName is not null)?.Id
-                ?? nodes.FirstOrDefault()?.Id;
+            circuits = await ControlService.GetCircuitsAsync();
+            var fromLot = LotFromQuery is { } lotId ? await ControlService.CircuitForLotAsync(lotId) : null;
+            selectedCircuitId = circuits.FirstOrDefault(c => c.Id == fromLot)?.Id
+                ?? circuits.FirstOrDefault(c => c.Id == CircuitFromQuery)?.Id
+                ?? circuits.FirstOrDefault(c => c.LotName is not null)?.Id
+                ?? circuits.FirstOrDefault()?.Id;
             await LoadAsync();
+            await RecordVisitAsync();
 
             refreshCts = new CancellationTokenSource();
             _ = RefreshLoopAsync(refreshCts.Token);
         }
         catch (Exception ex)
         {
-            error = $"No se pudo cargar Control: {ex.Message}";
+            error = $"No se pudo cargar Optimización: {ex.Message}";
             Logger.LogError(ex, "Control init failed");
-            nodes ??= [];
+            circuits ??= [];
         }
     }
 
@@ -348,28 +431,47 @@ else
         }
     }
 
-    private async Task ChangeNodeAsync()
+    private async Task ChangeCircuitAsync()
     {
         amounts.Clear();
         pumpErrors.Clear();
         editingTank = false;
         await LoadAsync();
+        await RecordVisitAsync();
     }
+
+    /// <summary>"Últimos accedidos" del dashboard: el circuito abierto y su lote (no en cada refresco).</summary>
+    private Task RecordVisitAsync() => selectedCircuitId is { } circuitId
+        ? RecentVisits.RecordAsync(user, RecentVisitKinds.Optimization, view?.LotId, circuitId)
+        : Task.CompletedTask;
 
     private async Task LoadAsync()
     {
-        if (selectedNodeId is not { } nodeId)
+        if (selectedCircuitId is not { } circuitId)
             return;
         try
         {
-            view = await ControlService.GetViewAsync(nodeId);
+            view = await ControlService.GetViewAsync(circuitId);
+            trend = await ControlService.GetTrendAsync(circuitId, trendHours);
+            // Episodios del lote del desplegable (sin lote, no hay episodios de solución).
+            episodes = view?.LotId is { } lotId
+                ? await AnomalyQuery.GetTimelineAsync(new AnomalyFilter(null, null, lotId, null, null, null), EpisodeCount)
+                : [];
+            sensorFaults = await SensorFaults.RecentAsync(circuitId, EpisodeCount, view?.LotSinceUtc);
             error = null;
         }
         catch (Exception ex)
         {
-            error = $"No se pudo actualizar el nodo: {ex.Message}";
-            Logger.LogError(ex, "Control load failed for node {NodeId}", nodeId);
+            error = $"No se pudo actualizar el circuito: {ex.Message}";
+            Logger.LogError(ex, "Control load failed for circuit {CircuitId}", circuitId);
         }
+    }
+
+    private async Task SetTrendWindowAsync(int hours)
+    {
+        trendHours = hours;
+        if (selectedCircuitId is { } circuitId)
+            trend = await ControlService.GetTrendAsync(circuitId, hours);
     }
 
     // --- Dosis ---
@@ -389,12 +491,12 @@ else
 
     private async Task DoseAsync(ControlActuatorDto pump)
     {
-        if (selectedNodeId is not { } nodeId || ParsedAmount(pump.Id) is not { } amount)
+        if (selectedCircuitId is not { } circuitId || ParsedAmount(pump.Id) is not { } amount)
             return;
 
         await RunAsync(pump.Id, async () =>
         {
-            var result = await ControlService.RequestDoseAsync(nodeId, pump.Id, amount, currentUser);
+            var result = await ControlService.RequestDoseAsync(circuitId, pump.Id, amount, currentUser);
             if (!result.Succeeded)
                 pumpErrors[pump.Id] = result.Message ?? "No se pudo pedir la dosis.";
             else
@@ -406,14 +508,14 @@ else
 
     private async Task SetModeAsync(string mode)
     {
-        if (selectedNodeId is not { } nodeId || view?.Mode == mode)
+        if (selectedCircuitId is not { } circuitId || view?.Mode == mode)
             return;
 
         busy = true;
         modeError = null;
         try
         {
-            var result = await ControlService.SetModeAsync(nodeId, mode, currentUser);
+            var result = await ControlService.SetModeAsync(circuitId, mode, currentUser);
             if (!result.Succeeded)
                 modeError = result.Message;
             await LoadAsync();
@@ -421,7 +523,7 @@ else
         catch (Exception ex)
         {
             modeError = $"No se pudo cambiar el modo: {ex.Message}";
-            Logger.LogError(ex, "Control mode change failed for node {NodeId}", nodeId);
+            Logger.LogError(ex, "Control mode change failed for circuit {CircuitId}", circuitId);
         }
         finally
         {
@@ -431,14 +533,14 @@ else
 
     private async Task ResumeAsync(string parameter)
     {
-        if (selectedNodeId is not { } nodeId)
+        if (selectedCircuitId is not { } circuitId)
             return;
 
         busy = true;
         modeError = null;
         try
         {
-            var result = await ControlService.ResumeAsync(nodeId, parameter, currentUser);
+            var result = await ControlService.ResumeAsync(circuitId, parameter, currentUser);
             if (!result.Succeeded)
                 modeError = result.Message;
             await LoadAsync();
@@ -446,7 +548,34 @@ else
         catch (Exception ex)
         {
             modeError = $"No se pudo reanudar: {ex.Message}";
-            Logger.LogError(ex, "Control resume failed for node {NodeId}", nodeId);
+            Logger.LogError(ex, "Control resume failed for circuit {CircuitId}", circuitId);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    /// <summary>Error de sensor revisado: el control vuelve a actuar (se evalúa el tanque en el momento).</summary>
+    private async Task ResolveFaultAsync(int faultId)
+    {
+        if (selectedCircuitId is not { } circuitId)
+            return;
+
+        busy = true;
+        modeError = null;
+        try
+        {
+            if (!await SensorFaults.ResolveAsync(faultId, currentUser))
+                modeError = "Ese error ya estaba resuelto.";
+            else
+                await ControlService.EvaluateCircuitAsync(circuitId, DateTime.UtcNow);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            modeError = $"No se pudo marcar como resuelto: {ex.Message}";
+            Logger.LogError(ex, "Sensor fault {FaultId} resolve failed for circuit {CircuitId}", faultId, circuitId);
         }
         finally
         {
@@ -472,12 +601,12 @@ else
 
     private async Task CancelAsync(int pumpId, Guid commandId)
     {
-        if (selectedNodeId is not { } nodeId)
+        if (selectedCircuitId is not { } circuitId)
             return;
 
         await RunAsync(pumpId, async () =>
         {
-            var result = await ControlService.CancelAsync(nodeId, commandId, currentUser);
+            var result = await ControlService.CancelAsync(circuitId, commandId, currentUser);
             if (!result.Succeeded)
                 pumpErrors[pumpId] = result.Message ?? "No se pudo cancelar.";
         });
@@ -514,7 +643,7 @@ else
 
     private async Task SaveTankAsync()
     {
-        if (selectedNodeId is not { } nodeId)
+        if (selectedCircuitId is not { } circuitId)
             return;
         if (!decimal.TryParse(tankText, NumberStyles.Number, CultureInfo.InvariantCulture, out var liters))
         {
@@ -525,7 +654,7 @@ else
         busy = true;
         try
         {
-            var result = await ControlService.SetReservoirAsync(nodeId, liters, currentUser);
+            var result = await ControlService.SetReservoirAsync(circuitId, liters, currentUser);
             if (!result.Succeeded)
             {
                 tankError = result.Message;
@@ -554,6 +683,126 @@ else
     private static string Liters(decimal value) => $"{value.ToString("0.#", LotFormat.Culture)} L";
 
     private static string Clock(DateTime utc) => utc.ToLocalTime().ToString("HH:mm:ss", LotFormat.Culture);
+
+    // --- Episodios (solución y sensor) ---
+
+    /// <summary>Últimos episodios de cada tipo que se muestran (la lista tiene su propio scroll).</summary>
+    private const int EpisodeCount = 20;
+
+    /// <summary>Una fila de la lista de Episodios. Severity: critical | warning | muted.</summary>
+    private sealed record EpisodeRow(
+        DateTime AtUtc, bool IsSensor, string Severity, string Title, string Detail, string Chip, string ChipTone,
+        bool Closed, bool Pinned, int? ResolvableFaultId, string? Hint);
+
+    /// <summary>Errores de sensor abiertos que frenan el control arriba; el resto, el más reciente primero.</summary>
+    private List<EpisodeRow> EpisodeRows()
+    {
+        var solution = episodes.Select(e => new EpisodeRow(
+            e.FirstObservedAtUtc, IsSensor: false,
+            e.Status == AnomalyContract.StatusResuelta ? "muted" : e.Severity == AnomalyContract.SeverityCritica ? "critical" : "warning",
+            EpisodeTitle(e), EpisodeDetail(e), EpisodeStatus(e.Status), EpisodeTone(e.Status),
+            Closed: e.Status == AnomalyContract.StatusResuelta, Pinned: false, ResolvableFaultId: null, e.RuleDescription));
+
+        var sensor = sensorFaults.Select(f =>
+        {
+            var open = f.ResolvedAtUtc is null;
+            return new EpisodeRow(
+                f.DetectedAtUtc, IsSensor: true,
+                !open ? "muted" : f.BlocksControl ? "critical" : "warning",
+                FaultTitle(f), FaultDetail(f),
+                !open ? "Resuelto" : f.BlocksControl ? "Frena el control" : "Abierto",
+                !open ? "muted" : f.BlocksControl ? "danger" : "warning",
+                Closed: !open, Pinned: open && f.BlocksControl,
+                ResolvableFaultId: open && f.ResolvedByUser ? f.Id : null, Hint: null);
+        });
+
+        return solution.Concat(sensor)
+            .OrderByDescending(r => r.Pinned)
+            .ThenByDescending(r => r.AtUtc)
+            .ToList();
+    }
+
+    private static string Moment(DateTime utc) => utc.ToLocalTime().ToString("dd/MM HH:mm", LotFormat.Culture);
+
+    private static string EpisodeParameter(string type) => type switch
+    {
+        AnomalyContract.TypePhFueraDeBanda => "pH",
+        AnomalyContract.TypeCeFueraDeBanda => "CE",
+        AnomalyContract.TypeTemperaturaFueraDeBanda => "Temperatura",
+        AnomalyContract.TypeHumedadFueraDeBanda => "Humedad",
+        _ => type
+    };
+
+    /// <summary>"CE baja" / "pH alto" / "Temperatura alta" (según de qué lado de la banda quedó la peor lectura).</summary>
+    private static string EpisodeTitle(AnomalyEventDto episode)
+    {
+        var parameter = EpisodeParameter(episode.Type);
+        var peak = episode.PeakValue ?? episode.ObservedValue;
+        var low = episode.OperationalMin is { } min && peak < min;
+        var feminine = parameter != "pH";
+        return $"{parameter} {(low ? feminine ? "baja" : "bajo" : feminine ? "alta" : "alto")}";
+    }
+
+    /// <summary>
+    /// "llegó a 1,1 mS/cm (banda 1,2–1,8) · 4 lecturas afuera · duró 45 min"; abierto: "… · hace 20 min". El valor es
+    /// la peor lectura del episodio (la más lejana de la banda).
+    /// </summary>
+    private static string EpisodeDetail(AnomalyEventDto episode)
+    {
+        var parameter = EpisodeParameter(episode.Type);
+        var peak = episode.PeakValue ?? episode.ObservedValue;
+        var value = $"llegó a {LotFormat.Num(peak)}{SensorFaultRules.Unit(parameter)}";
+        if (episode.OperationalMin is not null || episode.OperationalMax is not null)
+            value += $" (banda {Band(episode.OperationalMin)}–{Band(episode.OperationalMax)})";
+        var duration = episode.ResolvedAtUtc is { } resolved
+            ? $"duró {Span(resolved - episode.FirstObservedAtUtc)}"
+            : $"hace {Span(DateTime.UtcNow - episode.FirstObservedAtUtc)}";
+        return string.Join(" · ", value, $"{LotFormat.Count(episode.ReadingCount, "lectura", "lecturas")} afuera", duration);
+    }
+
+    /// <summary>"menos de 1 min" / "45 min" / "2 h 10 min" / "3 d 4 h".</summary>
+    private static string Span(TimeSpan span)
+    {
+        if (span < TimeSpan.FromMinutes(1))
+            return "menos de 1 min";
+        if (span < TimeSpan.FromHours(1))
+            return $"{(int)span.TotalMinutes} min";
+        if (span < TimeSpan.FromDays(1))
+            return span.Minutes == 0 ? $"{(int)span.TotalHours} h" : $"{(int)span.TotalHours} h {span.Minutes} min";
+        return span.Hours == 0 ? $"{(int)span.TotalDays} d" : $"{(int)span.TotalDays} d {span.Hours} h";
+    }
+
+    private static string Band(decimal? value) => value is { } v ? LotFormat.Num(v) : "—";
+
+    private static string EpisodeStatus(string status) => status switch
+    {
+        AnomalyContract.StatusSeguimiento => "En seguimiento",
+        _ => status
+    };
+
+    private static string EpisodeTone(string status) => status switch
+    {
+        AnomalyContract.StatusAbierta => "danger",
+        AnomalyContract.StatusSeguimiento => "warning",
+        AnomalyContract.StatusReconocida => "info",
+        _ => "muted"
+    };
+
+    /// <summary>Card chica de ambiente: última lectura y hace cuánto; sin lecturas, "—".</summary>
+    private static RenderFragment Ambient(string label, ControlAmbientReading? reading, string unit) => __builder =>
+    {
+        <article class="ctl-kpi ctl-kpi--small">
+            <span class="ctl-kpi__label">@label</span>
+            <strong class="ctl-kpi__value ctl-kpi__value--small">
+                @(reading is { } r ? LotFormat.Num(r.Value) : "—")
+                @if (reading is not null)
+                {
+                    <small>@unit</small>
+                }
+            </strong>
+            <span class="ctl-kpi__age">@(reading is { } last ? Ago(last.ObservedAtUtc) : "sin lecturas")</span>
+        </article>
+    };
 
     private static string Ago(DateTime utc)
     {
@@ -610,21 +859,6 @@ else
         ? (v > 0m ? "+" : v < 0m ? "−" : string.Empty) + Math.Abs(v).ToString("0.00", LotFormat.Culture)
         : "—";
 
-    private static bool IsAdjusted(ControlRecipeDto recipe) => recipe.PhOffset != 0m || recipe.EcOffset != 0m;
-
-    /// <summary>Receta aprendida: el ajuste a los objetivos de la etapa, o que rigen los de la etapa.</summary>
-    private static string RecipeText(ControlRecipeDto recipe)
-    {
-        if (!IsAdjusted(recipe))
-            return "Niveles de la etapa";
-        var parts = new List<string>();
-        if (recipe.PhOffset != 0m)
-            parts.Add($"pH {Signed(recipe.PhOffset)}");
-        if (recipe.EcOffset != 0m)
-            parts.Add($"CE {Signed(recipe.EcOffset)}");
-        return $"Receta {string.Join(" · ", parts)}{(recipe.Trust < 1m ? $" · {Pct(recipe.Trust)}" : null)}";
-    }
-
     private static string Pct(decimal fraction) => (fraction * 100m).ToString("0", LotFormat.Culture) + " %";
 
     private sealed record StatusInfo(string Title, string Detail, string Tone);
@@ -648,6 +882,7 @@ else
             ControlEngine.Codes.Unconfirmed => new("Confirmando lectura", "falta una lectura que coincida", "warning"),
             ControlEngine.Codes.Paused => new($"{parameter} pausado", "revisar y reanudar", "danger"),
             ControlEngine.Codes.PiSilent => new("La Pi no consulta", "sin dosis hasta que vuelva", "danger"),
+            ControlEngine.Codes.SensorFault => new($"Control de {parameter} frenado", FaultShort(status.SensorFaultKind), "danger"),
             ControlEngine.Codes.DailyLimit => new("Límite de 24 h", dose, "warning"),
             ControlEngine.Codes.Direction => new("Cambio de sentido", status.UntilUtc is { } after ? $"espera hasta {Clock(after)}" : string.Empty, "warning"),
             ControlEngine.Codes.PumpOff => new("Bomba desactivada", status.PumpName ?? parameter, "warning"),
@@ -656,6 +891,52 @@ else
             _ => new("Sin lecturas frescas", "no dosifica a ciegas", "muted"),
         };
     }
+
+    // --- Errores de sensores ---
+
+    /// <summary>"sensor sin datos" / "lectura fuera de lo normal" / "salto en la lectura" (línea de estado del control).</summary>
+    private static string FaultShort(string? kind) => kind switch
+    {
+        SensorFaultKinds.SinDatos => "sensor sin datos",
+        SensorFaultKinds.FueraDeRango => "lectura fuera de lo normal",
+        _ => "salto en la lectura",
+    };
+
+    /// <summary>"Salto de pH: 6,02 → 4,1" / "Temperatura inusual: 45 °C" / "Sensor de CE sin datos".</summary>
+    private static string FaultTitle(SensorFaultDto fault)
+    {
+        var name = SensorFaultAlerts.Name(fault.SensorType);
+        string Value(decimal? v) => v is { } x ? SensorFaultRules.Num(x) + SensorFaultRules.Unit(fault.SensorType) : "—";
+        return fault.Kind switch
+        {
+            SensorFaultKinds.SinDatos => $"Sensor de {name} sin datos",
+            SensorFaultKinds.FueraDeRango when fault.SensorType == AnomalyContract.SensorTypeTemperatura
+                => $"Temperatura inusual: {Value(fault.Value)}",
+            SensorFaultKinds.FueraDeRango => $"{Capitalize(name)} fuera de lo normal: {Value(fault.Value)}",
+            _ => $"Salto de {name}: {Value(fault.PreviousValue)} → {Value(fault.Value)}",
+        };
+    }
+
+    /// <summary>
+    /// Abierto: "rango normal 4–8 · frena el control de pH" / "sin lecturas desde 26/10 00:41 · se resuelve sola".
+    /// Resuelto: "rango normal 4–8 · resuelto por Sol el 26/10 01:10" / "… · volvieron las lecturas 26/10 01:02".
+    /// </summary>
+    private static string FaultDetail(SensorFaultDto fault)
+    {
+        var what = fault.Kind == SensorFaultKinds.SinDatos
+            ? fault.LastReadingAtUtc is { } last ? $"sin lecturas desde {Moment(last)}" : "nunca mandó lecturas"
+            : fault.Detail ?? string.Empty;
+        string then;
+        if (fault.ResolvedAtUtc is { } resolved)
+            then = fault.ResolvedBy is { } who ? $"resuelto por {who} el {Moment(resolved)}" : $"volvieron las lecturas {Moment(resolved)}";
+        else if (fault.Kind == SensorFaultKinds.SinDatos)
+            then = fault.BlocksControl ? $"frena el control de {fault.SensorType} · se resuelve sola" : "se resuelve sola";
+        else
+            then = fault.BlocksControl ? $"frena el control de {fault.SensorType}" : "solo aviso";
+        return $"{what} · {then}";
+    }
+
+    private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     private static string ModeText(string mode) => mode switch
     {
@@ -697,7 +978,7 @@ else
         _ => new("#94a3b8", string.Empty),
     };
 
-    // --- Conversación ---
+    // --- Timeline IoT ---
 
     /// <summary>in = de la Pi a la nube · out = de la nube a la Pi · web = acción en la vista.</summary>
     private sealed record TimelineLine(string Time, string Direction, string Title, string Detail, string? Chip, string Tone);

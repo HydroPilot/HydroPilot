@@ -132,7 +132,7 @@ public class SimulationSqlServerTests
         Assert.Equal(0, result.Gdd.MissingDays);
 
         // Sin meta Baby Leaf: "máximo Baby Leaf" y "todo convencional". Sin historial: todas aptas, sin pérdidas.
-        Assert.Equal(["Máximo Baby Leaf", "Todo convencional"], result.Strategies.Select(s => s.Name));
+        Assert.Equal(["Máximo Baby Leaf", "Todo adulta"], result.Strategies.Select(s => s.Name));
         Assert.Null(result.Outlook.AptRate);
         Assert.Equal(0, result.Strategies[0].LostPlants);
         var babyLeaf = result.Strategies[0];
@@ -337,7 +337,7 @@ public class SimulationSqlServerTests
             [(sowing.AddDays(10), 1), (sowing.AddDays(26), 1)]);
         await ForecastTestData.SeedConstantTemperatureReadingsAsync(context, UtcDate(sowing), 30, 25m);
 
-        // Una de las convencionales estuvo "Baby Leaf apta": contaba como apta en el óptimo.
+        // Una de las convencionales estuvo "Baby Leaf": contaba como apta en el óptimo.
         var aptId = (await context.CommercialStages.FirstAsync(st => st.Name == CommercialStageNames.BabyLeafApta)).Id;
         var conventionalPlant = await context.Plants.FirstAsync(p => p.LotId == lot.Id && p.CommercialStageId != aptId && p.OperationalState == PlantOperationalState.Cosechada);
         context.PlantStageHistories.Add(new PlantStageHistory
@@ -610,7 +610,7 @@ public class SimulationSqlServerTests
         int Lots, decimal? LotsAccumulatedGdd, int Predictions, int SensorReadings,
         int Plants, int BabyLeafEvaluations, int PlantStageHistories, int BabyLeafConfigs,
         int CropTypes, int PhenologicalStages, int CommercialStages, int LotStatuses,
-        int NodeLotAssignments, int DailyWeatherForecasts, int PlantImages, int PlantImageAnalyses);
+        int CircuitAssignments, int DailyWeatherForecasts, int PlantImages, int PlantImageAnalyses);
 
     private async Task<ProductiveSnapshot> ProductiveSnapshotAsync()
     {
@@ -628,7 +628,7 @@ public class SimulationSqlServerTests
             PhenologicalStages: await context.PhenologicalStages.CountAsync(),
             CommercialStages: await context.CommercialStages.CountAsync(),
             LotStatuses: await context.LotStatuses.CountAsync(),
-            NodeLotAssignments: await context.NodeLotAssignments.CountAsync(),
+            CircuitAssignments: await context.CircuitAssignments.CountAsync(),
             DailyWeatherForecasts: await context.DailyWeatherForecasts.CountAsync(),
             PlantImages: await context.PlantImages.CountAsync(),
             PlantImageAnalyses: await context.PlantImageAnalyses.CountAsync());

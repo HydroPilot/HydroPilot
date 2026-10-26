@@ -75,66 +75,41 @@ public class GddService
     }
 
     /// <summary>
-    /// Sensor(es) ambiental(es) de temperatura del invernadero del lote (F-02):
-    /// se prefiere el sensor cuyo TechnicalKey/Name marca ambiente ("amb"),
-    /// priorizando el asignado al lote por NodeLotAssignment; si no hay sensor
-    /// ambiental explícito, se usan los sensores de temperatura activos con
+    /// Sensor de temperatura del invernadero del lote (F-02): el del invernadero (sin circuito), que vale para los
+    /// lotes de todos los circuitos. Si no hay, se usan los sensores de temperatura activos del invernadero con
     /// advertencia (nunca "cualquiera del primer invernadero").
     /// </summary>
-    private static async Task<(List<int> SensorIds, List<int> NodeIds, string? Label, List<string> Warnings)>
+    private static async Task<(List<int> SensorIds, string? Label, List<string> Warnings)>
         ResolveAmbientTemperatureSensorsAsync(HydroPilotDbContext context, Lot lot, CancellationToken ct)
     {
         var warnings = new List<string>();
 
         var sensors = await context.Sensors.AsNoTracking()
-            .Include(s => s.SensorType)
             .Where(s => s.IsActive
                         && s.SensorType!.Name == "Temperatura"
                         && s.Node != null
                         && s.Node!.GreenhouseId == lot.GreenhouseId)
-            .Select(s => new { s.Id, s.NodeId, s.Name, s.TechnicalKey })
-            .OrderBy(s => s.Name)
+            .Select(s => new { s.Id, s.Name, s.CircuitId })
+            .OrderBy(s => s.Id)
             .ToListAsync(ct);
 
         if (sensors.Count == 0)
         {
             warnings.Add("Sin sensor de temperatura activo en el invernadero del lote: GDD observado no disponible (no se asume 0).");
-            return ([], [], null, warnings);
+            return ([], null, warnings);
         }
 
-        var ambient = sensors
-            .Where(s => s.Name.Contains("amb", StringComparison.OrdinalIgnoreCase)
-                        || s.TechnicalKey.Contains("amb", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
+        var ambient = sensors.Where(s => s.CircuitId == null).ToList();
         if (ambient.Count == 0)
         {
-            warnings.Add($"No se identificó un sensor ambiental explícito en el invernadero; se usan los {sensors.Count} sensores de temperatura activos.");
-            return (sensors.Select(s => s.Id).ToList(), sensors.Select(s => s.NodeId).Distinct().ToList(), null, warnings);
-        }
-
-        // Varios ambientales: preferir el asignado al lote (asignación nodo→lote).
-        if (ambient.Count > 1)
-        {
-            var nodeIds = ambient.Select(s => s.NodeId).Distinct().ToList();
-            var assigned = await context.NodeLotAssignments.AsNoTracking()
-                .Where(a => nodeIds.Contains(a.NodeId) && a.LotId == lot.Id)
-                .Select(a => a.NodeId)
-                .Distinct()
-                .ToListAsync(ct);
-
-            var preferred = ambient.Where(s => assigned.Contains(s.NodeId)).ToList();
-            if (preferred.Count > 0)
-                ambient = preferred;
+            warnings.Add($"El invernadero no tiene sensor de temperatura propio (sin circuito); se usan los {sensors.Count} sensores de temperatura activos.");
+            return (sensors.Select(s => s.Id).ToList(), null, warnings);
         }
 
         var chosen = ambient[0];
         if (ambient.Count > 1)
-        {
-            warnings.Add($"Hay {ambient.Count} sensores ambientales posibles; se usa el primero ('{chosen.Name}').");
-        }
-
-        return ([chosen.Id], [chosen.NodeId], chosen.Name, warnings);
+            warnings.Add($"Hay {ambient.Count} sensores de temperatura del invernadero; se usa el primero ('{chosen.Name}').");
+        return ([chosen.Id], chosen.Name, warnings);
     }
 
     /// <summary>
@@ -168,7 +143,7 @@ public class GddService
 
         var baseTemp = lot.CropType?.BaseTemperature ?? 4.5m;
 
-        var (sensorIds, nodeIds, sensorLabel, sensorWarnings) =
+        var (sensorIds, sensorLabel, sensorWarnings) =
             await ResolveAmbientTemperatureSensorsAsync(context, lot, ct);
         warnings.AddRange(sensorWarnings);
         if (sensorIds.Count == 0)
@@ -182,7 +157,7 @@ public class GddService
             .Where(r => r.Quality == TelemetryContract.QualityValid
                         || r.Quality == TelemetryContract.QualitySuspect
                         || r.Quality == TelemetryContract.QualityStale)
-            .Select(r => new { r.ObservedAtUtc, r.Value, r.Quality, r.NodeId, r.ExternalReadingId })
+            .Select(r => new { r.ObservedAtUtc, r.Value, r.ExternalReadingId })
             .ToListAsync(ct);
 
         var excludedByQuality = await context.SensorReadings.AsNoTracking()
@@ -198,38 +173,8 @@ public class GddService
             warnings.Add($"Se descartaron {excludedByQuality} lecturas por calidad no usable (INVALID/FUTURE/NO_DATA/SENSOR_ERROR).");
         }
 
-        // Respetar lote/sector cuando existe asociación nodo→lote: una lectura de un
-        // nodo asignado a OTRO lote en ese momento no alimenta este lote.
-        var assignments = await context.NodeLotAssignments.AsNoTracking()
-            .Where(a => nodeIds.Contains(a.NodeId))
-            .Where(a => a.ValidFromUtc < cutoffUtc
-                        && (a.ValidUntilUtc == null || a.ValidUntilUtc > sowingStartUtc))
-            .Select(a => new { a.NodeId, a.LotId, a.ValidFromUtc, a.ValidUntilUtc })
-            .ToListAsync(ct);
-
-        var excludedByAssignment = 0;
-        var usable = new List<(DateTime ObservedAtUtc, decimal Value, string ReadingId)>();
-        foreach (var r in readings)
-        {
-            var activeAssignments = assignments
-                .Where(a => a.NodeId == r.NodeId
-                            && a.ValidFromUtc <= r.ObservedAtUtc
-                            && (a.ValidUntilUtc == null || a.ValidUntilUtc > r.ObservedAtUtc))
-                .ToList();
-
-            if (activeAssignments.Count > 0 && activeAssignments.All(a => a.LotId != lot.Id))
-            {
-                excludedByAssignment++;
-                continue;
-            }
-
-            usable.Add((r.ObservedAtUtc, r.Value, r.ExternalReadingId));
-        }
-
-        if (excludedByAssignment > 0)
-        {
-            warnings.Add($"Se descartaron {excludedByAssignment} lecturas asociadas a otro lote por asignación nodo→lote.");
-        }
+        // La temperatura es del invernadero: vale para los lotes de todos sus circuitos.
+        var usable = readings.Select(r => (r.ObservedAtUtc, r.Value, ReadingId: r.ExternalReadingId)).ToList();
 
         if (usable.Any(r => r.ReadingId.StartsWith("mock", StringComparison.OrdinalIgnoreCase)
                             || r.ReadingId.StartsWith("demo", StringComparison.OrdinalIgnoreCase)))

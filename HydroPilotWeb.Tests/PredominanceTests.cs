@@ -11,14 +11,14 @@ public class PredominanceTests
         var counts = new Dictionary<string, int>
         {
             ["En desarrollo"] = 3,
-            ["Baby Leaf apta"] = 7,
+            ["Baby Leaf"] = 7,
             ["Candidata Baby Leaf"] = 2
         };
 
         var (winner, isMixed) = Predominance.Resolve(counts);
 
         Assert.False(isMixed);
-        Assert.Equal("Baby Leaf apta", winner);
+        Assert.Equal("Baby Leaf", winner);
     }
 
     [Fact]
@@ -27,7 +27,7 @@ public class PredominanceTests
         var counts = new Dictionary<string, int>
         {
             ["En desarrollo"] = 4,
-            ["Baby Leaf apta"] = 4,
+            ["Baby Leaf"] = 4,
             ["Riesgo / fuera de ventana"] = 1
         };
 
@@ -43,7 +43,7 @@ public class PredominanceTests
         var counts = new Dictionary<string, int>
         {
             ["En desarrollo"] = 2,
-            ["Baby Leaf apta"] = 2,
+            ["Baby Leaf"] = 2,
             ["Candidata Baby Leaf"] = 2
         };
 
@@ -65,7 +65,7 @@ public class PredominanceTests
         var (winner, isMixed) = Predominance.Resolve(new Dictionary<string, int>
         {
             ["En desarrollo"] = 0,
-            ["Baby Leaf apta"] = 0
+            ["Baby Leaf"] = 0
         });
 
         Assert.False(isMixed);

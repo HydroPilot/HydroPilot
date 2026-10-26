@@ -1,3 +1,5 @@
+using HydroPilotWeb.Services.Lotes;
+
 namespace HydroPilotWeb.Components.Lotes;
 
 /// <summary>
@@ -13,8 +15,8 @@ public static class CommercialStagePalette
     {
         "En desarrollo" => new CellStyle("#2e9e4f", "#ffffff", "ED", "En desarrollo"),
         "Candidata Baby Leaf" => new CellStyle("#e8a33d", "#3d2800", "CAN", "Candidata Baby Leaf"),
-        "Baby Leaf apta" => new CellStyle("#2d7dd2", "#ffffff", "BL", "Baby Leaf apta"),
-        "Cosecha convencional" => new CellStyle("#8a4fd3", "#ffffff", "CC", "Cosecha convencional"),
+        CommercialStageNames.BabyLeafApta => new CellStyle("#2d7dd2", "#ffffff", "BL", "Baby Leaf"),
+        CommercialStageNames.CosechaConvencional => new CellStyle("#8a4fd3", "#ffffff", "AD", "Adulta"),
         "Riesgo / fuera de ventana" => new CellStyle("#d64545", "#ffffff", "R", "Riesgo / fuera de ventana"),
         _ => new CellStyle("#b9c2cc", "#2b3440", "?", stageName ?? "Sin estado")
     };

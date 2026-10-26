@@ -6,10 +6,14 @@ namespace HydroPilotWeb.Services.Control;
 /// <summary>
 /// Receta aprendida (fase 5): cuánto correr los objetivos de pH y CE de la etapa para un lote.
 /// - Historial: de los lotes cerrados parecidos (temporada × clima, los mismos pesos que la previsión de Lotes)
-///   se miran los que dieron Baby Leaf por encima del promedio, y se toma con cuánto pH y CE trabajaron respecto
-///   de los niveles de su etapa. Con pocos lotes el ajuste se achica (evidencia); sin lotes es 0.
-/// - Lote actual: si con el ajuste puesto el score Baby Leaf promedio del lote viene cayendo, la confianza en el
-///   ajuste baja a la mitad cada día (vuelve hacia los niveles de la etapa); si se mantiene o sube, se recupera.
+///   se miran los que dieron Baby Leaf por encima del promedio, y se toma cuánto más alto o más bajo trabajaron
+///   (pH y CE medidos respecto de los niveles de su etapa) que el conjunto de los parecidos. Se compara contra el
+///   conjunto y no contra el objetivo porque el control deja la solución siempre del mismo lado del objetivo (el pH
+///   sube solo y se corrige al salir de la banda): ese corrimiento lo tienen todos los lotes y no dice qué funcionó.
+///   Con pocos lotes el ajuste se achica (evidencia); sin lotes, o con uno solo, es 0.
+/// - Lote actual: si con el ajuste puesto el score Baby Leaf de sus plantas viene cayendo (las mismas plantas, día
+///   contra día), la confianza en el ajuste baja a la mitad cada día (vuelve hacia los niveles de la etapa); si se
+///   mantiene o sube, se recupera.
 /// El objetivo se corre dentro de la banda de la etapa, que sigue siendo el límite seguro. Lógica pura
 /// (notas/ux/logica-vista-control.md, sección 8).
 /// </summary>
@@ -26,6 +30,12 @@ public static class RecipeRules
     public const decimal FallingScorePerDay = 1m;
     public const int ScoreTrendDays = 5;
     public const int MinScoreDays = 3;
+
+    /// <summary>Dos evaluaciones de la misma planta cuentan como "día contra día" si las separan hasta 2 días.</summary>
+    public const int MaxScoreGapDays = 2;
+
+    /// <summary>Una evaluación diaria de una planta (la tarea de etapa comercial guarda una por planta y día).</summary>
+    public sealed record ScoreSample(int PlantId, DateOnly Day, decimal Score, decimal Gdd);
 
     /// <summary>Un lote cerrado: siembra (temporada), clima, Baby Leaf logrado y con qué pH/CE trabajó (respecto de su etapa).</summary>
     public sealed record PastLot(
@@ -64,14 +74,19 @@ public static class RecipeRules
         var evidence = total * total / weighted.Sum(x => x.Weight * x.Weight);
         var shrink = evidence / (evidence + EvidencePrior);
 
+        decimal? WeightedMean(IEnumerable<(PastLot Lot, decimal Weight)> lots, Func<PastLot, decimal?> pick)
+        {
+            var items = lots.Where(x => pick(x.Lot) is not null).ToList();
+            var weight = items.Sum(x => x.Weight);
+            return weight == 0m ? null : items.Sum(x => x.Weight * pick(x.Lot)!.Value) / weight;
+        }
+
+        // Los buenos contra el conjunto de los parecidos.
         decimal Offset(Func<PastLot, decimal?> pick, decimal max)
         {
-            var items = good.Where(x => pick(x.Lot) is not null).ToList();
-            var weight = items.Sum(x => x.Weight);
-            if (weight == 0m)
+            if (WeightedMean(good, pick) is not { } goodMean || WeightedMean(weighted, pick) is not { } allMean)
                 return 0m;
-            var raw = items.Sum(x => x.Weight * pick(x.Lot)!.Value) / weight;
-            return Math.Clamp(RoundStep(raw * shrink), -max, max);
+            return Math.Clamp(RoundStep((goodMean - allMean) * shrink), -max, max);
         }
 
         return new HistoryRecipe(
@@ -84,25 +99,47 @@ public static class RecipeRules
     }
 
     /// <summary>
-    /// Tendencia del score Baby Leaf promedio del lote, en puntos por día (mínimos cuadrados) sobre los últimos
-    /// <see cref="ScoreTrendDays"/> días con score. Null con menos de <see cref="MinScoreDays"/> días.
+    /// Cambio diario del score de las mismas plantas: por día, el promedio de (score − score anterior de esa planta) ÷
+    /// días entre las dos evaluaciones. El promedio del lote no sirve: al cortar Baby Leaf se van las mejores plantas, y
+    /// el criterio de ventana suma o resta 20 puntos a todas cuando el lote entra o sale de la ventana. Por eso se
+    /// comparan las mismas plantas y no se cuentan los pares que cruzan un borde de la ventana
+    /// (<paramref name="windowMin"/>, <paramref name="windowMax"/>).
     /// </summary>
-    public static decimal? ScoreTrendPerDay(IReadOnlyList<(DateOnly Day, decimal Score)> daily)
+    public static IReadOnlyList<(DateOnly Day, decimal Change)> DailyScoreChanges(
+        IReadOnlyList<ScoreSample> samples, decimal windowMin, decimal windowMax)
     {
-        var last = daily.OrderByDescending(d => d.Day).Take(ScoreTrendDays).ToList();
-        if (last.Count < MinScoreDays)
-            return null;
+        static int Side(decimal gdd, decimal min, decimal max) => gdd < min ? 0 : gdd < max ? 1 : 2;
 
-        var first = last.Min(d => d.Day.DayNumber);
-        var xs = last.Select(d => (decimal)(d.Day.DayNumber - first)).ToList();
-        var ys = last.Select(d => d.Score).ToList();
-        var meanX = xs.Average();
-        var meanY = ys.Average();
-        var sxx = xs.Sum(x => (x - meanX) * (x - meanX));
-        if (sxx == 0m)
-            return null;
-        var sxy = xs.Zip(ys, (x, y) => (x - meanX) * (y - meanY)).Sum();
-        return Math.Round(sxy / sxx, 2);
+        var changes = new List<(DateOnly Day, decimal Change)>();
+        foreach (var plant in samples.GroupBy(s => s.PlantId))
+        {
+            var ordered = plant.OrderBy(s => s.Day).ToList();
+            for (var i = 1; i < ordered.Count; i++)
+            {
+                var (before, after) = (ordered[i - 1], ordered[i]);
+                var gap = after.Day.DayNumber - before.Day.DayNumber;
+                if (gap < 1 || gap > MaxScoreGapDays
+                    || Side(before.Gdd, windowMin, windowMax) != Side(after.Gdd, windowMin, windowMax))
+                    continue;
+                changes.Add((after.Day, (after.Score - before.Score) / gap));
+            }
+        }
+        return changes
+            .GroupBy(c => c.Day)
+            .Select(g => (g.Key, Math.Round(g.Average(c => c.Change), 2)))
+            .OrderBy(c => c.Key)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Tendencia del score de las plantas del lote, en puntos por día: el promedio del cambio diario
+    /// (<see cref="DailyScoreChanges"/>) de los últimos <see cref="ScoreTrendDays"/> días que lo tienen. Null con menos
+    /// de <see cref="MinScoreDays"/> días.
+    /// </summary>
+    public static decimal? ScoreTrendPerDay(IReadOnlyList<(DateOnly Day, decimal Change)> dailyChanges)
+    {
+        var last = dailyChanges.OrderByDescending(d => d.Day).Take(ScoreTrendDays).ToList();
+        return last.Count < MinScoreDays ? null : Math.Round(last.Average(d => d.Change), 2);
     }
 
     /// <summary>

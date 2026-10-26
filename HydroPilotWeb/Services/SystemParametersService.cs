@@ -5,6 +5,7 @@ using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Optimization;
+using HydroPilotWeb.Services.SensorFaults;
 
 namespace HydroPilotWeb.Services;
 
@@ -18,14 +19,18 @@ public sealed record YieldParameters(
 
 public sealed record ParametersUpdateResult(bool Succeeded, IReadOnlyList<string> Errors);
 
+/// <summary>Cada cuántos días se chequea (calibra) un tipo de sensor; null = sin chequeo programado.</summary>
+public sealed record SensorCheckInterval(string SensorType, int? Days);
+
 /// <summary>
 /// Parámetros globales del sistema (Ajustes &gt; Parámetros):
 /// <list type="bullet">
 /// <item>Peso promedio por planta de cada destino: AppSettings.</item>
-/// <item>Precio por kg de cada destino: catálogo de precios a nivel global, el mismo que usa
-/// Optimización. Un precio específico de un lote, si existiera, sigue teniendo prioridad.</item>
-/// <item>Precio de nutrientes por litro (gastos del sistema de Simulación y Optimización): AppSettings.</item>
-/// <item>Mínimos para que Optimización recomiende cambiar de estrategia ($ por lote y % del margen): AppSettings.</item>
+/// <item>Precio por kg de cada destino: catálogo de precios a nivel global. Un precio específico de un lote,
+/// si existiera, sigue teniendo prioridad.</item>
+/// <item>Precio de nutrientes por litro (gastos del sistema de Simulación): AppSettings.</item>
+/// <item>Días entre chequeos de cada tipo de sensor (dashboard de Invernadero): AppSettings.</item>
+/// <item>Rango normal y salto máximo por tipo de sensor (errores de sensores): AppSettings.</item>
 /// </list>
 /// Sin valor cargado quedan "sin definir": los precios demo del catálogo no cuentan como definidos.
 /// Solo Administrador y Productor los editan; el resto los ve.
@@ -38,10 +43,10 @@ public class SystemParametersService
     public const string ConventionalGramsKey = "YieldConventionalGramsPerPlant";
     public const string NutrientPricePerLiterKey = "NutrientPricePerLiter";
     public const decimal MaxNutrientPricePerLiter = 10_000_000m;
-    public const string StrategyMinGainAmountKey = "StrategyMinGainAmount";
-    public const string StrategyMinGainPercentKey = "StrategyMinGainPercent";
-    public const decimal MaxStrategyMinGainAmount = 1_000_000_000m;
-    public const decimal MaxStrategyMinGainPercent = 1000m;
+
+    /// <summary>Días entre chequeos de un tipo de sensor: AppSettings "SensorCheckDays:{tipo}" (ej. "SensorCheckDays:pH").</summary>
+    public const string SensorCheckDaysKeyPrefix = "SensorCheckDays:";
+    public const int MaxSensorCheckDays = 365;
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
@@ -60,14 +65,13 @@ public class SystemParametersService
     public static bool CanEdit(ClaimsPrincipal user) => EditorRoles.Any(user.IsInRole);
 
     /// <summary>
-    /// Precio por kg de cada destino vigente para un lote a una fecha, con la misma precedencia que
-    /// Optimización (lote &gt; cultivo &gt; global) pero sin los precios demo: si el usuario no cargó
-    /// uno, queda sin definir.
+    /// Precio por kg de cada destino vigente para un lote a una fecha (lote &gt; cultivo &gt; global), sin
+    /// los precios demo: si el usuario no cargó uno, queda sin definir.
     /// </summary>
     public static async Task<YieldPrices> ResolveLotPricesAsync(
         HydroPilotDbContext context, Lot lot, DateOnly date, CancellationToken ct = default)
     {
-        var rows = (await CostPriceResolver.ResolveActiveAsync(context, lot, date, ct, includeDemo: false))
+        var rows = (await CostPriceResolver.ResolveActiveAsync(context, lot, date, ct))
             .Where(r => r.Item == OptimizationContractCostItem.PricePerKg)
             .ToList();
         if (rows.Count == 0)
@@ -155,7 +159,7 @@ public class SystemParametersService
         await _settings.SetDecimalAsync(ConventionalGramsKey, normalized.ConventionalGrams, ct);
 
         _logger.LogInformation(
-            "Parámetros de rendimiento actualizados por {User}: Baby Leaf {BabyLeaf} g y {BabyLeafPrice}/kg, convencional {Conventional} g y {ConventionalPrice}/kg",
+            "Parámetros de rendimiento actualizados por {User}: Baby Leaf {BabyLeaf} g y {BabyLeafPrice}/kg, adulta {Conventional} g y {ConventionalPrice}/kg",
             user.Identity?.Name, normalized.BabyLeafGrams, normalized.BabyLeafPricePerKg,
             normalized.ConventionalGrams, normalized.ConventionalPricePerKg);
 
@@ -182,18 +186,62 @@ public class SystemParametersService
         return new ParametersUpdateResult(true, []);
     }
 
-    /// <summary>
-    /// Mínimos para recomendar cambiar de estrategia (la ganancia tiene que superar los dos). Sin valor
-    /// cargado, los de fábrica ($10.000 y 10 %).
-    /// </summary>
-    public async Task<OptimizationThresholds> GetStrategyThresholdsAsync(CancellationToken ct = default) => new(
-        await _settings.GetDecimalAsync(StrategyMinGainAmountKey, ct) ?? OptimizationContract.DefaultStrategyMinGainAmount,
-        await _settings.GetDecimalAsync(StrategyMinGainPercentKey, ct) ?? OptimizationContract.DefaultStrategyMinGainPercent);
+    /// <summary>Días entre chequeos de cada tipo de sensor (catálogo SensorTypes); null = sin chequeo programado.</summary>
+    public async Task<IReadOnlyList<SensorCheckInterval>> GetSensorCheckIntervalsAsync(CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var types = await context.SensorTypes.AsNoTracking().OrderBy(t => t.Id).Select(t => t.Name).ToListAsync(ct);
+        var keys = types.Select(SensorCheckDaysKey).ToList();
+        var values = await context.AppSettings.AsNoTracking()
+            .Where(s => keys.Contains(s.Key))
+            .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
 
-    /// <summary>Guarda los mínimos de cambio de estrategia (vacío = el de fábrica). Solo Administrador y Productor.</summary>
-    public async Task<ParametersUpdateResult> UpdateStrategyThresholdsAsync(
-        decimal? minGainAmount,
-        decimal? minGainPercent,
+        return types
+            .Select(type => new SensorCheckInterval(type,
+                values.TryGetValue(SensorCheckDaysKey(type), out var value)
+                && int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var days)
+                    ? days
+                    : null))
+            .ToList();
+    }
+
+    /// <summary>Guarda los días entre chequeos por tipo de sensor (vacío = sin chequeo). Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateSensorCheckIntervalsAsync(
+        IReadOnlyList<SensorCheckInterval> intervals,
+        ClaimsPrincipal user,
+        CancellationToken ct = default)
+    {
+        if (!CanEdit(user))
+            return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
+
+        var errors = intervals
+            .Where(i => i.Days is { } days && (days < 1 || days > MaxSensorCheckDays))
+            .Select(i => $"Los días entre chequeos de {i.SensorType} tienen que estar entre 1 y {MaxSensorCheckDays}.")
+            .ToList();
+        if (errors.Count > 0)
+            return new ParametersUpdateResult(false, errors);
+
+        foreach (var interval in intervals)
+            await _settings.SetDecimalAsync(SensorCheckDaysKey(interval.SensorType), interval.Days, ct);
+
+        _logger.LogInformation("Chequeo de sensores actualizado por {User}: {Intervals}", user.Identity?.Name,
+            string.Join(", ", intervals.Select(i => $"{i.SensorType} {i.Days?.ToString() ?? "sin definir"}")));
+        return new ParametersUpdateResult(true, []);
+    }
+
+    public static string SensorCheckDaysKey(string sensorType) => SensorCheckDaysKeyPrefix + sensorType;
+
+    /// <summary>Rango normal y salto máximo de pH, CE y temperatura (los cargados o los de fábrica).</summary>
+    public async Task<IReadOnlyList<SensorFaultLimits>> GetSensorFaultLimitsAsync(CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var limits = await SensorFaultRules.LoadLimitsAsync(context, ct);
+        return SensorFaultRules.Defaults.Select(d => limits[d.SensorType]).ToList();
+    }
+
+    /// <summary>Guarda el rango normal y el salto máximo por tipo de sensor. Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateSensorFaultLimitsAsync(
+        IReadOnlyList<SensorFaultLimits> limits,
         ClaimsPrincipal user,
         CancellationToken ct = default)
     {
@@ -201,17 +249,33 @@ public class SystemParametersService
             return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
 
         var errors = new List<string>();
-        if (minGainAmount is { } amount && (amount < 0m || amount > MaxStrategyMinGainAmount))
-            errors.Add("La ganancia mínima por lote no puede ser negativa.");
-        if (minGainPercent is { } percent && (percent < 0m || percent > MaxStrategyMinGainPercent))
-            errors.Add($"La ganancia mínima tiene que estar entre 0 % y {MaxStrategyMinGainPercent:0} %.");
+        foreach (var limit in limits)
+        {
+            if (SensorFaultRules.Defaults.All(d => d.SensorType != limit.SensorType))
+            {
+                errors.Add($"{limit.SensorType} no tiene límites de errores de sensor.");
+                continue;
+            }
+            if (limit.Min >= limit.Max)
+                errors.Add($"En {limit.SensorType}, el mínimo normal tiene que ser menor que el máximo.");
+            if (limit.Jump <= 0)
+                errors.Add($"En {limit.SensorType}, el salto máximo tiene que ser mayor que 0.");
+            if (TelemetryValidationService.FindBand(limit.SensorType) is { } band
+                && (limit.Min < band.PhysicalMin || limit.Max > band.PhysicalMax))
+                errors.Add($"En {limit.SensorType}, el rango normal tiene que estar entre {SensorFaultRules.Num(band.PhysicalMin)} y {SensorFaultRules.Num(band.PhysicalMax)}.");
+        }
         if (errors.Count > 0)
             return new ParametersUpdateResult(false, errors);
 
-        await _settings.SetDecimalAsync(StrategyMinGainAmountKey, minGainAmount is { } a ? Math.Round(a, 2) : null, ct);
-        await _settings.SetDecimalAsync(StrategyMinGainPercentKey, minGainPercent is { } p ? Math.Round(p, 2) : null, ct);
-        _logger.LogInformation("Mínimos de cambio de estrategia actualizados por {User}: {Amount} y {Percent} %",
-            user.Identity?.Name, minGainAmount, minGainPercent);
+        foreach (var limit in limits)
+        {
+            await _settings.SetDecimalAsync(SensorFaultRules.MinKey(limit.SensorType), limit.Min, ct);
+            await _settings.SetDecimalAsync(SensorFaultRules.MaxKey(limit.SensorType), limit.Max, ct);
+            await _settings.SetDecimalAsync(SensorFaultRules.JumpKey(limit.SensorType), limit.Jump, ct);
+        }
+
+        _logger.LogInformation("Límites de errores de sensores actualizados por {User}: {Limits}", user.Identity?.Name,
+            string.Join(", ", limits.Select(l => $"{l.SensorType} {l.Min}–{l.Max} salto {l.Jump}")));
         return new ParametersUpdateResult(true, []);
     }
 
@@ -226,9 +290,9 @@ public class SystemParametersService
 
     /// <summary>
     /// Deja vigente desde hoy el precio global del destino y cierra ayer los otros vigentes (demo o
-    /// de cultivo) para que valga en todo el sistema, también en Optimización; el histórico queda.
+    /// de cultivo) para que valga en todo el sistema; el histórico queda.
     /// Una corrección del mismo día se hace en el lugar. Vacío = sin definir: se cierran los
-    /// cargados a mano, pero los demo se dejan (Optimización los sigue usando, etiquetados).
+    /// cargados a mano, pero los demo se dejan.
     /// </summary>
     private static async Task SetPricePerKgAsync(
         HydroPilotDbContext context, string destination, decimal? value, CancellationToken ct)

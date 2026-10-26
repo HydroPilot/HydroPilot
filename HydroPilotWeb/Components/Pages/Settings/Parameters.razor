@@ -1,8 +1,11 @@
 @page "/settings/parametros"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @using HydroPilotWeb.Services.Lotes
-@using HydroPilotWeb.Models.Optimization
+@using HydroPilotWeb.Services.Anomalies
+@using HydroPilotWeb.Services.SensorFaults
+@using HydroPilotWeb.Components.Lotes
 @inject SystemParametersService ParametersService
+@inject AnomalyQueryService AnomalyQuery
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Parámetros del sistema - HydroPilot</PageTitle>
@@ -50,7 +53,7 @@
                     <span class="settings-eyebrow">Gastos del sistema</span>
                     <h3>Precio de nutrientes</h3>
                     <p class="panel__subtitle">
-                        Con este precio Simulación y Optimización calculan el gasto en nutrientes: litros que se consumen
+                        Con este precio Simulación calcula el gasto en nutrientes: litros que se consumen
                         según las plantas vivas y la etapa × precio por litro.
                     </p>
                 </div>
@@ -100,10 +103,12 @@
         <article class="panel settings-panel">
             <div class="settings-panel__header">
                 <div>
-                    <span class="settings-eyebrow">Optimización</span>
-                    <h3>Cambio de estrategia</h3>
+                    <span class="settings-eyebrow">Sensores</span>
+                    <h3>Chequeo de sensores</h3>
                     <p class="panel__subtitle">
-                        Optimización recomienda cambiar la estrategia de un lote solo si gana más que los dos mínimos.
+                        Cada cuántos días se chequea (calibra) cada tipo de sensor. El próximo chequeo es la última
+                        calibración + estos días; se ve en Invernadero, donde también se registra ("Calibrado hoy").
+                        Vacío = sin chequeo programado.
                     </p>
                 </div>
                 @if (!canEdit)
@@ -112,30 +117,28 @@
                 }
             </div>
 
-            @if (current is not null)
+            @if (checkIntervals is not null)
             {
                 <div class="lot-editor">
-                    <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="param-gain-amount">Ganancia mínima (@current.Currency por lote)</label>
-                        <input id="param-gain-amount" type="number" class="form-control" min="0" step="1"
-                               @bind="minGainAmount" @bind:event="oninput" disabled="@(!canEdit)"
-                               placeholder="@OptimizationContract.DefaultStrategyMinGainAmount.ToString("0")" />
-                    </div>
-                    <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="param-gain-percent">Ganancia mínima (% del margen)</label>
-                        <input id="param-gain-percent" type="number" class="form-control" min="0" step="0.1"
-                               @bind="minGainPercent" @bind:event="oninput" disabled="@(!canEdit)"
-                               placeholder="@OptimizationContract.DefaultStrategyMinGainPercent.ToString("0")" />
-                    </div>
+                    @foreach (var interval in checkIntervals)
+                    {
+                        var type = interval.Key;
+                        <div class="lot-editor__field">
+                            <label class="form-label mb-1" for="@($"param-check-{type}")">@type (días)</label>
+                            <input id="@($"param-check-{type}")" type="number" class="form-control" min="1" max="@SystemParametersService.MaxSensorCheckDays" step="1"
+                                   value="@interval.Value" @onchange="e => SetCheckDays(type, e.Value?.ToString())"
+                                   disabled="@(!canEdit)" placeholder="Sin definir" />
+                        </div>
+                    }
                 </div>
 
-                @if (strategyErrors.Count > 0)
+                @if (checkErrors.Count > 0)
                 {
                     <div class="alert alert-danger py-2 mt-3 mb-0 small">
                         <ul class="mb-0">
-                            @foreach (var strategyError in strategyErrors)
+                            @foreach (var checkError in checkErrors)
                             {
-                                <li>@strategyError</li>
+                                <li>@checkError</li>
                             }
                         </ul>
                     </div>
@@ -144,15 +147,155 @@
                 @if (canEdit)
                 {
                     <div class="lot-editor__actions">
-                        @if (!string.IsNullOrEmpty(strategySavedMessage))
+                        @if (!string.IsNullOrEmpty(checkSavedMessage))
                         {
-                            <span class="lot-muted mt-0 me-auto">@strategySavedMessage</span>
+                            <span class="lot-muted mt-0 me-auto">@checkSavedMessage</span>
                         }
-                        <button class="btn btn-success btn-sm" @onclick="SaveStrategyThresholdsAsync" disabled="@savingStrategy">
-                            @(savingStrategy ? "Guardando…" : "Guardar mínimos")
+                        <button class="btn btn-success btn-sm" @onclick="SaveCheckIntervalsAsync" disabled="@savingChecks">
+                            @(savingChecks ? "Guardando…" : "Guardar chequeos")
                         </button>
                     </div>
                 }
+            }
+        </article>
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Sensores</span>
+                    <h3>Errores de sensores</h3>
+                    <p class="panel__subtitle">
+                        Una lectura fuera del rango normal o un salto mayor al máximo entre dos lecturas seguidas avisa; en
+                        pH y CE además frena el control automático de ese parámetro hasta marcarlo como resuelto en
+                        Optimización. Un sensor sin lecturas por más de 2 intervalos del nodo avisa y frena hasta que vuelven.
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (faultLimits is not null)
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm hp-table mb-0 settings-fault-table">
+                        <thead>
+                            <tr>
+                                <th>Sensor</th>
+                                <th>Mínimo normal</th>
+                                <th>Máximo normal</th>
+                                <th>Salto máximo</th>
+                                <th>Si falla</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var limit in faultLimits)
+                            {
+                                var unit = SensorFaultRules.Unit(limit.SensorType).Trim();
+                                <tr>
+                                    <td>@limit.SensorType@(unit.Length > 0 ? $" ({unit})" : null)</td>
+                                    <td><input type="number" step="any" class="form-control form-control-sm" aria-label="@($"Mínimo normal de {limit.SensorType}")"
+                                               @bind="limit.Min" @bind:after="ClearFaultMessage" disabled="@(!canEdit)" /></td>
+                                    <td><input type="number" step="any" class="form-control form-control-sm" aria-label="@($"Máximo normal de {limit.SensorType}")"
+                                               @bind="limit.Max" @bind:after="ClearFaultMessage" disabled="@(!canEdit)" /></td>
+                                    <td><input type="number" step="any" class="form-control form-control-sm" aria-label="@($"Salto máximo de {limit.SensorType}")"
+                                               @bind="limit.Jump" @bind:after="ClearFaultMessage" disabled="@(!canEdit)" /></td>
+                                    <td>
+                                        @if (SensorFaultRules.BlocksControl(limit.SensorType))
+                                        {
+                                            <span class="lot-chip lot-chip--danger">Avisa y frena el control de @limit.SensorType</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="lot-chip lot-chip--warning">Solo avisa</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @if (faultErrors.Count > 0)
+                {
+                    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+                        <ul class="mb-0">
+                            @foreach (var faultError in faultErrors)
+                            {
+                                <li>@faultError</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (canEdit)
+                {
+                    <div class="lot-editor__actions">
+                        @if (!string.IsNullOrEmpty(faultSavedMessage))
+                        {
+                            <span class="lot-muted mt-0 me-auto">@faultSavedMessage</span>
+                        }
+                        <button class="btn btn-success btn-sm" @onclick="SaveFaultLimitsAsync" disabled="@savingFaults">
+                            @(savingFaults ? "Guardando…" : "Guardar límites")
+                        </button>
+                    </div>
+                }
+            }
+        </article>
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Anomalías</span>
+                    <h3>Reglas de episodios fuera de rango</h3>
+                    <p class="panel__subtitle">
+                        Cuándo una lectura abre un episodio (se ven en Optimización y como alertas): una lectura fuera de
+                        la banda lo pone en seguimiento; las lecturas seguidas indicadas lo abren y avisan. Se cierra solo
+                        cuando las lecturas vuelven a la banda.
+                    </p>
+                </div>
+                <span class="settings-readonly-badge">Solo lectura</span>
+            </div>
+
+            @if (anomalyRules.Count > 0)
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm hp-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Regla</th>
+                                <th>Banda</th>
+                                <th class="text-end">Lecturas seguidas para abrir</th>
+                                <th class="text-end">Espera entre episodios</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var rule in anomalyRules)
+                            {
+                                <tr>
+                                    <td>@rule.Name</td>
+                                    <td>
+                                        @if (rule.Bands.Count == 0)
+                                        {
+                                            <span class="text-muted">Sin umbral aprobado</span>
+                                        }
+                                        @foreach (var band in rule.Bands)
+                                        {
+                                            <div>@(band.Stage is { } stage ? $"{stage}: " : null)@BandText(band)</div>
+                                        }
+                                    </td>
+                                    <td class="text-end">@rule.ConsecutiveToOpen</td>
+                                    <td class="text-end">@rule.CooldownMinutes min</td>
+                                    <td>
+                                        <span class="lot-chip lot-chip--@(rule.Active ? "success" : "muted")">@(rule.Active ? "Activa" : "No se evalúa")</span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             }
         </article>
     </div>
@@ -172,11 +315,27 @@
     private IReadOnlyList<string> nutrientErrors = [];
     private string? nutrientSavedMessage;
 
-    private decimal? minGainAmount;
-    private decimal? minGainPercent;
-    private bool savingStrategy;
-    private IReadOnlyList<string> strategyErrors = [];
-    private string? strategySavedMessage;
+    private IReadOnlyList<AnomalyRuleOverview> anomalyRules = [];
+
+    // Rango normal y salto máximo por tipo de sensor (errores de sensores).
+    private sealed class FaultLimitRow
+    {
+        public required string SensorType { get; init; }
+        public decimal? Min { get; set; }
+        public decimal? Max { get; set; }
+        public decimal? Jump { get; set; }
+    }
+
+    private List<FaultLimitRow>? faultLimits;
+    private bool savingFaults;
+    private IReadOnlyList<string> faultErrors = [];
+    private string? faultSavedMessage;
+
+    // Días entre chequeos por tipo de sensor, en el orden del catálogo (null = sin chequeo).
+    private Dictionary<string, int?>? checkIntervals;
+    private bool savingChecks;
+    private IReadOnlyList<string> checkErrors = [];
+    private string? checkSavedMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -186,7 +345,9 @@
             canEdit = SystemParametersService.CanEdit(user);
             current = await ParametersService.GetYieldParametersAsync();
             nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
-            await LoadStrategyThresholdsAsync();
+            await LoadCheckIntervalsAsync();
+            await LoadFaultLimitsAsync();
+            anomalyRules = await AnomalyQuery.GetRulesAsync();
         }
         catch (Exception ex)
         {
@@ -194,34 +355,83 @@
         }
     }
 
-    private async Task LoadStrategyThresholdsAsync()
+    /// <summary>"5,5–6,5 (objetivo 6)".</summary>
+    private static string BandText(AnomalyRuleBand band) =>
+        $"{Num(band.Min)}–{Num(band.Max)}" + (band.Target is { } target ? $" (objetivo {LotFormat.Num(target)})" : string.Empty);
+
+    private static string Num(decimal? value) => value is { } v ? LotFormat.Num(v) : "—";
+
+    private async Task LoadCheckIntervalsAsync() =>
+        checkIntervals = (await ParametersService.GetSensorCheckIntervalsAsync()).ToDictionary(i => i.SensorType, i => i.Days);
+
+    // Vacío o no numérico = sin chequeo programado.
+    private void SetCheckDays(string type, string? value)
     {
-        var thresholds = await ParametersService.GetStrategyThresholdsAsync();
-        minGainAmount = Trim(thresholds.MinGainAmount);
-        minGainPercent = Trim(thresholds.MinGainPercent);
+        checkIntervals![type] = int.TryParse(value, out var days) ? days : null;
+        checkSavedMessage = null;
     }
 
-    private async Task SaveStrategyThresholdsAsync()
+    private async Task SaveCheckIntervalsAsync()
     {
-        savingStrategy = true;
-        strategySavedMessage = null;
+        savingChecks = true;
+        checkSavedMessage = null;
         try
         {
-            var result = await ParametersService.UpdateStrategyThresholdsAsync(minGainAmount, minGainPercent, user);
-            strategyErrors = result.Errors;
+            var result = await ParametersService.UpdateSensorCheckIntervalsAsync(
+                checkIntervals!.Select(i => new SensorCheckInterval(i.Key, i.Value)).ToList(), user);
+            checkErrors = result.Errors;
             if (result.Succeeded)
             {
-                await LoadStrategyThresholdsAsync();
-                strategySavedMessage = "Mínimos guardados.";
+                await LoadCheckIntervalsAsync();
+                checkSavedMessage = "Chequeos guardados.";
             }
         }
         catch (Exception ex)
         {
-            strategyErrors = [$"No se pudieron guardar los mínimos: {ex.Message}"];
+            checkErrors = [$"No se pudieron guardar los chequeos: {ex.Message}"];
         }
         finally
         {
-            savingStrategy = false;
+            savingChecks = false;
+        }
+    }
+
+    private async Task LoadFaultLimitsAsync() =>
+        faultLimits = (await ParametersService.GetSensorFaultLimitsAsync())
+            .Select(l => new FaultLimitRow { SensorType = l.SensorType, Min = Trim(l.Min), Max = Trim(l.Max), Jump = Trim(l.Jump) })
+            .ToList();
+
+    private void ClearFaultMessage() => faultSavedMessage = null;
+
+    private async Task SaveFaultLimitsAsync()
+    {
+        var missing = faultLimits!.Where(l => l.Min is null || l.Max is null || l.Jump is null).Select(l => l.SensorType).ToList();
+        if (missing.Count > 0)
+        {
+            faultErrors = [$"Completá el rango y el salto de {string.Join(", ", missing)}."];
+            return;
+        }
+
+        savingFaults = true;
+        faultSavedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateSensorFaultLimitsAsync(
+                faultLimits!.Select(l => new SensorFaultLimits(l.SensorType, l.Min!.Value, l.Max!.Value, l.Jump!.Value)).ToList(), user);
+            faultErrors = result.Errors;
+            if (result.Succeeded)
+            {
+                await LoadFaultLimitsAsync();
+                faultSavedMessage = "Límites guardados.";
+            }
+        }
+        catch (Exception ex)
+        {
+            faultErrors = [$"No se pudieron guardar los límites: {ex.Message}"];
+        }
+        finally
+        {
+            savingFaults = false;
         }
     }
 

@@ -3,7 +3,7 @@ namespace HydroPilotWeb.Services.Lotes;
 /// <summary>
 /// Regla híbrida de cosecha del lote (plan 09, decisión confirmada):
 /// la cosecha combina la entrada en la ventana GDD Baby Leaf Y el porcentaje
-/// configurable de plantas "Baby Leaf apta". Lógica pura, testeable.
+/// configurable de plantas "Baby Leaf". Lógica pura, testeable.
 /// Si el porcentaje objetivo no está definido, IsReady = null (decisión
 /// pendiente); NUNCA se reemplaza por una constante oculta.
 /// </summary>
@@ -36,7 +36,7 @@ public static class HarvestReadinessRules
                 gddInWindow,
                 percent,
                 IsReady: null,
-                PendingReason: "Porcentaje objetivo de plantas aptas no configurado: fecha de cosecha híbrida pendiente de decisión.");
+                PendingReason: "Porcentaje objetivo de Baby Leafs no configurado: fecha de cosecha híbrida pendiente de decisión.");
         }
 
         var ready = gddInWindow && percent >= input.TargetPercent.Value;

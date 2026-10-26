@@ -4,7 +4,7 @@ namespace HydroPilotWeb.Models;
 /// Constantes estables del módulo de anomalías (plan 15 / ANO-01).
 /// Catálogo cerrado de tipos, severidades y estados: se persisten tal cual y
 /// son los mismos términos que consumen la UI, el contrato compartido con
-/// notifications y los futuros consumidores (dashboard, reports, optimization).
+/// notifications y los futuros consumidores (dashboard, reports).
 /// </summary>
 public static class AnomalyContract
 {

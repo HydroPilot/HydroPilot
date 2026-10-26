@@ -1,29 +1,52 @@
 @using System.Globalization
+@using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Campos de las metas del ciclo (meta Baby Leaf y pérdidas máximas), compartidos por el alta de
-   lote y el editor de metas. Vacío = sin definir. Van dentro de una grilla .lot-editor. *@
-<div class="lot-editor__field">
-    <label class="form-label mb-1" for="@($"{_id}-goal")">Meta Baby Leaf del ciclo (% de plantas)</label>
+@* Campos de las metas del lote (meta Baby Leaf y plantas activas esperadas al final), compartidos por
+   el alta de lote y el editor de metas. Vacío = sin definir. Con el total de plantas, debajo de cada %
+   va cuántas plantas representa. Van dentro de una grilla .lot-editor; --aligned deja etiquetas, campos
+   y aclaraciones en la misma fila aunque una aclaración sea más larga. *@
+<div class="lot-editor__field lot-editor__field--aligned">
+    <label class="form-label mb-1" for="@($"{_id}-goal")">Meta Baby Leaf (% de plantas)</label>
     <input id="@($"{_id}-goal")" type="number" class="form-control" min="0" max="100" step="1"
            value="@Format(BabyLeafGoal)" @onchange="e => OnChangedAsync(e, BabyLeafGoalChanged)" />
+    @if (PlantsHelp(BabyLeafGoal) is { } goalHelp)
+    {
+        <p class="lot-editor__help">@goalHelp</p>
+    }
 </div>
-<div class="lot-editor__field">
-    <label class="form-label mb-1" for="@($"{_id}-loss")">Pérdidas máximas (% de plantas)</label>
-    <input id="@($"{_id}-loss")" type="number" class="form-control" min="0" max="100" step="1"
-           value="@Format(MaxLoss)" @onchange="e => OnChangedAsync(e, MaxLossChanged)" />
+<div class="lot-editor__field lot-editor__field--aligned">
+    <label class="form-label mb-1" for="@($"{_id}-active")">Plantas activas (% de plantas)</label>
+    <input id="@($"{_id}-active")" type="number" class="form-control" min="0" max="100" step="1"
+           value="@Format(ExpectedActive)" @onchange="e => OnChangedAsync(e, ExpectedActiveChanged)" />
+    <p class="lot-editor__help">
+        Las que lleguen al final sin descartarse (las cosechadas cuentan).
+        @if (PlantsHelp(ExpectedActive) is { } activeHelp)
+        {
+            <br />@activeHelp
+        }
+    </p>
 </div>
 
 @code {
     [Parameter] public decimal? BabyLeafGoal { get; set; }
     [Parameter] public EventCallback<decimal?> BabyLeafGoalChanged { get; set; }
-    [Parameter] public decimal? MaxLoss { get; set; }
-    [Parameter] public EventCallback<decimal?> MaxLossChanged { get; set; }
+    [Parameter] public decimal? ExpectedActive { get; set; }
+    [Parameter] public EventCallback<decimal?> ExpectedActiveChanged { get; set; }
+
+    /// <summary>Plantas del lote (o de la grilla en el alta); null = no se muestra la equivalencia.</summary>
+    [Parameter] public int? TotalPlants { get; set; }
 
     private readonly string _id = $"goals-{Guid.NewGuid():N}";
 
     // Los <input type="number"> usan punto decimal (cultura invariante), como @bind.
     private static string? Format(decimal? value) => value?.ToString("0.##", CultureInfo.InvariantCulture);
+
+    // Mismo redondeo que las cards (LotGoalsRules.PlantsFor): lo mínimo para llegar al %.
+    private string? PlantsHelp(decimal? percent) =>
+        percent is { } p and >= 0m and <= 100m && TotalPlants is { } total and > 0
+            ? $"{LotGoalsRules.PlantsFor(p, total)} de {LotFormat.Plants(total)}"
+            : null;
 
     // Al salir del campo (onchange, no en cada tecla). Vacío o no numérico = sin definir.
     private static Task OnChangedAsync(ChangeEventArgs e, EventCallback<decimal?> changed) =>

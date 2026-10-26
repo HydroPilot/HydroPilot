@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Data;
+using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Control;
 using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Control;
@@ -18,21 +19,109 @@ public class ControlSqlServerTests
     public ControlSqlServerTests(ControlSqlFixture fx) => _fx = fx;
 
     [Fact]
-    public async Task Seed_crea_las_cuatro_bombas_de_cada_nodo_sin_duplicar()
+    public async Task La_vista_muestra_la_ultima_temperatura_y_humedad_del_nodo()
+    {
+        var now = DateTime.UtcNow;
+        var created = new List<Sensor>();
+        await using (var context = _fx.NewContext())
+        {
+            Sensor Add(string type, string key)
+            {
+                var sensorType = context.SensorTypes.FirstOrDefault(t => t.Name == type) ?? context.SensorTypes.Add(new SensorType { Name = type }).Entity;
+                var sensor = new Sensor { NodeId = _fx.NodeId, SensorType = sensorType, Name = $"ctl-{key}-{Guid.NewGuid():N}", TechnicalKey = key, IsActive = true, CreatedAt = now };
+                context.Sensors.Add(sensor);
+                created.Add(sensor);
+                return sensor;
+            }
+            var temperature = Add(AnomalyContract.SensorTypeTemperatura, "temp-ambiente");
+            var humidity = Add(AnomalyContract.SensorTypeHumedad, "hum-ambiente");
+            await context.SaveChangesAsync();
+
+            SensorReading Reading(Sensor sensor, decimal value, int minutesAgo) => new()
+            {
+                SensorId = sensor.Id, NodeId = _fx.NodeId, Value = value,
+                Timestamp = now.AddMinutes(-minutesAgo), ObservedAtUtc = now.AddMinutes(-minutesAgo), ReceivedAtUtc = now.AddMinutes(-minutesAgo),
+                ExternalReadingId = $"ctl-amb-{Guid.NewGuid():N}", Quality = TelemetryContract.QualityValid,
+                IngestionResult = TelemetryContract.ResultAceptada, CreatedAt = now,
+            };
+            context.SensorReadings.AddRange(Reading(temperature, 22.5m, 10), Reading(temperature, 23.4m, 2), Reading(humidity, 61m, 3));
+            await context.SaveChangesAsync();
+        }
+
+        try
+        {
+            var view = await _fx.Control.GetViewAsync(_fx.CircuitId);
+
+            Assert.Equal(23.4m, view!.Temperature?.Value);   // la última, no la anterior
+            Assert.Equal(61m, view.Humidity?.Value);
+        }
+        finally
+        {
+            await using var context = _fx.NewContext();
+            var ids = created.Select(c => c.Id).ToList();
+            context.SensorReadings.RemoveRange(context.SensorReadings.Where(r => ids.Contains(r.SensorId)));
+            context.Sensors.RemoveRange(context.Sensors.Where(s => ids.Contains(s.Id)));
+            await context.SaveChangesAsync();
+        }
+    }
+
+    [Fact]
+    public async Task La_vista_muestra_solo_lo_del_lote_en_curso()
+    {
+        await _fx.ResetCommandsAsync();
+        DateTime original;
+        await using (var context = _fx.NewContext())
+        {
+            var assignment = await context.CircuitAssignments.SingleAsync(a => a.CircuitId == _fx.CircuitId && a.LotId == _fx.LotId);
+            original = assignment.ValidFromUtc;
+            // El lote se asignó recién: las lecturas del seed (de hace 1 y 2 min) y una dosis de hace 10 min son de antes.
+            assignment.ValidFromUtc = DateTime.UtcNow.AddSeconds(-30);
+            var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
+            context.ActuatorCommands.Add(new ActuatorCommand
+            {
+                Id = Guid.NewGuid(), NodeId = _fx.NodeId, CircuitId = _fx.CircuitId, ActuatorId = phDown, Source = ControlContract.SourceManual,
+                Amount = 10m, Unit = ControlContract.UnitMl, Status = ControlContract.StatusExecuted, ExecutedAmount = 10m,
+                CreatedAtUtc = DateTime.UtcNow.AddMinutes(-10), CompletedAtUtc = DateTime.UtcNow.AddMinutes(-10).AddSeconds(30),
+                ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-5), Parameter = ControlContract.ParameterPh,
+            });
+            await context.SaveChangesAsync();
+        }
+        try
+        {
+            var view = await _fx.Control.GetViewAsync(_fx.CircuitId);
+            Assert.NotNull(view!.LotSinceUtc);
+            Assert.Empty(view.Timeline);
+            Assert.Equal(0, view.Kpis.Executed24h);
+
+            var trend = await _fx.Control.GetTrendAsync(_fx.CircuitId, 6);
+            Assert.Empty(trend!.Ph.Points);
+            Assert.Empty(trend.Ph.Doses);
+        }
+        finally
+        {
+            await using var context = _fx.NewContext();
+            await context.CircuitAssignments.Where(a => a.CircuitId == _fx.CircuitId && a.LotId == _fx.LotId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.ValidFromUtc, original));
+            await _fx.ResetCommandsAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Seed_crea_las_cuatro_bombas_de_cada_circuito_sin_duplicar()
     {
         await using (var context = _fx.NewContext())
             DbInitializer.SeedActuators(context);
 
         await using var check = _fx.NewContext();
-        var kinds = await check.Actuators.Where(a => a.NodeId == _fx.NodeId).Select(a => a.Kind).ToListAsync();
+        var kinds = await check.Actuators.Where(a => a.CircuitId == _fx.CircuitId).Select(a => a.Kind).ToListAsync();
         Assert.Equal(
             ControlContract.DefaultActuators.Select(a => a.Kind).OrderBy(k => k),
             kinds.OrderBy(k => k));
-        Assert.Equal(8, await check.Actuators.CountAsync()); // 2 nodos × 4 bombas
+        Assert.Equal(8, await check.Actuators.CountAsync()); // 2 circuitos × 4 bombas
 
-        var node = await check.IotNodes.SingleAsync(n => n.Id == _fx.NodeId);
-        Assert.Equal(ControlContract.ModeManual, node.ControlMode);
-        Assert.Equal(500m, node.ReservoirLiters);
+        var circuit = await check.Circuits.SingleAsync(c => c.Id == _fx.CircuitId);
+        Assert.Equal(ControlContract.ModeManual, circuit.ControlMode);
+        Assert.Equal(500m, circuit.ReservoirLiters);
     }
 
     [Fact]
@@ -42,8 +131,8 @@ public class ControlSqlServerTests
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
         var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrient);
 
-        Assert.True((await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 20m, "operador@test")).Succeeded);
-        Assert.True((await _fx.Control.RequestDoseAsync(_fx.NodeId, nutrient, 150m, "operador@test")).Succeeded);
+        Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, "operador@test")).Succeeded);
+        Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, nutrient, 150m, "operador@test")).Succeeded);
 
         await using var context = _fx.NewContext();
         var ph = await context.ActuatorCommands.SingleAsync(c => c.ActuatorId == phDown);
@@ -72,22 +161,22 @@ public class ControlSqlServerTests
         await _fx.ResetCommandsAsync();
         var phUp = await _fx.ActuatorIdAsync(ControlContract.KindPhUp);
 
-        var tooMuch = await _fx.Control.RequestDoseAsync(_fx.NodeId, phUp, 51m, null);
+        var tooMuch = await _fx.Control.RequestDoseAsync(_fx.CircuitId, phUp, 51m, null);
         Assert.False(tooMuch.Succeeded);
         Assert.Contains("50 ml por dosis", tooMuch.Message);
 
-        Assert.True((await _fx.Control.RequestDoseAsync(_fx.NodeId, phUp, 40m, null)).Succeeded);
-        var second = await _fx.Control.RequestDoseAsync(_fx.NodeId, phUp, 10m, null);
+        Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, phUp, 40m, null)).Succeeded);
+        var second = await _fx.Control.RequestDoseAsync(_fx.CircuitId, phUp, 10m, null);
         Assert.False(second.Succeeded);
         Assert.Contains("en curso", second.Message);
 
         // La primera (40 ml) se ejecuta; con 190 ml más ejecutados hoy, quedan 20 de los 250 ml del día.
         await DeliverAndExecuteAllAsync();
         await AddExecutedAsync(phUp, 190m);
-        var overDay = await _fx.Control.RequestDoseAsync(_fx.NodeId, phUp, 30m, null);
+        var overDay = await _fx.Control.RequestDoseAsync(_fx.CircuitId, phUp, 30m, null);
         Assert.False(overDay.Succeeded);
         Assert.Contains("quedan", overDay.Message);
-        Assert.True((await _fx.Control.RequestDoseAsync(_fx.NodeId, phUp, 20m, null)).Succeeded);
+        Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, phUp, 20m, null)).Succeeded);
     }
 
     [Fact]
@@ -95,7 +184,7 @@ public class ControlSqlServerTests
     {
         await _fx.ResetCommandsAsync();
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 20m, null);
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, null);
         var now = DateTime.UtcNow;
 
         var first = await _fx.Control.PollAsync(ControlSqlFixture.NodeIdentifier, now);
@@ -130,7 +219,7 @@ public class ControlSqlServerTests
     {
         await _fx.ResetCommandsAsync();
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 20m, null);
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, null);
         var now = DateTime.UtcNow;
         var command = Assert.Single((await _fx.Control.PollAsync(ControlSqlFixture.NodeIdentifier, now))!);
 
@@ -173,9 +262,9 @@ public class ControlSqlServerTests
         var water = await _fx.ActuatorIdAsync(ControlContract.KindWater);
         var now = DateTime.UtcNow;
 
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 20m, null);
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, null);
         var delivered = Assert.Single((await _fx.Control.PollAsync(ControlSqlFixture.NodeIdentifier, now))!);
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, water, 10m, null); // nadie la pide
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, water, 10m, null); // nadie la pide
 
         // Vencido el plazo (5 min): lo pendiente vence; lo entregado todavía tiene el margen (2 min).
         var afterTtl = now.AddMinutes(_fx.Options.CommandTtlMinutes + 0.5);
@@ -206,25 +295,25 @@ public class ControlSqlServerTests
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
         var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrient);
 
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 20m, null);
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, null);
         await using (var context = _fx.NewContext())
         {
             var pending = await context.ActuatorCommands.SingleAsync(c => c.ActuatorId == phDown);
-            Assert.True((await _fx.Control.CancelAsync(_fx.NodeId, pending.Id, "admin")).Succeeded);
+            Assert.True((await _fx.Control.CancelAsync(_fx.CircuitId, pending.Id, "admin")).Succeeded);
         }
 
         // Cancelada, la bomba queda libre y la Pi no la recibe.
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, nutrient, 100m, null);
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, nutrient, 100m, null);
         var delivered = Assert.Single((await _fx.Control.PollAsync(ControlSqlFixture.NodeIdentifier, DateTime.UtcNow))!);
         Assert.Equal(ControlContract.KindNutrient, delivered.Actuator);
 
-        var late = await _fx.Control.CancelAsync(_fx.NodeId, delivered.CommandId, "admin");
+        var late = await _fx.Control.CancelAsync(_fx.CircuitId, delivered.CommandId, "admin");
         Assert.False(late.Succeeded);
 
         await using var check = _fx.NewContext();
         Assert.Equal(ControlContract.StatusCancelled,
             (await check.ActuatorCommands.SingleAsync(c => c.ActuatorId == phDown)).Status);
-        Assert.True((await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 10m, null)).Succeeded);
+        Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 10m, null)).Succeeded);
     }
 
     [Fact]
@@ -261,13 +350,14 @@ public class ControlSqlServerTests
     {
         await _fx.ResetCommandsAsync();
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
-        await _fx.Control.RequestDoseAsync(_fx.NodeId, phDown, 20m, "operador@test");
+        await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, "operador@test");
         await DeliverAndExecuteAllAsync();
 
-        var view = await _fx.Control.GetViewAsync(_fx.NodeId);
+        var view = await _fx.Control.GetViewAsync(_fx.CircuitId);
 
         Assert.NotNull(view);
-        Assert.Equal(ControlSqlFixture.NodeIdentifier, view.Identifier);
+        Assert.Equal(ControlSqlFixture.NodeIdentifier, view.NodeIdentifier);
+        Assert.Equal("Circuito Control", view.CircuitName);
         Assert.Equal(ControlContract.ModeManual, view.Mode);
         Assert.Equal(500m, view.ReservoirLiters);
         Assert.Equal(_fx.LotId, view.LotId);
@@ -295,11 +385,11 @@ public class ControlSqlServerTests
     [Fact]
     public async Task Tanque_acepta_litros_validos()
     {
-        Assert.False((await _fx.Control.SetReservoirAsync(_fx.NodeId, 0m, "admin")).Succeeded);
-        Assert.True((await _fx.Control.SetReservoirAsync(_fx.NodeId, 750m, "admin")).Succeeded);
+        Assert.False((await _fx.Control.SetReservoirAsync(_fx.CircuitId, 0m, "admin")).Succeeded);
+        Assert.True((await _fx.Control.SetReservoirAsync(_fx.CircuitId, 750m, "admin")).Succeeded);
         await using (var context = _fx.NewContext())
-            Assert.Equal(750m, (await context.IotNodes.SingleAsync(n => n.Id == _fx.NodeId)).ReservoirLiters);
-        Assert.True((await _fx.Control.SetReservoirAsync(_fx.NodeId, 500m, "admin")).Succeeded);
+            Assert.Equal(750m, (await context.Circuits.SingleAsync(c => c.Id == _fx.CircuitId)).ReservoirLiters);
+        Assert.True((await _fx.Control.SetReservoirAsync(_fx.CircuitId, 500m, "admin")).Succeeded);
     }
 
     // ------------------------------------------------------------------
@@ -322,6 +412,7 @@ public class ControlSqlServerTests
         {
             Id = Guid.NewGuid(),
             NodeId = _fx.NodeId,
+            CircuitId = _fx.CircuitId,
             ActuatorId = actuatorId,
             Amount = amount,
             Unit = ControlContract.UnitMl,

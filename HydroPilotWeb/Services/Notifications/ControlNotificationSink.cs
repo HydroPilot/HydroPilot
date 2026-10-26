@@ -16,17 +16,25 @@ public class ControlNotificationSink : IControlEventSink
         _notifications = notifications;
     }
 
-    public static string Fingerprint(int nodeId, string parameter) => $"control-pause-{nodeId}-{parameter}";
+    /// <summary>Huella común a todas las pausas de una magnitud de un circuito (lo que se resuelve al reanudar).</summary>
+    public static string FingerprintPrefix(int circuitId, string parameter) => $"control-pause-{circuitId}-{parameter}";
+
+    /// <summary>
+    /// Huella de una pausa: incluye cuándo se pausó, porque la huella de las alertas es única aunque estén
+    /// resueltas y la misma magnitud se puede pausar más de una vez.
+    /// </summary>
+    public static string Fingerprint(int circuitId, string parameter, DateTime pausedAtUtc) =>
+        $"{FingerprintPrefix(circuitId, parameter)}-{pausedAtUtc:yyyyMMddHHmmss}";
 
     public Task OnPausedAsync(ControlPauseEvent pause, CancellationToken ct = default) =>
         _notifications.CreateAlertAsync(new CreateAlertDto(
             NotificationTypes.FallaDosificacion,
             NotificationSeverities.Alta,
-            $"{pause.NodeIdentifier}: control de {pause.Parameter} pausado",
+            $"{pause.CircuitName}: control de {pause.Parameter} pausado",
             $"{pause.Reason}. Revisá bidón, bomba y sonda; después reanudá en Control.",
-            Fingerprint(pause.NodeId, pause.Parameter),
+            Fingerprint(pause.CircuitId, pause.Parameter, pause.PausedAtUtc),
             pause.LotId), ct);
 
-    public Task OnResumedAsync(int nodeId, string parameter, CancellationToken ct = default) =>
-        _notifications.ResolveByFingerprintAsync(Fingerprint(nodeId, parameter), ct);
+    public Task OnResumedAsync(int circuitId, string parameter, CancellationToken ct = default) =>
+        _notifications.ResolveByFingerprintPrefixAsync(FingerprintPrefix(circuitId, parameter), ct);
 }

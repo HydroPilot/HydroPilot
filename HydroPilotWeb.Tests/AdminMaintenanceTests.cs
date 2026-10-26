@@ -43,7 +43,7 @@ public class AdminMaintenanceTests
             var demoLot = await context.Lots.Include(l => l.Plants).FirstOrDefaultAsync(l => l.Name == "Lote Demo 01");
             Assert.NotNull(demoLot);
             Assert.True(demoLot.Plants.Count > 0);
-            var assignment = await context.NodeLotAssignments.FirstOrDefaultAsync(a => a.LotId == demoLot.Id);
+            var assignment = await context.CircuitAssignments.FirstOrDefaultAsync(a => a.LotId == demoLot.Id);
             Assert.NotNull(assignment);
         }
 

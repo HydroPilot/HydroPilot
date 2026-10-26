@@ -80,10 +80,10 @@ public static class PlantDecisionEngine
         {
             if (input.HasSufficientMaturity == true)
                 return new PlantDecision(CommercialStageNames.CosechaConvencional,
-                    "Ventana convencional con madurez confirmada por análisis de imagen");
+                    "Ventana adulta con madurez confirmada por análisis de imagen");
 
             return new PlantDecision(CommercialStageNames.EnDesarrollo,
-                "Ventana convencional sin madurez confirmada (falta procesamiento de imagen)");
+                "Ventana adulta sin madurez confirmada (falta procesamiento de imagen)");
         }
 
         // 4. GDD por debajo de la ventana Baby Leaf.

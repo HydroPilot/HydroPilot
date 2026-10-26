@@ -22,11 +22,14 @@ public class HydroPilotDbContext : DbContext
     public DbSet<SensorReading> SensorReadings => Set<SensorReading>();
     public DbSet<TelemetryBatch> TelemetryBatches => Set<TelemetryBatch>();
     public DbSet<TelemetryRejection> TelemetryRejections => Set<TelemetryRejection>();
-    public DbSet<NodeLotAssignment> NodeLotAssignments => Set<NodeLotAssignment>();
+    public DbSet<Circuit> Circuits => Set<Circuit>();
+    public DbSet<CircuitAssignment> CircuitAssignments => Set<CircuitAssignment>();
 
     public DbSet<CropType> CropTypes => Set<CropType>();
     public DbSet<LotStatus> LotStatuses => Set<LotStatus>();
     public DbSet<Lot> Lots => Set<Lot>();
+    public DbSet<LotComment> LotComments => Set<LotComment>();
+    public DbSet<UserRecentVisit> UserRecentVisits => Set<UserRecentVisit>();
     public DbSet<Prediction> Predictions => Set<Prediction>();
 
     // --- Dominio de lotes y plantas (plan 09) ---
@@ -47,10 +50,7 @@ public class HydroPilotDbContext : DbContext
     public DbSet<AnomalyEvent> AnomalyEvents => Set<AnomalyEvent>();
     public DbSet<AnomalyRuleCatalog> AnomalyRuleCatalogs => Set<AnomalyRuleCatalog>();
 
-    // --- Módulo de optimización (plan 16) ---
-    public DbSet<OptimizationRecommendation> OptimizationRecommendations => Set<OptimizationRecommendation>();
-    public DbSet<RecommendationDetail> RecommendationDetails => Set<RecommendationDetail>();
-    public DbSet<RecommendationAction> RecommendationActions => Set<RecommendationAction>();
+    // --- Catálogo de precios por destino (Lotes, Simulación y Parámetros) ---
     public DbSet<CostPriceCatalog> CostPriceCatalogs => Set<CostPriceCatalog>();
 
     // --- Módulo de notificaciones (plan 17) ---
@@ -64,6 +64,7 @@ public class HydroPilotDbContext : DbContext
     public DbSet<ActuatorCommand> ActuatorCommands => Set<ActuatorCommand>();
     public DbSet<LotSetpointHistory> LotSetpointHistories => Set<LotSetpointHistory>();
     public DbSet<ControlPause> ControlPauses => Set<ControlPause>();
+    public DbSet<SensorFault> SensorFaults => Set<SensorFault>();
     public DbSet<LotRecipe> LotRecipes => Set<LotRecipe>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -145,9 +146,6 @@ public class HydroPilotDbContext : DbContext
                   .HasMaxLength(20)
                   .HasDefaultValue(TelemetryContract.ConnectionNeverConnected);
             entity.Property(e => e.ExpectedIntervalSeconds).HasDefaultValue(300);
-            entity.Property(e => e.ControlMode).IsRequired().HasMaxLength(10).HasDefaultValue(ControlContract.ModeManual);
-            entity.Property(e => e.ReservoirLiters).HasColumnType("decimal(10,1)").HasDefaultValue(ControlContract.DefaultReservoirLiters);
-            entity.Property(e => e.SourceWaterEc).HasColumnType("decimal(4,2)").HasDefaultValue(ControlContract.DefaultSourceWaterEc);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
             entity.HasIndex(e => e.Identifier).IsUnique();
@@ -155,6 +153,31 @@ public class HydroPilotDbContext : DbContext
             entity.HasOne(e => e.Greenhouse)
                   .WithMany(g => g.IotNodes)
                   .HasForeignKey(e => e.GreenhouseId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Circuit>(entity =>
+        {
+            entity.ToTable("Circuits");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(Circuit.NameMaxLength);
+            entity.Property(e => e.ControlMode).IsRequired().HasMaxLength(10).HasDefaultValue(ControlContract.ModeManual);
+            entity.Property(e => e.ReservoirLiters).HasColumnType("decimal(10,1)").HasDefaultValue(ControlContract.DefaultReservoirLiters);
+            entity.Property(e => e.SourceWaterEc).HasColumnType("decimal(4,2)").HasDefaultValue(ControlContract.DefaultSourceWaterEc);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+
+            entity.HasIndex(e => new { e.GreenhouseId, e.Name }).IsUnique();
+
+            entity.HasOne(e => e.Greenhouse)
+                  .WithMany(g => g.Circuits)
+                  .HasForeignKey(e => e.GreenhouseId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Node)
+                  .WithMany(n => n.Circuits)
+                  .HasForeignKey(e => e.NodeId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -172,12 +195,18 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.EffectPerUnit).HasColumnType("decimal(10,4)");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
-            entity.HasIndex(e => new { e.NodeId, e.Kind }).IsUnique();
+            // Una bomba de cada tipo por circuito; la clave técnica es única en la Pi (maneja varios circuitos).
+            entity.HasIndex(e => new { e.CircuitId, e.Kind }).IsUnique();
             entity.HasIndex(e => new { e.NodeId, e.TechnicalKey }).IsUnique();
 
             entity.HasOne(e => e.Node)
                   .WithMany()
                   .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Circuit)
+                  .WithMany(c => c.Actuators)
+                  .HasForeignKey(e => e.CircuitId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -207,6 +236,7 @@ public class HydroPilotDbContext : DbContext
             // Pendientes del nodo (lo que pide la Pi) y últimos comandos (vista Control).
             entity.HasIndex(e => new { e.NodeId, e.Status });
             entity.HasIndex(e => new { e.NodeId, e.CreatedAtUtc });
+            entity.HasIndex(e => new { e.CircuitId, e.CreatedAtUtc });
             // Una sola dosis en curso por bomba: dos pedidos simultáneos no pueden duplicar la dosis.
             entity.HasIndex(e => e.ActuatorId)
                   .IsUnique()
@@ -216,6 +246,11 @@ public class HydroPilotDbContext : DbContext
             entity.HasOne(e => e.Node)
                   .WithMany()
                   .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Circuit)
+                  .WithMany()
+                  .HasForeignKey(e => e.CircuitId)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(e => e.Actuator)
@@ -250,6 +285,37 @@ public class HydroPilotDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<SensorFault>(entity =>
+        {
+            entity.ToTable("SensorFaults");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.SensorType).IsRequired().HasMaxLength(30);
+            entity.Property(e => e.Kind).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Value).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.PreviousValue).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.Detail).HasMaxLength(200);
+            entity.Property(e => e.ResolvedBy).HasMaxLength(200);
+
+            entity.HasIndex(e => new { e.NodeId, e.ResolvedAtUtc });
+            entity.HasIndex(e => new { e.SensorId, e.Kind, e.DetectedAtUtc });
+            // Un solo error abierto por sensor y tipo.
+            entity.HasIndex(e => new { e.SensorId, e.Kind })
+                  .IsUnique()
+                  .HasFilter("[ResolvedAtUtc] IS NULL")
+                  .HasDatabaseName("IX_SensorFaults_Open");
+
+            entity.HasOne(e => e.Node)
+                  .WithMany()
+                  .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Sensor)
+                  .WithMany()
+                  .HasForeignKey(e => e.SensorId)
+                  .OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<ControlPause>(entity =>
         {
             entity.ToTable("ControlPauses");
@@ -259,16 +325,16 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.Reason).IsRequired().HasMaxLength(200);
             entity.Property(e => e.ResumedBy).HasMaxLength(200);
 
-            entity.HasIndex(e => new { e.NodeId, e.Parameter, e.PausedAtUtc });
-            // Una sola pausa abierta por magnitud y nodo.
-            entity.HasIndex(e => new { e.NodeId, e.Parameter })
+            entity.HasIndex(e => new { e.CircuitId, e.Parameter, e.PausedAtUtc });
+            // Una sola pausa abierta por magnitud y circuito.
+            entity.HasIndex(e => new { e.CircuitId, e.Parameter })
                   .IsUnique()
                   .HasFilter("[ResumedAtUtc] IS NULL")
                   .HasDatabaseName("IX_ControlPauses_Open");
 
-            entity.HasOne(e => e.Node)
+            entity.HasOne(e => e.Circuit)
                   .WithMany()
-                  .HasForeignKey(e => e.NodeId)
+                  .HasForeignKey(e => e.CircuitId)
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -312,6 +378,13 @@ public class HydroPilotDbContext : DbContext
             entity.HasOne(e => e.Node)
                   .WithMany(n => n.Sensors)
                   .HasForeignKey(e => e.NodeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // pH y CE son del circuito; temperatura y humedad, del invernadero (sin circuito).
+            entity.HasOne(e => e.Circuit)
+                  .WithMany(c => c.Sensors)
+                  .HasForeignKey(e => e.CircuitId)
+                  .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(e => e.SensorType)
@@ -370,9 +443,9 @@ public class HydroPilotDbContext : DbContext
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.SetNull);
 
-            entity.HasOne(e => e.LotAssignment)
+            entity.HasOne(e => e.Assignment)
                   .WithMany()
-                  .HasForeignKey(e => e.NodeLotAssignmentId)
+                  .HasForeignKey(e => e.CircuitAssignmentId)
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.SetNull);
         });
@@ -421,22 +494,23 @@ public class HydroPilotDbContext : DbContext
                   .OnDelete(DeleteBehavior.Restrict);
         });
 
-        modelBuilder.Entity<NodeLotAssignment>(entity =>
+        modelBuilder.Entity<CircuitAssignment>(entity =>
         {
-            entity.ToTable("NodeLotAssignments");
+            entity.ToTable("CircuitAssignments");
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
             entity.Property(e => e.Source).IsRequired().HasMaxLength(20).HasDefaultValue(TelemetryContract.AssignmentSourceManual);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
 
-            // Un nodo solo puede tener una asignación abierta a la vez.
-            entity.HasIndex(e => e.NodeId)
+            // Un circuito tiene un solo lote en curso.
+            entity.HasIndex(e => e.CircuitId)
                   .IsUnique()
                   .HasFilter("[ValidUntilUtc] IS NULL");
+            entity.HasIndex(e => new { e.CircuitId, e.ValidFromUtc });
 
-            entity.HasOne(e => e.Node)
-                  .WithMany(n => n.LotAssignments)
-                  .HasForeignKey(e => e.NodeId)
+            entity.HasOne(e => e.Circuit)
+                  .WithMany(c => c.Assignments)
+                  .HasForeignKey(e => e.CircuitId)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(e => e.Lot)
@@ -484,7 +558,7 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.CurrentEc).HasColumnType("decimal(6,2)");
             entity.Property(e => e.BabyLeafHarvestTargetPercent).HasColumnType("decimal(5,2)");
             entity.Property(e => e.BabyLeafGoalPercent).HasColumnType("decimal(5,2)");
-            entity.Property(e => e.MaxLossPercent).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.ExpectedActivePercent).HasColumnType("decimal(5,2)");
             entity.Property(e => e.HarvestBabyLeafGramsPerPlant).HasColumnType("decimal(7,1)");
             entity.Property(e => e.HarvestConventionalGramsPerPlant).HasColumnType("decimal(7,1)");
             entity.Property(e => e.HarvestBabyLeafPricePerKg).HasColumnType("decimal(12,2)");
@@ -503,6 +577,12 @@ public class HydroPilotDbContext : DbContext
             entity.HasOne(e => e.CropType)
                   .WithMany(c => c.Lots)
                   .HasForeignKey(e => e.CropTypeId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Circuit)
+                  .WithMany()
+                  .HasForeignKey(e => e.CircuitId)
+                  .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(e => e.Status)
@@ -527,6 +607,53 @@ public class HydroPilotDbContext : DbContext
                   .HasForeignKey(e => e.PredominantCommercialStageId)
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LotComment>(entity =>
+        {
+            entity.ToTable("LotComments");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.AuthorName).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Text).IsRequired().HasMaxLength(LotComment.TextMaxLength);
+            entity.Property(e => e.CreatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
+
+            // La lista del modal: comentarios del lote, más nuevos arriba.
+            entity.HasIndex(e => new { e.LotId, e.CreatedAtUtc });
+
+            // Se borran con el lote; si se borra el usuario, el comentario queda con su nombre guardado.
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<UserRecentVisit>(entity =>
+        {
+            entity.ToTable("UserRecentVisits");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.Kind).IsRequired().HasMaxLength(30);
+
+            // "Últimos accedidos" del usuario, más recientes primero.
+            entity.HasIndex(e => new { e.UserId, e.VisitedAtUtc });
+
+            entity.HasOne(e => e.User)
+                  .WithMany()
+                  .HasForeignKey(e => e.UserId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Lot)
+                  .WithMany()
+                  .HasForeignKey(e => e.LotId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Prediction>(entity =>
@@ -786,6 +913,7 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.Type).IsRequired().HasMaxLength(60);
             entity.Property(e => e.Severity).IsRequired().HasMaxLength(20);
             entity.Property(e => e.ObservedValue).HasColumnType("decimal(12,4)");
+            entity.Property(e => e.PeakValue).HasColumnType("decimal(12,4)");
             entity.Property(e => e.TargetValue).HasColumnType("decimal(12,4)");
             entity.Property(e => e.OperationalMin).HasColumnType("decimal(12,4)");
             entity.Property(e => e.OperationalMax).HasColumnType("decimal(12,4)");
@@ -835,77 +963,6 @@ public class HydroPilotDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(e => e.CropTypeId)
                   .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        // --- Módulo de optimización: recomendaciones informativas, una por problema del lote ---
-        modelBuilder.Entity<OptimizationRecommendation>(entity =>
-        {
-            entity.ToTable("OptimizationRecommendations");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).ValueGeneratedOnAdd();
-            entity.Property(e => e.RecommendationType).IsRequired().HasMaxLength(40);
-            entity.Property(e => e.Status).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.Direction).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.Priority).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.CurrentValue).HasColumnType("decimal(12,4)");
-            entity.Property(e => e.TargetValue).HasColumnType("decimal(12,4)");
-            entity.Property(e => e.TargetLabel).HasMaxLength(200);
-            entity.Property(e => e.Explanation).IsRequired();
-            entity.Property(e => e.EstimatedImpact).HasColumnType("decimal(14,2)");
-            entity.Property(e => e.RealizedAmount).HasColumnType("decimal(14,2)");
-            entity.Property(e => e.Fingerprint).HasMaxLength(120);
-            entity.Property(e => e.Title).HasMaxLength(200);
-            entity.Property(e => e.ImpactUnit).HasMaxLength(30);
-            entity.Property(e => e.DataSourceSummary).HasMaxLength(200);
-            entity.Property(e => e.RuleVersion).IsRequired().HasMaxLength(40);
-            entity.Property(e => e.DecisionNote).HasMaxLength(500);
-            entity.Property(e => e.SnapshotJson).IsRequired();
-            entity.Property(e => e.SnapshotHash).IsRequired().HasMaxLength(64);
-
-            // Una recomendación abierta por problema (huella) y lote: la busca cada evaluación.
-            entity.HasIndex(e => new { e.LotId, e.Fingerprint });
-            entity.HasIndex(e => e.Status);
-            entity.HasIndex(e => e.GeneratedAtUtc);
-
-            entity.HasOne(e => e.Lot)
-                  .WithMany()
-                  .HasForeignKey(e => e.LotId)
-                  .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<RecommendationDetail>(entity =>
-        {
-            entity.ToTable("RecommendationDetails");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).ValueGeneratedOnAdd();
-            entity.Property(e => e.Label).IsRequired().HasMaxLength(120);
-            entity.Property(e => e.Kind).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.Value).HasColumnType("decimal(12,4)");
-            entity.Property(e => e.Target).HasColumnType("decimal(12,4)");
-            entity.Property(e => e.Unit).HasMaxLength(30);
-            entity.Property(e => e.Note).HasMaxLength(300);
-
-            entity.HasOne(e => e.Recommendation)
-                  .WithMany(r => r.Details)
-                  .HasForeignKey(e => e.RecommendationId)
-                  .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<RecommendationAction>(entity =>
-        {
-            entity.ToTable("RecommendationActions");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).ValueGeneratedOnAdd();
-            entity.Property(e => e.Action).IsRequired().HasMaxLength(20);
-            entity.Property(e => e.Note).HasMaxLength(500);
-            entity.Property(e => e.PerformedBy).HasMaxLength(150);
-
-            entity.HasIndex(e => e.RecommendationId);
-
-            entity.HasOne(e => e.Recommendation)
-                  .WithMany(r => r.Actions)
-                  .HasForeignKey(e => e.RecommendationId)
-                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<CostPriceCatalog>(entity =>

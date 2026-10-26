@@ -1,0 +1,92 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Meta del ciclo: plantas activas (no descartadas: siguen en el lote o ya se cosecharon) contra el % que
+   se espera tener al final. La barra muestra las activas de hoy, con su % y cantidad adentro, como la
+   barra Baby Leaf; la raya, la meta ("meta 90%"). Va en rojo si está por debajo de la meta y en verde si
+   no. La meta se edita con el lápiz, que abre el modal de metas del lote. *@
+<section class="lot-card" aria-labelledby="lot-active-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-active-title">Meta Plantas activas</h3>
+        @if (CanEdit)
+        {
+            <div class="lot-card__actions">
+                <button class="lot-icon-btn" @onclick="OnEditObjectives" title="Editar metas del lote" aria-label="Editar metas del lote">✎</button>
+            </div>
+        }
+    </header>
+
+    <div>
+        <div class="lot-goalbar">
+            <div class="lot-stack" role="img" aria-label="@AriaLabel">
+                <div class="lot-stack__seg" style="width: @Css(Share(Goals.ActiveCount - Plants.Risk))%; background: @FillColor;"
+                     title="Activas o cosechadas: @(Goals.ActiveCount - Plants.Risk)"></div>
+                <div class="lot-stack__seg lot-seg--striped" style="width: @Css(Share(Plants.Risk))%; background-color: @RiskColor;"
+                     title="En riesgo de descarte: @Plants.Risk"></div>
+            </div>
+            @* Un solo rótulo sobre todas las activas (incluidas las en riesgo): "% (plantas)", o solo el % si no entra. *@
+            @if (Goals.ActiveCount > 0)
+            {
+                var pct = LotFormat.Pct1(Goals.ActivePercent);
+                <div class="lot-stack__seg lot-stack__over" style="width: @Css(Share(Goals.ActiveCount))%;" aria-hidden="true">
+                    <span class="lot-stack__full lot-stack__full--plants">@pct (@LotFormat.Plants(Goals.ActiveCount))</span>
+                    <span class="lot-stack__short @(pct.Length >= 5 ? "lot-stack__short--long" : null)">@pct</span>
+                </div>
+            }
+            @if (Expected is { } expected)
+            {
+                <div class="lot-progress__marker" style="--pos: @Css(Math.Clamp(expected, 0m, 100m));" title="Meta al final: @LotFormat.Pct1(expected)"></div>
+            }
+        </div>
+        @if (Expected is { } marker)
+        {
+            <div class="lot-bar-labels" aria-hidden="true">
+                <span class="lot-bar-labels__goal" style="--pos: @Css(Math.Min(100m, marker));">meta @LotFormat.Pct1(marker)</span>
+            </div>
+        }
+    </div>
+
+    @if (Plants.Risk > 0)
+    {
+        <div class="lot-legend">
+            <span class="lot-legend__item">
+                <span class="lot-legend__dot lot-seg--striped" style="background-color: @RiskColor;"></span>
+                @LotFormat.Plants(Plants.Risk) en riesgo de descarte
+            </span>
+        </div>
+    }
+
+    @if (Expected is null)
+    {
+        <p class="lot-card__sub">Sin meta definida.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public LotOverviewDto Overview { get; set; } = null!;
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public EventCallback OnEditObjectives { get; set; }
+
+    private static readonly string RiskColor = CommercialStagePalette.ForStage(CommercialStageNames.RiesgoFueraDeVentana).Background;
+
+    private LotGoalsRules.Result Goals => Overview.Goals;
+    private LotPlantBreakdown Plants => Overview.Plants;
+    private decimal? Expected => Overview.Objectives.ExpectedActivePercent;
+
+    private string AriaLabel =>
+        $"Plantas activas {LotFormat.Pct1(Goals.ActivePercent)} ({LotFormat.Plants(Goals.ActiveCount)}) de {LotFormat.Plants(Plants.TotalPlants)}" +
+        (Plants.Risk > 0 ? $", {Plants.Risk} en riesgo de descarte" : string.Empty) +
+        (Expected is { } e ? $"; meta {LotFormat.Pct1(e)}" : string.Empty);
+
+    // Rojo por debajo de la meta, verde si llega; gris si no hay meta. Tonos oscuros: el rótulo va en blanco encima.
+    private string FillColor => Goals.ActiveStatus switch
+    {
+        ActiveGoalStatus.PorDebajo => "var(--bs-danger)",
+        ActiveGoalStatus.Dentro => "var(--accent-dark)",
+        _ => "#6c757d"
+    };
+
+    private decimal Share(int count) => Plants.TotalPlants > 0 ? Math.Max(0, count) * 100m / Plants.TotalPlants : 0m;
+
+    private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+}

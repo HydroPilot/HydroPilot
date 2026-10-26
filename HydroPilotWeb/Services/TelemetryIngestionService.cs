@@ -4,6 +4,7 @@ using HydroPilotWeb.Models;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using HydroPilotWeb.Services.SensorFaults;
 
 namespace HydroPilotWeb.Services;
 
@@ -53,19 +54,22 @@ public sealed class TelemetryIngestionService
     private readonly TelemetryOptions _options;
     private readonly ILogger<TelemetryIngestionService> _logger;
     private readonly Control.ControlTrigger? _controlTrigger;
+    private readonly Control.ControlOptions _controlOptions;
 
     public TelemetryIngestionService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         TelemetryValidationService validation,
         IOptions<TelemetryOptions> options,
         ILogger<TelemetryIngestionService> logger,
-        Control.ControlTrigger? controlTrigger = null)
+        Control.ControlTrigger? controlTrigger = null,
+        IOptions<Control.ControlOptions>? controlOptions = null)
     {
         _dbFactory = dbFactory;
         _validation = validation;
         _options = options.Value;
         _logger = logger;
         _controlTrigger = controlTrigger;
+        _controlOptions = controlOptions?.Value ?? new Control.ControlOptions();
     }
 
     public async Task<IngestOutcome> IngestAsync(ParsedEnvelope envelope, CancellationToken ct)
@@ -144,10 +148,14 @@ public sealed class TelemetryIngestionService
                     sensorsByKey[sensor.Name] = sensor;
                 }
 
-                // ---- Asignación temporal nodo→lote (IOT-05), resuelta por fecha de observación ----
-                var assignments = await context.NodeLotAssignments
-                    .Where(a => a.NodeId == node.Id)
+                // ---- Lote de cada circuito (IOT-05), resuelto por fecha de observación: la Pi maneja todos los
+                // circuitos del invernadero; las lecturas de pH/CE van al lote en curso del circuito de su sensor. ----
+                var circuitIds = sensors.Where(s => s.CircuitId is not null).Select(s => s.CircuitId!.Value).Distinct().ToList();
+                var assignments = await context.CircuitAssignments
+                    .Where(a => circuitIds.Contains(a.CircuitId))
                     .ToListAsync(ct);
+                var assignmentsByCircuit = assignments.GroupBy(a => a.CircuitId)
+                    .ToDictionary(g => g.Key, g => (IReadOnlyList<CircuitAssignment>)g.ToList());
 
                 var lotIds = assignments.Select(a => a.LotId).Distinct().ToList();
                 var lotNames = lotIds.Count == 0
@@ -166,11 +174,12 @@ public sealed class TelemetryIngestionService
                 var existingById = existingReadings.ToDictionary(x => x.ExternalReadingId, StringComparer.Ordinal);
 
                 var results = new List<ReadingIngestionRecord>(envelope.Readings.Count);
+                var persisted = new List<SensorFaultDetector.IncomingReading>(envelope.Readings.Count);
                 var seenInBatch = new HashSet<string>(StringComparer.Ordinal);
                 var nowUtc = DateTime.UtcNow;
                 var anyAccepted = false;
                 var anyRejected = false;
-                var solutionReadings = false;
+                var circuitsWithSolutionReadings = new HashSet<int>();
 
                 foreach (var reading in envelope.Readings)
                 {
@@ -227,13 +236,17 @@ public sealed class TelemetryIngestionService
                         continue;
                     }
 
-                    // Lectura aceptada (o cuarentena INVALID): resolver lote por fecha de observación.
-                    var assignment = ResolveAssignment(assignments, reading.ObservedAtUtc!.Value);
+                    // Lectura aceptada (o cuarentena INVALID): el lote del circuito del sensor a la fecha de observación.
+                    // Las del invernadero (sin circuito: temperatura, humedad) no van a un lote.
+                    var ambient = sensor.CircuitId is null;
+                    var assignment = sensor.CircuitId is { } circuitId && assignmentsByCircuit.TryGetValue(circuitId, out var circuitAssignments)
+                        ? ResolveAssignment(circuitAssignments, reading.ObservedAtUtc!.Value)
+                        : null;
 
-                    // "Aceptada" se matiza según la asignación (sin_lote si no hay);
+                    // "Aceptada" se matiza según la asignación (sin_lote si el circuito no tiene lote);
                     // los demás resultados (fuera_de_rango) se conservan tal cual.
                     var readingResult = classification.Result == TelemetryContract.ResultAceptada
-                        ? (assignment is null ? TelemetryContract.ResultSinLote : TelemetryContract.ResultAceptada)
+                        ? (assignment is null && !ambient ? TelemetryContract.ResultSinLote : TelemetryContract.ResultAceptada)
                         : classification.Result;
 
                     var sensorReading = new SensorReading
@@ -241,7 +254,7 @@ public sealed class TelemetryIngestionService
                         SensorId = sensor.Id,
                         NodeId = node.Id,
                         LotId = assignment?.LotId,
-                        NodeLotAssignmentId = assignment?.Id,
+                        CircuitAssignmentId = assignment?.Id,
                         ExternalReadingId = reading.ReadingId,
                         Value = reading.Value!.Value,
                         MeasurementUnitId = sensor.MeasurementUnitId,
@@ -253,19 +266,22 @@ public sealed class TelemetryIngestionService
                         IngestionResult = readingResult,
                     };
                     context.SensorReadings.Add(sensorReading);
+                    persisted.Add(new SensorFaultDetector.IncomingReading(sensor, sensorReading));
 
                     anyAccepted = true;
                     if (assignment is not null
                         && TelemetryQualityPolicy.IsOperationallyUsable(classification.Quality)
                         && sensor.SensorType?.Name is AnomalyContract.SensorTypePh or AnomalyContract.SensorTypeCe)
-                        solutionReadings = true;
+                        circuitsWithSolutionReadings.Add(assignment.CircuitId);
                     results.Add(new ReadingIngestionRecord(
                         reading.ReadingId, reading.SensorRef,
                         readingResult, classification.Quality, classification.Reason,
                         assignment?.LotId,
                         assignment?.LotId is int lotId && lotNames.TryGetValue(lotId, out var lotName) ? lotName : null,
                         assignment is not null,
-                        assignment is null ? TelemetryContract.AssignmentStateSinAsignacion : TelemetryContract.AssignmentStateAsignado));
+                        ambient ? TelemetryContract.AssignmentStateInvernadero
+                        : assignment is null ? TelemetryContract.AssignmentStateSinAsignacion
+                        : TelemetryContract.AssignmentStateAsignado));
                 }
 
                 node.LastConnection = receivedAtUtc;
@@ -279,6 +295,11 @@ public sealed class TelemetryIngestionService
                     node.ConnectionState = NodeConnectionEvaluator.Evaluate(
                         node.LastAcceptedAt, receivedAtUtc, node.ExpectedIntervalSeconds, _options.DegradedIntervalFactor);
                 }
+
+                // Errores de sensores (fuera de lo normal, saltos, vuelta de las lecturas) en la misma transacción:
+                // cuando el control evalúa el tanque ya los ve.
+                await SensorFaultDetector.DetectAsync(context, node, persisted, nowUtc,
+                    _controlOptions.MixingMinutes, _options.DegradedIntervalFactor, ct);
 
                 var responseJson = JsonSerializer.Serialize(results);
                 context.TelemetryBatches.Add(new TelemetryBatch
@@ -297,9 +318,9 @@ public sealed class TelemetryIngestionService
 
                 await context.SaveChangesAsync(ct);
 
-                // pH/CE nuevos de un nodo con lote: el control automático evalúa ese tanque (sin esperar acá).
-                if (solutionReadings)
-                    _controlTrigger?.ReadingsArrived(node.Id);
+                // pH/CE nuevos de un circuito con lote: el control automático evalúa ese tanque (sin esperar acá).
+                foreach (var circuitId in circuitsWithSolutionReadings)
+                    _controlTrigger?.ReadingsArrived(circuitId);
 
                 _logger.LogInformation("Nodo {NodeId} batch {BatchId}: {Accepted} aceptadas, {Rejected} rechazadas, {Duplicated} duplicadas.",
                     envelope.NodeId, envelope.BatchId,
@@ -322,7 +343,7 @@ public sealed class TelemetryIngestionService
     }
 
     /// <summary>Asigna por fecha de observación: la asignación vigente más reciente.</summary>
-    public static NodeLotAssignment? ResolveAssignment(IReadOnlyList<NodeLotAssignment> assignments, DateTime observedAtUtc) =>
+    public static CircuitAssignment? ResolveAssignment(IReadOnlyList<CircuitAssignment> assignments, DateTime observedAtUtc) =>
         assignments
             .Where(a => a.ValidFromUtc <= observedAtUtc && (a.ValidUntilUtc is null || a.ValidUntilUtc > observedAtUtc))
             .OrderByDescending(a => a.ValidFromUtc)

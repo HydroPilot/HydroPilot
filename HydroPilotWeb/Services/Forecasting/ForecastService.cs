@@ -317,7 +317,7 @@ public class ForecastService
                 if (!result.GddInWindow)
                     warnings.Add($"GDD {accumulated} fuera de la ventana Baby Leaf ({config.GddMin}–{config.GddMax}).");
                 if (lot.BabyLeafHarvestTargetPercent is { } target && result.AptaPercent < target)
-                    warnings.Add($"Porcentaje de aptas ({result.AptaPercent}%) por debajo del objetivo ({target}%).");
+                    warnings.Add($"Porcentaje de Baby Leafs ({result.AptaPercent}%) por debajo del objetivo ({target}%).");
             }
 
             return new HarvestWindowInfo(
@@ -359,7 +359,7 @@ public class ForecastService
 
             if (!hasMaturityData)
             {
-                conventionalWarnings.Add("Cosecha convencional: sin criterio de tamaño/madurez disponible (análisis de imagen pendiente): fecha híbrida sin decidir.");
+                conventionalWarnings.Add("Cosecha adulta: sin criterio de tamaño/madurez disponible (análisis de imagen pendiente): fecha híbrida sin decidir.");
             }
 
             return new HarvestWindowInfo(

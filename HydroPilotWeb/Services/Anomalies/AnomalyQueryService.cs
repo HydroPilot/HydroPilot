@@ -6,27 +6,23 @@ using Microsoft.Extensions.Options;
 namespace HydroPilotWeb.Services.Anomalies;
 
 /// <summary>
-/// Consultas del módulo para la UI (ANO-05) y consumidores externos (dashboard
-/// puede usar <see cref="GetSummaryAsync"/>; reports, la timeline). Vista-agnóstico:
-/// devuelve DTOs y nunca decide si una lectura es anómala.
+/// Consultas del módulo: los episodios de un nodo (Optimización) y las reglas vigentes (Parámetros).
+/// Vista-agnóstico: devuelve DTOs y nunca decide si una lectura es anómala.
 /// </summary>
 public sealed class AnomalyQueryService
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly AnomalyOptions _options;
-    private readonly AnomalyLotRiskEvaluator _riskEvaluator;
 
     public AnomalyQueryService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
-        IOptions<AnomalyOptions> options,
-        AnomalyLotRiskEvaluator riskEvaluator)
+        IOptions<AnomalyOptions> options)
     {
         _dbFactory = dbFactory;
         _options = options.Value;
-        _riskEvaluator = riskEvaluator;
     }
 
-    /// <summary>Timeline de episodios con filtros (severidad, tipo, lote, estado, rango).</summary>
+    /// <summary>Episodios con filtros (severidad, tipo, lote, nodo, estado, rango), los más recientes primero.</summary>
     public async Task<IReadOnlyList<AnomalyEventDto>> GetTimelineAsync(
         AnomalyFilter filter,
         int limit = 200,
@@ -42,6 +38,9 @@ public sealed class AnomalyQueryService
             query = query.Where(e => e.Type == filter.Type);
         if (filter.LotId.HasValue)
             query = query.Where(e => e.LotId == filter.LotId.Value);
+        if (filter.NodeId is { } nodeId)
+            query = query.Where(e => e.NodeId == nodeId
+                || context.Sensors.Any(s => s.Id == e.SensorId && s.NodeId == nodeId));
         if (!string.IsNullOrWhiteSpace(filter.Status))
             query = query.Where(e => e.Status == filter.Status);
         if (filter.From.HasValue)
@@ -60,149 +59,53 @@ public sealed class AnomalyQueryService
         return await BuildDtosAsync(context, events, ct);
     }
 
-    /// <summary>Contadores del resumen (abiertas por severidad, resueltas 7d, seguimiento).</summary>
-    public async Task<AnomalySummaryDto> GetSummaryAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Reglas del cultivo para Ajustes &gt; Parámetros (solo lectura): banda de cada una (pH la del cultivo;
+    /// CE la de cada etapa fenológica; temperatura y humedad solo con umbral aprobado), cuántas lecturas
+    /// seguidas abren un episodio y cuánto se espera antes de abrir otro.
+    /// </summary>
+    public async Task<IReadOnlyList<AnomalyRuleOverview>> GetRulesAsync(CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var now = DateTime.UtcNow;
-
-        var byStatusSeverity = await context.AnomalyEvents
-            .GroupBy(e => new { e.Status, e.Severity })
-            .Select(g => new { g.Key.Status, g.Key.Severity, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var open = byStatusSeverity
-            .Where(x => x.Status is AnomalyContract.StatusSeguimiento or AnomalyContract.StatusAbierta or AnomalyContract.StatusReconocida)
-            .Sum(x => x.Count);
-        var openCritical = byStatusSeverity
-            .Where(x => x.Status is AnomalyContract.StatusAbierta or AnomalyContract.StatusReconocida)
-            .Where(x => x.Severity == AnomalyContract.SeverityCritica)
-            .Sum(x => x.Count);
-        var advertencias = byStatusSeverity
-            .Where(x => x.Status != AnomalyContract.StatusResuelta)
-            .Where(x => x.Severity == AnomalyContract.SeverityAdvertencia)
-            .Sum(x => x.Count);
-        var seguimiento = byStatusSeverity
-            .Where(x => x.Status == AnomalyContract.StatusSeguimiento)
-            .Sum(x => x.Count);
-        var resolved7d = await context.AnomalyEvents
-            .CountAsync(e => e.Status == AnomalyContract.StatusResuelta && e.ResolvedAtUtc >= now.AddDays(-7), ct);
-        var total = await context.AnomalyEvents.CountAsync(ct);
-
-        // "Falta de datos no se presenta como normalidad": sin lecturas usables en la
-        // ventana, la UI muestra el estado "sin datos" en vez de afirmar que todo está bien.
-        var hasOperationalData = await context.SensorReadings
-            .Where(TelemetryQualityPolicy.OperationallyUsableReading)
-            .Where(r => r.ObservedAtUtc >= now.AddHours(-_options.SweepWindowHours))
-            .AnyAsync(ct);
-
-        return new AnomalySummaryDto(
-            OpenTotal: open,
-            OpenCritical: openCritical,
-            OpenAdvertencias: advertencias,
-            ResolvedLast7Days: resolved7d,
-            SeguimientoActive: seguimiento,
-            TotalEvents: total,
-            HasOperationalData: hasOperationalData);
-    }
-
-    /// <summary>Opciones de lote para filtros + conteo de plantas en riesgo (ANO-08: conteo, sin umbral inventado).</summary>
-    public async Task<IReadOnlyList<LotRiskSummaryDto>> GetLotRiskSummariesAsync(CancellationToken ct = default)
-    {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-
-        var lots = await context.Lots.AsNoTracking()
-            .Select(l => new { l.Id, l.Name })
-            .ToListAsync(ct);
-
-        var result = new List<LotRiskSummaryDto>();
-        foreach (var lot in lots.OrderBy(l => l.Id))
-        {
-            var state = await _riskEvaluator.EvaluateAsync(lot.Id, ct);
-            result.Add(new LotRiskSummaryDto(
-                LotId: lot.Id,
-                LotName: lot.Name,
-                ActivePlants: state.ActivePlants,
-                PlantsAtRisk: state.OpenEpisodes.Count > 0 ? state.ActivePlants : 0,
-                OpenCriticalEpisodes: state.OpenEpisodes.Count,
-                RiskReason: state.RiskReason));
-        }
-        return result;
-    }
-
-    /// <summary>Reglas vigentes de un lote (banda resuelta) y pendientes (temp/humedad sin umbral aprobado).</summary>
-    public async Task<IReadOnlyList<AnomalyRuleDto>> GetRulesForLotAsync(int lotId, CancellationToken ct = default)
-    {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-
-        var lot = await context.Lots
-            .Include(l => l.CropType)
-            .Include(l => l.AppliedPhenologicalStage)
-            .FirstOrDefaultAsync(l => l.Id == lotId, ct);
-        if (lot is null)
+        var crop = await context.CropTypes.AsNoTracking().OrderBy(c => c.Id).FirstOrDefaultAsync(ct);
+        if (crop is null)
             return [];
 
-        var catalog = await context.AnomalyRuleCatalogs
-            .Where(c => c.CropTypeId == lot.CropTypeId)
+        var stages = await context.PhenologicalStages.AsNoTracking()
+            .Where(s => s.CropTypeId == crop.Id && s.IsActive)
+            .OrderBy(s => s.Order)
             .ToListAsync(ct);
-        var byCode = catalog.ToDictionary(c => c.Code);
+        var byCode = await context.AnomalyRuleCatalogs.AsNoTracking()
+            .Where(c => c.CropTypeId == crop.Id)
+            .ToDictionaryAsync(c => c.Code, ct);
 
-        var dtos = new List<AnomalyRuleDto>();
+        var rules = new List<AnomalyRuleOverview>();
         foreach (var template in AnomalyRuleRegistry.Templates)
         {
             byCode.TryGetValue(template.Code, out var row);
-            var needsBaseline = template.SensorTypeName is AnomalyContract.SensorTypeTemperatura
-                or AnomalyContract.SensorTypeHumedad;
-            var hasExplicitBaseline = row?.OperationalMin is not null || row?.OperationalMax is not null;
+            IReadOnlyList<AnomalyRuleBand> bands = template.SensorTypeName switch
+            {
+                AnomalyContract.SensorTypePh when crop.OptimalPhMin is not null && crop.OptimalPhMax is not null =>
+                    [new AnomalyRuleBand(null, crop.OptimalPhMin, crop.OptimalPhMax, crop.OptimalPhTarget)],
+                AnomalyContract.SensorTypeCe =>
+                    stages.Select(s => new AnomalyRuleBand(s.Name, s.EcMin, s.EcMax, s.EcObjective)).ToList(),
+                AnomalyContract.SensorTypePh => [],
+                _ when row?.OperationalMin is not null || row?.OperationalMax is not null =>
+                    [new AnomalyRuleBand(null, row!.OperationalMin, row.OperationalMax, row.TargetValue)],
+                _ => new List<AnomalyRuleBand>()
+            };
 
-            var band = AnomalyBandResolver.ResolveOperative(
-                lot.CropType!, lot.AppliedPhenologicalStage, template.SensorTypeName, row);
-            var pending = needsBaseline ? !hasExplicitBaseline : band is null;
-
-            dtos.Add(new AnomalyRuleDto(
-                Id: row?.Id ?? 0,
-                Code: template.Code,
-                Name: template.Name,
-                SensorTypeName: template.SensorTypeName,
-                ConsecutiveToOpen: row?.ConsecutiveToOpen ?? _options.DefaultConsecutiveToOpen,
-                CooldownMinutes: row?.CooldownMinutes ?? _options.DefaultCooldownMinutes,
-                IsActive: needsBaseline ? hasExplicitBaseline : (row?.IsActive ?? true),
-                Source: row?.Source ?? "default-policy",
-                Notes: row?.Notes ?? (needsBaseline
-                    ? "Sin umbral agronómico aprobado: pendiente de definición, no se evalúa."
-                    : "Política por defecto de AnomalyOptions."),
-                PhysicalMin: band?.PhysicalMin,
-                PhysicalMax: band?.PhysicalMax,
-                OperationalMin: band?.OperationalMin,
-                OperationalMax: band?.OperationalMax,
-                TargetValue: band?.Target,
-                Pending: pending));
+            rules.Add(new AnomalyRuleOverview(
+                template.Name,
+                template.SensorTypeName,
+                bands,
+                row?.ConsecutiveToOpen ?? _options.DefaultConsecutiveToOpen,
+                row?.CooldownMinutes ?? _options.DefaultCooldownMinutes,
+                // Sin banda (umbral sin aprobar) la regla nunca dispara aunque figure activa.
+                Active: (row?.IsActive ?? true) && bands.Count > 0));
         }
-        return dtos;
+        return rules;
     }
-
-    /// <summary>
-    /// Estado del carril futuro de visión computacional (ANO-06): documenta el adaptador
-    /// sin detector ficticio. No hay pipeline de imágenes → pendiente.
-    /// </summary>
-    public static VisionAnomalyAdapterNote GetVisionAdapterNote() =>
-        new(
-            State: "pendiente",
-            Reason: "No existe pipeline de imágenes (entidad, dataset ni modelo) en el repositorio. " +
-                    "El adaptador futuro recibirá imagen, lote, tipo, confianza, severidad y timestamp; " +
-                    "hasta que exista un modelo real no se afirma detección por visión.");
-
-    /// <summary>Tipos estables disponibles (filtro de la UI).</summary>
-    public static IReadOnlyList<(string Code, string Name)> GetTypeOptions() =>
-        AnomalyRuleRegistry.Templates.Select(t => (t.Code, t.Name)).ToList();
-
-    /// <summary>Estados del filtro (estados internos del ciclo).</summary>
-    public static IReadOnlyList<string> GetStatusOptions() =>
-        [AnomalyContract.StatusSeguimiento, AnomalyContract.StatusAbierta,
-         AnomalyContract.StatusReconocida, AnomalyContract.StatusResuelta];
-
-    public static IReadOnlyList<string> GetSeverityOptions() =>
-        [AnomalyContract.SeverityAdvertencia, AnomalyContract.SeverityCritica];
 
     private static async Task<IReadOnlyList<AnomalyEventDto>> BuildDtosAsync(
         HydroPilotDbContext context,
@@ -275,7 +178,8 @@ public sealed class AnomalyQueryService
                 Origin: e.Origin,
                 AcknowledgedAtUtc: e.AcknowledgedAtUtc,
                 ResolvedAtUtc: e.ResolvedAtUtc,
-                ResolutionReason: e.ResolutionReason);
+                ResolutionReason: e.ResolutionReason,
+                PeakValue: e.PeakValue);
         }).ToList();
     }
 }

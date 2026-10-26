@@ -210,7 +210,7 @@ public class LotAggregateService
             if (!ruleResult.GddInWindow)
                 warnings.Add($"GDD {gdd} fuera de la ventana Baby Leaf ({config.GddMin}–{config.GddMax}).");
             if (ruleResult.AptaPercent < lot.BabyLeafHarvestTargetPercent)
-                warnings.Add($"Porcentaje de aptas ({ruleResult.AptaPercent}%) por debajo del objetivo ({lot.BabyLeafHarvestTargetPercent}%).");
+                warnings.Add($"Porcentaje de Baby Leafs ({ruleResult.AptaPercent}%) por debajo del objetivo ({lot.BabyLeafHarvestTargetPercent}%).");
         }
 
         return new LotHarvestReadiness(
@@ -281,7 +281,6 @@ public class LotAggregateService
             lastEvaluation?.BabyLeafScore,
             lastEvaluation?.GrowthRateUsed,
             lastEvaluation?.Result,
-            lastEvaluation?.Confidence,
             lastEvaluation?.EvaluatedAtUtc,
             lastImage is not null,
             lastImage?.Path,

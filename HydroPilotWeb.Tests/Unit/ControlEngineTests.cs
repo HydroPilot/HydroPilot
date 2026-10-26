@@ -206,6 +206,17 @@ public class ControlEngineTests
     }
 
     [Fact]
+    public void Si_la_CE_no_se_puede_corregir_corrige_el_pH()
+    {
+        // CE alta con el agua al límite de 24 h y pH alto: no espera a la CE, baja el pH.
+        var decision = Decide(Tank(ph: Out(6.9m), ec: Out(2.0m), waterUsed: 150m));
+        Assert.Equal((Outcome.Dose, ControlContract.KindPhDown), (decision.Outcome, decision.Pump!.Kind));
+
+        // Con el pH en rango, informa el bloqueo de la CE.
+        Assert.Equal(Codes.DailyLimit, Decide(Tank(ec: Out(2.0m), waterUsed: 150m)).Code);
+    }
+
+    [Fact]
     public void Bomba_desactivada_bloquea()
     {
         var decision = Decide(Tank(ph: Out(6.9m), phDownActive: false));
@@ -276,13 +287,6 @@ public class ControlEngineTests
         Assert.False(ShouldPause([false, false], 3));
     }
 
-    [Fact]
-    public void Magnitudes_controladas_en_automatico_menos_las_pausadas()
-    {
-        Assert.Empty(AutoControlled(ControlContract.ModeManual, []));
-        Assert.Equal([ControlContract.ParameterEc], AutoControlled(ControlContract.ModeAuto, [ControlContract.ParameterPh]));
-    }
-
     // ------------------------------------------------------------------
     // Auxiliares
     // ------------------------------------------------------------------
@@ -311,6 +315,53 @@ public class ControlEngineTests
             ? Enumerable.Range(0, count).Select(i => new Point(start.AddSeconds(15 * i), value)).ToList()
             : [new Point(Now.AddMinutes(-1), value)];
 
+    // ------------------------------------------------------------------
+    // Errores de sensores
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Error_de_sensor_de_pH_frena_solo_el_pH()
+    {
+        var decision = Decide(Tank(ph: Out(6.9m)) with { Sensors = [new SensorIssue(ControlContract.ParameterPh, "salto")] });
+
+        Assert.Equal(Outcome.Blocked, decision.Outcome);
+        Assert.Equal(Codes.SensorFault, decision.Code);
+        Assert.Equal(ControlContract.ParameterPh, decision.Parameter);
+        Assert.Equal("salto", decision.SensorFaultKind);
+    }
+
+    [Fact]
+    public void Con_la_CE_frenada_el_pH_se_sigue_corrigiendo()
+    {
+        var decision = Decide(Tank(ph: Out(6.9m), ec: Out(2.2m)) with { Sensors = [new SensorIssue(ControlContract.ParameterEc, "sin-datos")] });
+
+        Assert.Equal(Outcome.Dose, decision.Outcome);
+        Assert.Equal(ControlContract.KindPhDown, decision.Pump!.Kind);
+    }
+
+    [Fact]
+    public void Despues_de_una_dosis_no_espera_las_lecturas_del_parametro_frenado()
+    {
+        // Dosis de pH hace 12 min (mezcla de 10): llegaron 2 lecturas de pH, ninguna de CE (sensor sin datos).
+        var dose = Now.AddMinutes(-12);
+        var input = Tank(
+                ph: Out(6.9m, readingsAfter: dose.AddMinutes(10), count: 2),
+                ec: InBand(1.5m, readingsAfter: dose.AddMinutes(-30), count: 1),
+                doses: [new AppliedDose(ControlContract.KindPhDown, dose)])
+            with { Sensors = [new SensorIssue(ControlContract.ParameterEc, "sin-datos")] };
+
+        Assert.NotEqual(Codes.AwaitReading, Decide(input).Code);
+        Assert.Equal(Codes.AwaitReading, Decide(input with { Sensors = null }).Code);
+    }
+
+    [Fact]
+    public void Pi_sin_consultar_se_informa_antes_que_el_error_de_sensor()
+    {
+        var decision = Decide(Tank(neverPolled: true) with { Sensors = [new SensorIssue(ControlContract.ParameterEc, "sin-datos")] });
+
+        Assert.Equal(Codes.PiSilent, decision.Code);
+    }
+
     private static Input Tank(
         string mode = ControlContract.ModeAuto,
         Magnitude? ph = null,
@@ -321,7 +372,8 @@ public class ControlEngineTests
         bool inFlight = false,
         AppliedDose[]? doses = null,
         decimal phDownUsed = 0m,
-        bool phDownActive = true) =>
+        bool phDownActive = true,
+        decimal waterUsed = 0m) =>
         new(
             Now,
             mode,
@@ -335,7 +387,7 @@ public class ControlEngineTests
                 new(1, ControlContract.KindPhUp, "pH Up", ControlContract.UnitMl, 50m, 250m, true, 0m, 2.5m),
                 new(2, ControlContract.KindPhDown, "pH Down", ControlContract.UnitMl, 50m, 250m, phDownActive, phDownUsed, 2.5m),
                 new(3, ControlContract.KindNutrient, "Nutrientes", ControlContract.UnitMl, 500m, 2_000m, true, 0m, 0.3m),
-                new(4, ControlContract.KindWater, "Agua", ControlContract.UnitLiters, 50m, 150m, true, 0m, null),
+                new(4, ControlContract.KindWater, "Agua", ControlContract.UnitLiters, 50m, 150m, true, waterUsed, null),
             ],
             inFlight,
             doses ?? [],

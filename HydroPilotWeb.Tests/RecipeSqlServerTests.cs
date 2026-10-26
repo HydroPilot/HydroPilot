@@ -21,7 +21,7 @@ public sealed class FakeLotHistory : ILotHistorySource
 
 /// <summary>
 /// Receta aprendida contra SQL Server: dos lotes cerrados con sus lecturas y niveles guardados, el lote actual
-/// con score diario, y cómo el ajuste llega al motor, al estado de la solución (Optimización) y al historial.
+/// con score diario, y cómo el ajuste llega al motor, a la vista y al historial.
 /// </summary>
 [Collection("control-sql")]
 public class RecipeSqlServerTests
@@ -55,18 +55,14 @@ public class RecipeSqlServerTests
             history.Outcomes.Add(new LotCycleOutcome(bad, "Malo", sowing, 10, 4, 6, 0, 4, 0, 0, null, false));
 
             var recipe = await recipes.RefreshLotAsync(_fx.LotId, DateTime.UtcNow);
-            // Promedio 60 %: cuenta el bueno (+0,3 / +0,1); evidencia 2 → 2/5 del ajuste.
+            // Promedio 60 %: el bueno trabajó con pH 0,25 y CE 0,1 por encima del conjunto; evidencia 2 → 2/5 del ajuste.
             Assert.Equal((0.10m, 0.05m, 1m, 2), (recipe!.PhOffset, recipe.EcOffset, recipe.Trust, recipe.SimilarLots));
 
-            // El motor y Optimización usan los objetivos corridos, dentro de la banda de la etapa.
+            // El motor y la vista usan los objetivos corridos, dentro de la banda de la etapa.
             var view = await _fx.Control.GetViewAsync(_fx.NodeId);
             Assert.Equal(new SolutionBand(5.6m, 6.5m, 6.1m), view!.Ph.Band);
             Assert.Equal(new SolutionBand(1.25m, 1.8m, 1.55m), view.Ec.Band);
             Assert.Equal(0.10m, view.Recipe!.PhOffset);
-
-            var solution = await new SolutionStatusService(_fx.Factory, Microsoft.Extensions.Options.Options.Create(new DashboardOptions()))
-                .GetLotAsync(_fx.LotId);
-            Assert.Equal(6.1m, solution!.Ph.Band.Target);
 
             // El nivel vigente queda guardado con el ajuste (origen RECIPE).
             await _fx.Control.SweepAsync(DateTime.UtcNow);

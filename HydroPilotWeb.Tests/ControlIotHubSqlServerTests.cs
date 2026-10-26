@@ -112,7 +112,7 @@ public class ControlIotHubSqlServerTests
         var control = _fx.NewControl(channel);
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
 
-        Assert.True((await control.RequestDoseAsync(_fx.NodeId, phDown, 20m, "operador@test")).Succeeded);
+        Assert.True((await control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, "operador@test")).Succeeded);
 
         var sent = Assert.Single(channel.Sent);
         Assert.Equal((ControlSqlFixture.NodeIdentifier, ControlContract.KindPhDown, 20m), (sent.NodeId, sent.Actuator, sent.Amount));
@@ -126,7 +126,7 @@ public class ControlIotHubSqlServerTests
         }
 
         // Ya está en la cola del dispositivo: no se puede cancelar.
-        Assert.False((await control.CancelAsync(_fx.NodeId, sent.CommandId, "admin")).Succeeded);
+        Assert.False((await control.CancelAsync(_fx.CircuitId, sent.CommandId, "admin")).Succeeded);
 
         // Acuse del hub (la Pi completó el mensaje) y resultado por D2C.
         await control.ApplyDeliveryFeedbackAsync(sent.CommandId, DeliveryFeedback.Delivered, DateTime.UtcNow);
@@ -149,7 +149,7 @@ public class ControlIotHubSqlServerTests
         var control = _fx.NewControl(channel);
         var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrient);
 
-        Assert.True((await control.RequestDoseAsync(_fx.NodeId, nutrient, 100m, null)).Succeeded);
+        Assert.True((await control.RequestDoseAsync(_fx.CircuitId, nutrient, 100m, null)).Succeeded);
         Assert.Empty(channel.Sent);
         await using (var context = _fx.NewContext())
             Assert.Null((await context.ActuatorCommands.SingleAsync()).DispatchedAtUtc);
@@ -172,23 +172,25 @@ public class ControlIotHubSqlServerTests
         {
             // Señal de la Pi hace 5 min: por HTTP es "La Pi no consulta"; por IoT Hub (telemetría cada 5 min) no.
             await using (var context = _fx.NewContext())
+            {
                 await context.IotNodes.Where(n => n.Id == _fx.NodeId)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(n => n.ControlMode, ControlContract.ModeAuto)
-                        .SetProperty(n => n.LastCommandPollAtUtc, DateTime.UtcNow.AddMinutes(-5)));
+                    .ExecuteUpdateAsync(s => s.SetProperty(n => n.LastCommandPollAtUtc, DateTime.UtcNow.AddMinutes(-5)));
+                await context.Circuits.Where(c => c.Id == _fx.CircuitId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.ControlMode, ControlContract.ModeAuto));
+            }
 
-            Assert.Equal(ControlEngine.Codes.PiSilent, (await _fx.Control.EvaluateNodeAsync(_fx.NodeId, DateTime.UtcNow)).Code);
+            Assert.Equal(ControlEngine.Codes.PiSilent, (await _fx.Control.EvaluateCircuitAsync(_fx.CircuitId, DateTime.UtcNow)).Code);
 
             var channel = new RecordingCommandChannel();
-            var decision = await _fx.NewControl(channel).EvaluateNodeAsync(_fx.NodeId, DateTime.UtcNow);
+            var decision = await _fx.NewControl(channel).EvaluateCircuitAsync(_fx.CircuitId, DateTime.UtcNow);
             Assert.Equal(ControlEngine.Outcome.Dose, decision.Outcome);
             Assert.Single(channel.Sent);
         }
         finally
         {
             await using var context = _fx.NewContext();
-            await context.IotNodes.Where(n => n.Id == _fx.NodeId)
-                .ExecuteUpdateAsync(s => s.SetProperty(n => n.ControlMode, ControlContract.ModeManual));
+            await context.Circuits.Where(c => c.Id == _fx.CircuitId)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.ControlMode, ControlContract.ModeManual));
             await _fx.ResetCommandsAsync();
         }
     }

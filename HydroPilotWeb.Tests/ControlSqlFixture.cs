@@ -16,10 +16,10 @@ public class ControlSqlCollection : ICollectionFixture<ControlSqlFixture>;
 public sealed class RecordingControlSink : IControlEventSink
 {
     private readonly List<ControlPauseEvent> _paused = [];
-    private readonly List<(int NodeId, string Parameter)> _resumed = [];
+    private readonly List<(int CircuitId, string Parameter)> _resumed = [];
 
     public IReadOnlyList<ControlPauseEvent> Paused { get { lock (_paused) return _paused.ToList(); } }
-    public IReadOnlyList<(int NodeId, string Parameter)> Resumed { get { lock (_resumed) return _resumed.ToList(); } }
+    public IReadOnlyList<(int CircuitId, string Parameter)> Resumed { get { lock (_resumed) return _resumed.ToList(); } }
 
     public Task OnPausedAsync(ControlPauseEvent pause, CancellationToken ct = default)
     {
@@ -27,9 +27,9 @@ public sealed class RecordingControlSink : IControlEventSink
         return Task.CompletedTask;
     }
 
-    public Task OnResumedAsync(int nodeId, string parameter, CancellationToken ct = default)
+    public Task OnResumedAsync(int circuitId, string parameter, CancellationToken ct = default)
     {
-        lock (_resumed) _resumed.Add((nodeId, parameter));
+        lock (_resumed) _resumed.Add((circuitId, parameter));
         return Task.CompletedTask;
     }
 }
@@ -52,11 +52,14 @@ public sealed class ControlSqlFixture : IAsyncLifetime
     public ControlOptions Options { get; } = new();
 
     public int NodeId { get; private set; }
+    /// <summary>Circuito (tanque) del nodo principal, con el lote en curso.</summary>
+    public int CircuitId { get; private set; }
     public int LotId { get; private set; }
     public int VegetativeStageId { get; private set; }
     public int MaturityStageId { get; private set; }
     public int PhReadingId { get; private set; }
     public int SpareNodeId { get; private set; }
+    public int SpareCircuitId { get; private set; }
     public int SparePhSensorId { get; private set; }
     public RecordingControlSink Sink { get; } = new();
 
@@ -100,12 +103,13 @@ public sealed class ControlSqlFixture : IAsyncLifetime
 
     public Task DisposeAsync() => Task.CompletedTask;
 
-    /// <summary>Cada test arranca sin comandos (el índice permite una sola dosis en curso por bomba).</summary>
+    /// <summary>Cada test arranca sin comandos (el índice permite una sola dosis en curso por bomba), pausas ni errores de sensores.</summary>
     public async Task ResetCommandsAsync()
     {
         await using var context = NewContext();
         await context.ActuatorCommands.ExecuteDeleteAsync();
         await context.ControlPauses.ExecuteDeleteAsync();
+        await context.SensorFaults.ExecuteDeleteAsync();
     }
 
     public async Task<int> ActuatorIdAsync(string kind, int? nodeId = null)
@@ -152,12 +156,18 @@ public sealed class ControlSqlFixture : IAsyncLifetime
         context.IotNodes.AddRange(node, spare);
         await context.SaveChangesAsync();
 
+        // Un circuito (tanque) por nodo, como los datos migrados de antes de los circuitos.
+        var circuit = new Circuit { GreenhouseId = greenhouse.Id, NodeId = node.Id, Name = "Circuito Control", CreatedAt = DateTime.UtcNow };
+        var spareCircuit = new Circuit { GreenhouseId = greenhouse.Id, NodeId = spare.Id, Name = "Circuito Repuesto", CreatedAt = DateTime.UtcNow };
+        context.Circuits.AddRange(circuit, spareCircuit);
+        await context.SaveChangesAsync();
+
         var types = context.SensorTypes.ToDictionary(t => t.Name);
         var units = context.MeasurementUnits.ToDictionary(u => u.Name);
-        var phSensor = new Sensor { NodeId = node.Id, SensorTypeId = types["pH"].Id, MeasurementUnitId = units["pH"].Id, Name = "ctl-ph", TechnicalKey = "ph-solucion", IsActive = true, CreatedAt = DateTime.UtcNow };
-        var ecSensor = new Sensor { NodeId = node.Id, SensorTypeId = types["CE"].Id, MeasurementUnitId = units["milisiemens por centímetro"].Id, Name = "ctl-ec", TechnicalKey = "ec-solucion", IsActive = true, CreatedAt = DateTime.UtcNow };
+        var phSensor = new Sensor { NodeId = node.Id, SensorTypeId = types["pH"].Id, MeasurementUnitId = units["pH"].Id, Name = "ctl-ph", TechnicalKey = "ph-solucion", CircuitId = circuit.Id, IsActive = true, CreatedAt = DateTime.UtcNow };
+        var ecSensor = new Sensor { NodeId = node.Id, SensorTypeId = types["CE"].Id, MeasurementUnitId = units["milisiemens por centímetro"].Id, Name = "ctl-ec", TechnicalKey = "ec-solucion", CircuitId = circuit.Id, IsActive = true, CreatedAt = DateTime.UtcNow };
         // El nodo de repuesto tiene su sonda de pH para medir efectos y pausas sin tocar el tanque del primero.
-        var sparePh = new Sensor { NodeId = spare.Id, SensorTypeId = types["pH"].Id, MeasurementUnitId = units["pH"].Id, Name = "ctl2-ph", TechnicalKey = "ph-solucion", IsActive = true, CreatedAt = DateTime.UtcNow };
+        var sparePh = new Sensor { NodeId = spare.Id, SensorTypeId = types["pH"].Id, MeasurementUnitId = units["pH"].Id, Name = "ctl2-ph", TechnicalKey = "ph-solucion", CircuitId = spareCircuit.Id, IsActive = true, CreatedAt = DateTime.UtcNow };
         context.Sensors.AddRange(phSensor, ecSensor, sparePh);
 
         var lot = new Lot
@@ -168,13 +178,14 @@ public sealed class ControlSqlFixture : IAsyncLifetime
             Name = "Lote Control",
             SowingDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-12),
             AppliedPhenologicalStageId = vegetative.Id,
+            CircuitId = circuit.Id,
         };
         context.Lots.Add(lot);
         await context.SaveChangesAsync();
 
-        context.NodeLotAssignments.Add(new NodeLotAssignment
+        context.CircuitAssignments.Add(new CircuitAssignment
         {
-            NodeId = node.Id,
+            CircuitId = circuit.Id,
             LotId = lot.Id,
             ValidFromUtc = DateTime.UtcNow.AddDays(-30),
             Source = "fixture",
@@ -193,7 +204,9 @@ public sealed class ControlSqlFixture : IAsyncLifetime
         DbInitializer.SeedActuators(context);
 
         NodeId = node.Id;
+        CircuitId = circuit.Id;
         SpareNodeId = spare.Id;
+        SpareCircuitId = spareCircuit.Id;
         SparePhSensorId = sparePh.Id;
         LotId = lot.Id;
         VegetativeStageId = vegetative.Id;

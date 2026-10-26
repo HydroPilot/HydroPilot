@@ -6,12 +6,6 @@
     gap: 18px;
 }
 
-.ctl-lot {
-    margin-left: auto;
-    white-space: nowrap;
-    text-decoration: none;
-}
-
 .ctl-tank-edit {
     display: flex;
     align-items: center;
@@ -26,6 +20,35 @@
 .ctl-error {
     font-size: 0.82rem;
     color: var(--bs-danger-text-emphasis);
+}
+
+/* --- Tendencia --- */
+.ctl-trends {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ctl-trends__head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ctl-trends__title {
+    margin: 0;
+}
+
+.ctl-trends__window {
+    display: inline-flex;
+    gap: 6px;
+}
+
+.ctl-trends__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 14px;
 }
 
 /* --- Solución del tanque --- */
@@ -104,6 +127,23 @@
     margin-top: 6px;
     padding-top: 8px;
     border-top: 1px solid var(--border-panel);
+}
+
+/* Ambiente: temperatura y humedad en cards chicas, una arriba de la otra (ocupan una columna). */
+.ctl-ambient {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: 14px;
+}
+
+.ctl-kpi--small {
+    justify-content: center;
+    gap: 2px;
+    padding: 10px 16px;
+}
+
+.ctl-kpi__value--small {
+    font-size: 1.4rem;
 }
 
 .ctl-kpi--paused {
@@ -264,9 +304,40 @@
     color: var(--ctl-pump);
 }
 
-/* --- Conversación --- */
+/* --- Timeline IoT --- */
 .ctl-timeline-title {
     margin: 4px 0 0;
+}
+
+/* Título que despliega / contrae su sección (Timeline IoT). */
+.ctl-collapse {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.ctl-collapse:hover,
+.ctl-collapse:focus-visible {
+    color: var(--accent);
+}
+
+.ctl-collapse__chevron {
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.ctl-collapse__chevron--open {
+    transform: rotate(45deg);
 }
 
 .ctl-empty {
@@ -285,6 +356,168 @@
     border-radius: 18px;
     background: var(--bg-panel);
     box-shadow: var(--shadow-panel);
+}
+
+/* Episodios fuera de rango y Timeline IoT: scroll propio, barra fina del tono del panel (al pasar el mouse). */
+.ctl-episodes,
+.ctl-timeline--scroll {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+.ctl-episodes {
+    max-height: 300px;
+}
+
+.ctl-timeline--scroll {
+    max-height: 480px;
+}
+
+.ctl-episodes:hover,
+.ctl-episodes:focus-within,
+.ctl-timeline--scroll:hover,
+.ctl-timeline--scroll:focus-within {
+    scrollbar-color: var(--panel-scrollbar) transparent;
+}
+
+/* Episodios: la misma fila que el Timeline IoT. */
+
+/* Fila de Episodios: hora · severidad · [Solución|Sensor] título / detalle · estado (y el botón para resolver). */
+.ctl-episode {
+    display: grid;
+    grid-template-columns: 96px 18px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px;
+    font-size: 0.88rem;
+}
+
+.ctl-episode + .ctl-episode {
+    border-top: 1px solid var(--border-panel);
+}
+
+.ctl-episode--pinned {
+    background: color-mix(in srgb, #d64545 7%, transparent);
+}
+
+.ctl-episode--closed {
+    opacity: 0.6;
+}
+
+.ctl-episode__time {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.ctl-episode__sev {
+    font-weight: 800;
+    text-align: center;
+}
+
+.ctl-episode__sev--muted {
+    color: var(--text-muted);
+}
+
+.ctl-episode__body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.ctl-episode__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ctl-episode__source {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.ctl-episode__source--solution {
+    color: var(--bs-info-text-emphasis);
+    background: var(--bs-info-bg-subtle);
+}
+
+.ctl-episode__source--sensor {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.ctl-episode__title {
+    font-weight: 700;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ctl-episode__detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.ctl-episode__end {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+    .ctl-episode {
+        grid-template-columns: 18px minmax(0, 1fr);
+        row-gap: 4px;
+        padding: 8px 14px;
+    }
+
+    .ctl-episode__sev {
+        grid-column: 1;
+        grid-row: 1 / 4;
+        align-self: start;
+    }
+
+    .ctl-episode__body {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .ctl-episode__detail {
+        white-space: normal;
+    }
+
+    .ctl-episode__end {
+        grid-column: 2;
+        grid-row: 2;
+        justify-content: flex-start;
+    }
+
+    .ctl-episode__time {
+        grid-column: 2;
+        grid-row: 3;
+        font-size: 0.78rem;
+    }
+}
+
+.ctl-episode__sev--critical {
+    color: var(--bs-danger);
+}
+
+.ctl-episode__sev--warning {
+    color: #e0a526;
 }
 
 .ctl-msg {
@@ -342,10 +575,6 @@
 }
 
 @media (max-width: 640px) {
-    .ctl-lot {
-        margin-left: 0;
-    }
-
     .ctl-msg {
         grid-template-columns: 22px minmax(0, 1fr) auto;
         row-gap: 2px;

@@ -6,7 +6,11 @@ public class Sensor
 {
     public int Id { get; set; }
 
+    /// <summary>La Pi que lo lee.</summary>
     public int NodeId { get; set; }
+
+    /// <summary>Circuito del sensor (pH y CE). Null = sensor del invernadero (temperatura y humedad).</summary>
+    public int? CircuitId { get; set; }
 
     public int SensorTypeId { get; set; }
 
@@ -34,6 +38,7 @@ public class Sensor
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public IotNode? Node { get; set; }
+    public Circuit? Circuit { get; set; }
     public SensorType? SensorType { get; set; }
     public MeasurementUnit? MeasurementUnit { get; set; }
     public ICollection<SensorReading> Readings { get; set; } = [];

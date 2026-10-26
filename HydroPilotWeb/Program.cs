@@ -5,7 +5,6 @@ using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
-using HydroPilotWeb.Services.Optimization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +30,6 @@ builder.Services.AddScoped<SystemParametersService>();
 builder.Services.AddScoped<ForecastService>();
 builder.Services.AddScoped<TelemetryValidationService>();
 builder.Services.AddScoped<TelemetryIngestionService>();
-builder.Services.AddScoped<NodeLotAssignmentService>();
 builder.Services.AddOptions<TelemetryOptions>().BindConfiguration(TelemetryOptions.SectionName);
 builder.Services.AddHostedService<NodeConnectionMonitorHostedService>();
 builder.Services.AddHttpClient<WeatherService>(client =>
@@ -48,6 +46,9 @@ builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
 builder.Services.AddScoped<LotOverviewService>();
 builder.Services.AddScoped<LotCreationService>();
+builder.Services.AddScoped<LotCommentService>();
+builder.Services.AddScoped<RecentVisitService>();
+builder.Services.AddScoped<GreenhouseDashboardService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<BabyLeafOutlookService>();
 
@@ -58,7 +59,6 @@ builder.Services.AddOptions<AnomalyOptions>().BindConfiguration(AnomalyOptions.S
 builder.Services.AddSingleton<AnomalyLotRiskEvaluator>();
 builder.Services.AddSingleton<AnomalyEventService>();
 builder.Services.AddScoped<AnomalyQueryService>();
-builder.Services.AddScoped<SolutionStatusService>();
 builder.Services.AddHostedService<AnomalySweepHostedService>();
 
 // --- Dashboard (plan 12) ---
@@ -72,15 +72,6 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 // invoca hardware (SIM-07), y el test de aislamiento lo verifica con un adaptador falso.
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
-
-// --- Módulo de optimización: recomendaciones R1–R6 con la lógica de Lotes, Simulación y Anomalías ---
-// Se recalculan al abrir la vista y cada SweepIntervalMinutes (barrido); las nuevas de prioridad alta
-// se avisan a Notificaciones una sola vez.
-builder.Services.AddScoped<IOptimizationEventSink, HydroPilotWeb.Services.Notifications.OptimizationNotificationSink>();
-builder.Services.AddScoped<OptimizationService>();
-builder.Services.AddOptions<OptimizationOptions>()
-    .BindConfiguration(OptimizationOptions.SectionName);
-builder.Services.AddHostedService<OptimizationSweepHostedService>();
 
 // --- Control de pH y CE (dosis manual + motor automático) ---
 // La Pi pide sus comandos por /api/nodos/{nodeId}/comandos y responde el resultado. Al llegar lecturas de pH/CE
@@ -116,6 +107,15 @@ builder.Services.AddScoped<ILotHistorySource>(sp => sp.GetRequiredService<BabyLe
 builder.Services.AddScoped<HydroPilotWeb.Services.Control.RecipeService>();
 builder.Services.AddHostedService<HydroPilotWeb.Services.Control.ControlWorker>();
 builder.Services.AddHostedService<HydroPilotWeb.Services.Control.ControlSweepHostedService>();
+// Errores de sensores (sin datos, fuera de lo normal, saltos): alertas y freno del control automático.
+builder.Services.AddScoped<HydroPilotWeb.Services.SensorFaults.SensorFaultService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Circuits.CircuitService>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.SensorFaults.SensorFaultMonitorHostedService>();
+
+// --- Entorno de simulación (apagado por defecto; perfil "simulacion") ---
+builder.Services.Configure<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentOptions>(
+    builder.Configuration.GetSection(HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentOptions.SectionName));
+builder.Services.AddSingleton<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentService>();
 
 // --- Módulo de notificaciones y correo (plan 17) ---
 builder.Services.Configure<HydroPilotWeb.Services.Notifications.EmailOptions>(
@@ -189,6 +189,12 @@ using (var scope = app.Services.CreateScope())
     using var context = factory.CreateDbContext();
     DbInitializer.Initialize(context, builder.Configuration);
 }
+
+// Entorno de simulación (perfil "simulacion"): la primera vez genera el historial de ejemplo, antes de los barridos.
+var simulationEnvironment = app.Services.GetRequiredService<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentService>();
+if (simulationEnvironment.Options.Enabled && !useLocalDb)
+    throw new InvalidOperationException("El entorno de simulación borra y regenera la base: solo corre contra LocalDB.");
+await simulationEnvironment.EnsureSeededAsync();
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 

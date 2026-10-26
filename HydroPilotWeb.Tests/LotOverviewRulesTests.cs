@@ -4,15 +4,15 @@ using HydroPilotWeb.Services.Lotes;
 namespace HydroPilotWeb.Tests;
 
 /// <summary>
-/// Metas del ciclo (meta Baby Leaf y pérdidas máximas), validación de objetivos y
+/// Metas del ciclo (meta Baby Leaf y plantas activas esperadas), validación de objetivos y
 /// línea de tiempo de ventanas de cosecha de la vista Lotes. Lógica pura.
 /// </summary>
 public class LotOverviewRulesTests
 {
     private static LotGoalsRules.Result Goals(
         int total = 22, int harvestedBl = 1, int apta = 7, int candidate = 6,
-        int discarded = 2, int risk = 0, decimal? goal = 80m, decimal? maxLoss = 10m)
-        => LotGoalsRules.Evaluate(new LotGoalsRules.Input(total, harvestedBl, apta, candidate, discarded, risk, goal, maxLoss));
+        int discarded = 2, decimal? goal = 80m, decimal? expectedActive = 90m)
+        => LotGoalsRules.Evaluate(new LotGoalsRules.Input(total, harvestedBl, apta, candidate, discarded, goal, expectedActive));
 
     [Fact]
     public void Meta_Baby_Leaf_Cuenta_Cosechadas_Mas_Aptas_Y_Potencial_Con_Candidatas()
@@ -23,9 +23,7 @@ public class LotOverviewRulesTests
         Assert.Equal(36.4m, result.AchievedPercent);
         Assert.Equal(14, result.PotentialCount);
         Assert.Equal(63.6m, result.PotentialPercent);
-        Assert.Equal(18, result.GoalPlants); // ceil(80% de 22 = 17,6)
-        Assert.Equal(10, result.PlantsMissingForGoal); // 18 - 8
-        Assert.Equal(BabyLeafGoalStatus.PorDebajo, result.BabyLeafStatus);
+        Assert.Equal(18, LotGoalsRules.PlantsFor(80m, 22)); // ceil(80% de 22 = 17,6)
     }
 
     [Fact]
@@ -40,7 +38,7 @@ public class LotOverviewRulesTests
         Assert.Equal([4.5m, 31.9m, 27.2m, 27.3m, 0m, 0m, 0m, 9.1m], shares);
         Assert.Equal(goals.AchievedPercent, shares[0] + shares[1]);             // 36,4 (no 4,5 + 31,8 = 36,3)
         Assert.Equal(goals.PotentialPercent, shares[0] + shares[1] + shares[2]); // 63,6
-        Assert.Equal(goals.LossPercent, shares[^1]);                             // 9,1
+        Assert.Equal(100m - goals.ActivePercent, shares[^1]);                    // 9,1 descartadas = 100 − 90,9 activas
         Assert.Equal(100m, shares.Sum());
     }
 
@@ -63,10 +61,10 @@ public class LotOverviewRulesTests
         var warnings = LotDataQualityRules.RemainingWarnings(
         [
             "Se detectaron lecturas sintéticas (marker mock/demo) en el histórico: no representan precisión real.",
-            "Porcentaje de aptas (36,8%) por debajo del objetivo (70,00%).",
-            "Porcentaje objetivo de plantas aptas no configurado: fecha de cosecha híbrida pendiente de decisión.",
+            "Porcentaje de Baby Leafs (36,8%) por debajo del objetivo (70,00%).",
+            "Porcentaje objetivo de Baby Leafs no configurado: fecha de cosecha híbrida pendiente de decisión.",
             "La fecha por GDD (2026-10-28) queda más allá del horizonte de 7 días: es una extrapolación con el último GDD diario, no un pronóstico climático.",
-            "Cosecha convencional: sin criterio de tamaño/madurez disponible (análisis de imagen pendiente): fecha híbrida sin decidir.",
+            "Cosecha adulta: sin criterio de tamaño/madurez disponible (análisis de imagen pendiente): fecha híbrida sin decidir.",
         ], []);
 
         Assert.Equal(["Se detectaron lecturas sintéticas (marker mock/demo) en el histórico: no representan precisión real."], warnings);
@@ -96,28 +94,10 @@ public class LotOverviewRulesTests
     }
 
     [Fact]
-    public void Meta_Baby_Leaf_Alcanzable_Si_Las_Candidatas_Llegan()
-    {
-        var result = Goals(goal: 60m);
-        Assert.Equal(BabyLeafGoalStatus.Alcanzable, result.BabyLeafStatus);
-    }
-
-    [Fact]
-    public void Meta_Baby_Leaf_Cumplida_Con_Lo_Logrado()
-    {
-        var result = Goals(goal: 35m);
-        Assert.Equal(BabyLeafGoalStatus.Cumplida, result.BabyLeafStatus);
-        Assert.Equal(0, result.PlantsMissingForGoal);
-    }
-
-    [Fact]
     public void Sin_Metas_No_Se_Inventa_Un_Estado()
     {
-        var result = Goals(goal: null, maxLoss: null);
-        Assert.Equal(BabyLeafGoalStatus.SinMeta, result.BabyLeafStatus);
-        Assert.Equal(LossGoalStatus.SinMeta, result.LossStatus);
-        Assert.Equal(0, result.PlantsMissingForGoal);
-        Assert.Null(result.GoalPlants);
+        var result = Goals(goal: null, expectedActive: null);
+        Assert.Equal(ActiveGoalStatus.SinMeta, result.ActiveStatus);
     }
 
     [Fact]
@@ -125,19 +105,41 @@ public class LotOverviewRulesTests
     {
         var result = Goals(total: 0, harvestedBl: 0, apta: 0, candidate: 0, discarded: 0);
         Assert.Equal(0m, result.AchievedPercent);
-        Assert.Equal(0m, result.LossPercent);
-        Assert.Equal(BabyLeafGoalStatus.SinPlantas, result.BabyLeafStatus);
-        Assert.Equal(LossGoalStatus.SinPlantas, result.LossStatus);
+        Assert.Equal(0m, result.ActivePercent);
+        Assert.Equal(ActiveGoalStatus.SinPlantas, result.ActiveStatus);
     }
 
     [Theory]
-    [InlineData(2, 0, 10, LossGoalStatus.Dentro)]     // 9,1% ≤ 10%
-    [InlineData(2, 1, 10, LossGoalStatus.EnRiesgo)]   // 9,1% hoy, 13,6% si se pierde la planta en riesgo
-    [InlineData(3, 0, 10, LossGoalStatus.Excedida)]   // 13,6% > 10%
-    public void Perdidas_Contra_El_Maximo(int discarded, int risk, int maxLoss, LossGoalStatus expected)
+    [InlineData(2, 90, ActiveGoalStatus.Dentro)]      // 20 de 22 = 90,9% ≥ 90%
+    [InlineData(3, 90, ActiveGoalStatus.PorDebajo)]   // 19 de 22 = 86,4% < 90%
+    [InlineData(2, 91, ActiveGoalStatus.PorDebajo)]   // 90,9% < 91%
+    public void Plantas_Activas_Contra_Las_Esperadas(int discarded, int expectedActive, ActiveGoalStatus expected)
     {
-        var result = Goals(discarded: discarded, risk: risk, maxLoss: maxLoss);
-        Assert.Equal(expected, result.LossStatus);
+        var result = Goals(discarded: discarded, expectedActive: expectedActive);
+        Assert.Equal(expected, result.ActiveStatus);
+    }
+
+    [Fact]
+    public void Las_Cosechadas_Cuentan_Como_Activas()
+    {
+        // 10 plantas: 3 cosechadas como Baby Leaf y 1 descartada → 9 no se perdieron.
+        var result = Goals(total: 10, harvestedBl: 3, apta: 0, candidate: 0, discarded: 1, expectedActive: 90m);
+        Assert.Equal(9, result.ActiveCount);
+        Assert.Equal(90m, result.ActivePercent);
+        Assert.Equal(ActiveGoalStatus.Dentro, result.ActiveStatus);
+        Assert.Equal(9, LotGoalsRules.PlantsFor(90m, 10));
+        Assert.Equal(55, LotGoalsRules.PlantsFor(90.5m, 60)); // ceil(54,3): lo mínimo para llegar
+    }
+
+    [Fact]
+    public void El_Color_Sale_De_Las_Plantas_De_La_Meta_No_Del_Porcentaje_Redondeado()
+    {
+        // Meta 91,7% de 60 = ceil(55,02) = 56 plantas. Con 55 activas el % redondeado también da 91,7%,
+        // pero faltan plantas: tiene que quedar por debajo, como dice el título.
+        var result = Goals(total: 60, harvestedBl: 0, apta: 0, candidate: 0, discarded: 5, expectedActive: 91.7m);
+        Assert.Equal(91.7m, result.ActivePercent);
+        Assert.Equal(56, LotGoalsRules.PlantsFor(91.7m, 60));
+        Assert.Equal(ActiveGoalStatus.PorDebajo, result.ActiveStatus);
     }
 
     [Fact]
@@ -166,7 +168,7 @@ public class LotOverviewRulesTests
         var normalized = LotObjectivesRules.Normalize(new LotObjectives(70.126m, 80.004m, null));
         Assert.Equal(70.13m, normalized.HarvestThresholdPercent);
         Assert.Equal(80.00m, normalized.BabyLeafGoalPercent);
-        Assert.Null(normalized.MaxLossPercent);
+        Assert.Null(normalized.ExpectedActivePercent);
     }
 
     [Theory]
@@ -336,7 +338,7 @@ public class LotOverviewRulesTests
     public void Alta_De_Lote_Valida_Nombre_Grilla_Y_Fecha(string name, int rows, int columns, int daysFromToday, int expectedErrors)
     {
         var today = new DateOnly(2026, 10, 14);
-        var input = new NewLotInput(name, CropTypeId: 1, GreenhouseId: 1, today.AddDays(daysFromToday), rows, columns);
+        var input = new NewLotInput(name, CropTypeId: 1, GreenhouseId: 1, today.AddDays(daysFromToday), rows, columns, CircuitId: 1);
 
         Assert.Equal(expectedErrors, NewLotRules.Validate(input, today).Count);
     }
@@ -345,12 +347,12 @@ public class LotOverviewRulesTests
     public void Alta_De_Lote_Valida_Y_Redondea_Las_Metas_Opcionales()
     {
         var today = new DateOnly(2026, 10, 14);
-        var input = new NewLotInput("Lote 03", 1, 1, today, 6, 10, BabyLeafGoalPercent: 80.126m, MaxLossPercent: null);
+        var input = new NewLotInput("Lote 03", 1, 1, today, 6, 10, BabyLeafGoalPercent: 80.126m, ExpectedActivePercent: null, CircuitId: 1);
 
         Assert.Empty(NewLotRules.Validate(input, today));
         Assert.Equal(80.13m, NewLotRules.Goals(input).BabyLeafGoalPercent);
-        Assert.Null(NewLotRules.Goals(input).MaxLossPercent); // vacía: sin definir
-        Assert.Single(NewLotRules.Validate(input with { MaxLossPercent = 150m }, today));
+        Assert.Null(NewLotRules.Goals(input).ExpectedActivePercent); // vacía: sin definir
+        Assert.Single(NewLotRules.Validate(input with { ExpectedActivePercent = 150m }, today));
     }
 
     [Fact]
@@ -372,7 +374,7 @@ public class LotOverviewRulesTests
     }
 
     [Fact]
-    public void Rendimiento_Separa_Baby_Leaf_Y_Convencional_Actual_Y_Potencial()
+    public void Rendimiento_Separa_Baby_Leaf_Y_Convencional_Actual_Y_Esperado_Sin_Historico()
     {
         // Lote Demo 01: 7 aptas, 6 candidatas, 6 en desarrollo, 0 convencionales.
         var estimate = LotYieldRules.Estimate(
@@ -382,8 +384,139 @@ public class LotOverviewRulesTests
 
         Assert.Equal(new DestinationYield(7, 0.21m, 546m), estimate.Current.BabyLeaf);       // 7 × 30 g × $2600/kg
         Assert.Equal(new DestinationYield(0, 0m, 0m), estimate.Current.Conventional);
-        Assert.Equal(new DestinationYield(13, 0.39m, 1014m), estimate.Potential.BabyLeaf);   // aptas + candidatas
-        Assert.Equal(new DestinationYield(6, 1.2m, 2160m), estimate.Potential.Conventional); // en desarrollo + convencionales
+        Assert.Equal(new DestinationYield(13, 0.39m, 1014m), estimate.Expected.BabyLeaf);   // aptas + candidatas
+        Assert.Equal(new DestinationYield(6, 1.2m, 2160m), estimate.Expected.Conventional); // en desarrollo + convencionales
+        Assert.Equal(new YieldBasis(1m, null), estimate.Basis);                            // sin histórico: solo el lote
+    }
+
+    private static readonly YieldReference Weights = new(120m, 280m);
+    private static readonly YieldPrices Prices = new(14650m, 2100m, "ARS");
+
+    // Lotes cerrados de la misma época: 53,8 % Baby Leaf, 37,2 % convencional (como el B18 de la simulación).
+    private static readonly YieldHistory History = new(7, true, 220m / 409m, 152m / 409m);
+
+    [Fact]
+    public void Esperado_En_Desarrollo_Sale_Del_Historico()
+    {
+        // 60 plantas en desarrollo: el lote todavía no dice nada, se reparten con el histórico.
+        var estimate = LotYieldRules.Estimate(
+            new LotYieldRules.Input(Apta: 0, Candidate: 0, Developing: 60, Conventional: 0), Weights, Prices, History, lotWeight: 0m);
+
+        Assert.Equal(new DestinationYield(32, 3.84m, 56256m), estimate.Expected.BabyLeaf);       // 60 × 53,8 % = 32,3
+        Assert.Equal(new DestinationYield(22, 6.16m, 12936m), estimate.Expected.Conventional);   // 60 × 37,2 % = 22,3
+        Assert.Equal(new DestinationYield(0, 0m, 0m), estimate.Current.BabyLeaf);
+    }
+
+    [Fact]
+    public void Esperado_En_La_Ventana_Baby_Leaf_Mezcla_Historico_Y_Lote()
+    {
+        // A mitad de la ventana: 20 aptas + 10 candidatas + 30 en desarrollo, histórico 50 % / 40 %.
+        var history = new YieldHistory(5, true, 0.5m, 0.4m);
+        var estimate = LotYieldRules.Estimate(
+            new LotYieldRules.Input(Apta: 20, Candidate: 10, Developing: 30, Conventional: 0), Weights, Prices, history, lotWeight: 0.5m);
+
+        // Histórico: 30 BL y 24 conv. Lote: 30 BL y 30 conv. Mitad y mitad: 30 y 27.
+        Assert.Equal(30, estimate.Expected.BabyLeaf.Plants);
+        Assert.Equal(27, estimate.Expected.Conventional.Plants);
+        Assert.Equal(0.5m, estimate.Basis.LotWeight);
+    }
+
+    [Fact]
+    public void Esperado_Despues_De_La_Ventana_Es_El_Lote_Con_Lo_Ya_Cosechado()
+    {
+        // Ventana convencional: 35 cosechadas como Baby Leaf, 20 convencionales activas, 2 en riesgo.
+        var estimate = LotYieldRules.Estimate(
+            new LotYieldRules.Input(Apta: 0, Candidate: 0, Developing: 0, Conventional: 20, Risk: 2, HarvestedBabyLeaf: 35),
+            Weights, Prices, History, lotWeight: 1m);
+
+        Assert.Equal(35, estimate.Expected.BabyLeaf.Plants);      // lo cosechado no se pierde del esperado
+        Assert.Equal(20, estimate.Expected.Conventional.Plants);  // las en riesgo cuentan como pérdida
+        Assert.Equal(new DestinationYield(20, 5.6m, 11760m), estimate.Current.Conventional);
+    }
+
+    [Fact]
+    public void Sin_Historico_El_Esperado_Es_Solo_El_Lote_Aunque_Este_En_Desarrollo()
+    {
+        var estimate = LotYieldRules.Estimate(
+            new LotYieldRules.Input(Apta: 0, Candidate: 0, Developing: 60, Conventional: 0), Weights, Prices, history: null, lotWeight: 0m);
+
+        Assert.Equal(1m, estimate.Basis.LotWeight);
+        Assert.Equal(0, estimate.Expected.BabyLeaf.Plants);
+        Assert.Equal(60, estimate.Expected.Conventional.Plants);
+    }
+
+    private static CycleTimeline Timeline(CyclePhase phase, decimal gdd)
+    {
+        static CycleMilestone At(decimal value) => new(value, null, true, false);
+        return new CycleTimeline(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 20), 19, phase, gdd,
+            At(250m), At(350m), At(450m), At(600m), At(750m));
+    }
+
+    [Theory]
+    [InlineData(CyclePhase.Desarrollo, 120, 0)]
+    [InlineData(CyclePhase.VentanaBabyLeaf, 250, 0)]     // recién abre: todavía todo histórico
+    [InlineData(CyclePhase.VentanaBabyLeaf, 300, 0.25)]
+    [InlineData(CyclePhase.VentanaBabyLeaf, 450, 1)]
+    [InlineData(CyclePhase.VentanaConvencional, 520, 1)]
+    [InlineData(CyclePhase.Sobremadurez, 800, 1)]
+    public void El_Peso_Del_Lote_Crece_Con_La_Fase(CyclePhase phase, int gdd, double expected)
+    {
+        Assert.Equal((decimal)expected, LotYieldRules.LotWeight(Timeline(phase, gdd)));
+    }
+
+    [Fact]
+    public void Sin_Linea_De_Tiempo_Pesa_Solo_El_Lote()
+    {
+        Assert.Equal(1m, LotYieldRules.LotWeight(null));
+    }
+
+    private static LotYieldHistoryRules.ClosedLot Closed(string sowing, int total, int babyLeaf, int conventional) =>
+        new(DateOnly.Parse(sowing), total, babyLeaf, conventional);
+
+    [Fact]
+    public void Historico_Usa_Los_Lotes_De_La_Misma_Epoca()
+    {
+        var lots = new[]
+        {
+            Closed("2025-10-10", 60, 42, 13),
+            Closed("2024-11-05", 60, 24, 27),
+            Closed("2025-09-20", 40, 30, 8),
+            Closed("2026-01-15", 60, 0, 49),   // verano: fuera de la época (± 45 días)
+        };
+
+        var history = LotYieldHistoryRules.Build(new DateOnly(2026, 10, 18), lots)!;
+
+        Assert.True(history.SameSeason);
+        Assert.Equal(3, history.Lots);
+        Assert.Equal(96m / 160m, history.BabyLeafShare);       // por plantas: un lote grande pesa más
+        Assert.Equal(48m / 160m, history.ConventionalShare);
+    }
+
+    [Fact]
+    public void Historico_Sin_Suficientes_De_La_Epoca_Usa_Todos_Los_Cerrados()
+    {
+        var lots = new[] { Closed("2025-10-10", 60, 42, 13), Closed("2026-02-01", 60, 0, 49), Closed("2026-06-01", 0, 0, 0) };
+
+        var history = LotYieldHistoryRules.Build(new DateOnly(2026, 10, 18), lots)!;
+
+        Assert.False(history.SameSeason);
+        Assert.Equal(2, history.Lots);                          // el lote sin plantas no cuenta
+        Assert.Equal(42m / 120m, history.BabyLeafShare);
+    }
+
+    [Fact]
+    public void Sin_Lotes_Cerrados_No_Hay_Historico()
+    {
+        Assert.Null(LotYieldHistoryRules.Build(new DateOnly(2026, 10, 18), []));
+    }
+
+    [Theory]
+    [InlineData("2026-12-15", "2027-01-10", 26)]   // cruza el fin de año
+    [InlineData("2025-10-18", "2026-10-18", 0)]
+    [InlineData("2026-03-01", "2026-09-01", 181)]
+    public void Distancia_En_El_Anio(string a, string b, int days)
+    {
+        Assert.Equal(days, LotYieldHistoryRules.DaysApartInYear(DateOnly.Parse(a), DateOnly.Parse(b)));
     }
 
     [Fact]

@@ -17,7 +17,7 @@ namespace HydroPilotWeb.Services.Dashboard;
 ///   (frescura por última aceptación; nunca se usa LastConnection como sinónimo).
 /// - Serie: agregación por bucket en SQL (máx. <see cref="DashboardOptions.SeriesMaxPoints"/>
 ///   puntos), sin descargar el histórico completo.
-/// - Anomalías/recomendaciones: sin fuente integrada → listas vacías honestas
+/// - Anomalías: sin fuente integrada → lista vacía honesta
 ///   (el dashboard no inventa datos).
 ///
 /// Contexto: invernadero único (primer registro) — asunción de una instalación
@@ -50,7 +50,7 @@ public sealed class DashboardService
     public DashboardOptions CurrentOptions => _options.CurrentValue;
 
     /// <summary>
-    /// Snapshot completo: contexto, KPIs, nodos, anomalías/recomendaciones (vacías
+    /// Snapshot completo: contexto, KPIs, nodos, anomalías (vacías
     /// sin fuente) y la serie temporal de la variable y rango seleccionados.
     /// </summary>
     public async Task<DashboardSnapshot> GetSnapshotAsync(
@@ -69,9 +69,8 @@ public sealed class DashboardService
             contextDto,
             kpis,
             nodes,
-            // Anomalías y recomendaciones: los módulos aún no están integrados.
+            // Anomalías: el módulo aún no está integrado.
             // El contrato queda listo; la lista vacía es el estado honesto (DASH-03).
-            [],
             [],
             series,
             DateTime.UtcNow);

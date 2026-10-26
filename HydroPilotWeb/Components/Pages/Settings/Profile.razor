@@ -137,10 +137,13 @@
 
     private static string GetInitials(ClaimsPrincipal user)
     {
-        var first = GetClaim(user, ClaimTypes.GivenName);
-        var last = GetClaim(user, ClaimTypes.Surname);
-        var initials = string.Concat(first.FirstOrDefault(), last.FirstOrDefault()).Trim();
-        return string.IsNullOrWhiteSpace(initials) ? "HP" : initials.ToUpperInvariant();
+        // Nombre y apellido; si no hay (admin local), las dos primeras letras del nombre de usuario, como el menú.
+        var first = GetClaim(user, ClaimTypes.GivenName).Trim();
+        var last = GetClaim(user, ClaimTypes.Surname).Trim();
+        if (first.Length > 0 && last.Length > 0)
+            return $"{first[0]}{last[0]}".ToUpperInvariant();
+        var letters = new string((user.Identity?.Name ?? string.Empty).Where(char.IsLetter).Take(2).ToArray());
+        return letters.Length == 2 ? letters.ToUpperInvariant() : "HP";
     }
 
     private static string GetDisplayName(ClaimsPrincipal user)
