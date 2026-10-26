@@ -3,7 +3,7 @@
 
 @* Rendimiento por destino: plantas × peso de referencia (no kg/m²: en hidroponía cada planta
    tiene su hueco, así que se sabe cuántas hay). Dos gráficos, uno debajo del otro y con la misma escala
-   en kg: el actual (lo listo hoy) y el esperado (lo que va a dar el ciclo: histórico del invernadero y
+   en kg: el actual (lo cosechado más lo listo hoy: aptas y adultas que llegaron a su corte) y el esperado (lo que va a dar el ciclo: histórico del invernadero y
    situación del lote, según la fase), con una barra por destino y sus kg y $. Pesos y precios se editan
    en Ajustes > Parámetros. En un ciclo cerrado, solo el real, con los pesos y precios guardados al
    cosechar el lote. *@
@@ -69,23 +69,45 @@
         {
             var bl = Grams(Yield.Reference.BabyLeafGramsPerPlant);
             var conv = Grams(Yield.Reference.ConventionalGramsPerPlant);
-            var aptas = LotFormat.Count(Plants.Apta, "Baby Leaf", "Baby Leafs");
-            var conventional = LotFormat.Count(Plants.Conventional, "adulta", "adultas");
+            var harvestedAdults = Plants.Harvested - Plants.HarvestedAsBabyLeaf;
+            var readyAdults = Yield.Current.Conventional.Plants - harvestedAdults;
+            var babyLeafNow = $"{LotFormat.Count(Plants.HarvestedAsBabyLeaf, "cosechada", "cosechadas")} + " +
+                              $"{LotFormat.Count(Plants.Apta, "apta", "aptas")} × {bl}";
+            var adultNow = $"{LotFormat.Count(harvestedAdults, "cosechada", "cosechadas")} + " +
+                           $"{LotFormat.Count(readyAdults, "lista", "listas")} × {conv}" + AdultsWaitingText(readyAdults);
 
             return
             [
                 new("Rendimiento actual",
                 [
-                    new("Baby Leaf", AptaColor, Yield.Current.BabyLeaf, $"{aptas} × {bl}"),
-                    new("Adulta", ConventionalColor, Yield.Current.Conventional, $"{conventional} × {conv}"),
+                    new("Baby Leaf", AptaColor, Yield.Current.BabyLeaf, babyLeafNow),
+                    new("Adulta", ConventionalColor, Yield.Current.Conventional, adultNow),
                 ]),
                 new("Rendimiento esperado",
                 [
                     new("Baby Leaf", AptaColor, Yield.Expected.BabyLeaf, $"≈ {LotFormat.Plants(Yield.Expected.BabyLeaf.Plants)} × {bl}"),
-                    new("Adulta", ConventionalColor, Yield.Expected.Conventional, $"≈ {LotFormat.Plants(Yield.Expected.Conventional.Plants)} × {conv}"),
+                    new("Adulta", ConventionalColor, Yield.Expected.Conventional,
+                        $"≈ {LotFormat.Plants(Yield.Expected.Conventional.Plants)} × {conv}" + AdultCapText(harvestedAdults)),
                 ], BasisText, BasisDetail),
             ];
         }
+    }
+
+    /// <summary>Si el tope de Adultas bajó el esperado: las que ya son adultas más los huecos libres.</summary>
+    private string AdultCapText(int harvestedAdults) =>
+        Yield.Basis is { AdultsCapped: true, AdultRoom: { } room }
+            ? $" · tope: {LotFormat.Count(harvestedAdults + Plants.Adults, "adulta", "adultas")} + " +
+              $"{LotFormat.Count(room, "hueco libre", "huecos libres")} en Adultas"
+            : string.Empty;
+
+    /// <summary>Las adultas que todavía no llegan a su corte (650 GDD más los días de estrés): cuándo llegan.</summary>
+    private string AdultsWaitingText(int readyAdults)
+    {
+        var waiting = Plants.Adults - readyAdults;
+        if (waiting <= 0)
+            return string.Empty;
+        var when = Overview.Timeline?.ConventionalOptimum.Date is { } date ? $" el {LotFormat.Day(date)}" : " a su corte";
+        return $" · {LotFormat.Count(waiting, "adulta llega", "adultas llegan")}{when}";
     }
 
     /// <summary>De dónde sale el esperado, en pocas palabras: histórico, lote o la mezcla de los dos.</summary>

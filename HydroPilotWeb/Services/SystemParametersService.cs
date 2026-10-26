@@ -23,6 +23,37 @@ public sealed record ParametersUpdateResult(bool Succeeded, IReadOnlyList<string
 public sealed record SensorCheckInterval(string SensorType, int? Days);
 
 /// <summary>
+/// Trasplante a Adultas y tamaño de Baby Leaf (Ajustes &gt; Parámetros). Siempre tienen valor: los de fábrica hasta
+/// que se editan.
+/// <list type="bullet">
+/// <item>Separación de las plantas en el circuito denso (Baby Leaf) y en el de Adultas: el lugar que ocupa cada una.</item>
+/// <item>GDD de decisión: desde ahí se proponen las que pasan a Adulta (dentro de la ventana Baby Leaf).</item>
+/// <item>Rendimiento laboral (plantas por hora por operario) y costo de la hora: costo por planta trasplantada.</item>
+/// <item>Días de estrés: la Adulta frena después del trasplante y su corte se corre esos días.</item>
+/// <item>Tamaño máximo de Baby Leaf (× el ideal): más grande, se pasó y ya no es Baby Leaf.</item>
+/// </list>
+/// </summary>
+public sealed record TransplantParameters(
+    decimal BabyLeafSpacingCm,
+    decimal AdultSpacingCm,
+    decimal DecisionGdd,
+    int PlantsPerHour,
+    decimal LaborCostPerHour,
+    int StressDays,
+    decimal MaxSizeFactor)
+{
+    /// <summary>
+    /// De fábrica: 6,5 y 22,5 cm (5–8 y 20–25 cm del proceso), decisión al abrir la ventana Baby Leaf (250 GDD), 800
+    /// plantas por hora, $9.500 la hora (jornal CNTA de peón general de octubre de 2026 ÷ 8 h, más ~40 % de cargas), 3
+    /// días de estrés y 1,3 veces el tamaño ideal (provisorio hasta definirlo).
+    /// </summary>
+    public static readonly TransplantParameters Defaults = new(6.5m, 22.5m, 250m, 800, 9_500m, 3, 1.3m);
+
+    /// <summary>Costo de mano de obra por planta trasplantada: costo de la hora ÷ plantas por hora.</summary>
+    public decimal CostPerPlant => PlantsPerHour > 0 ? Math.Round(LaborCostPerHour / PlantsPerHour, 2) : 0m;
+}
+
+/// <summary>
 /// Parámetros globales del sistema (Ajustes &gt; Parámetros):
 /// <list type="bullet">
 /// <item>Peso promedio por planta de cada destino: AppSettings.</item>
@@ -47,6 +78,14 @@ public class SystemParametersService
     /// <summary>Días entre chequeos de un tipo de sensor: AppSettings "SensorCheckDays:{tipo}" (ej. "SensorCheckDays:pH").</summary>
     public const string SensorCheckDaysKeyPrefix = "SensorCheckDays:";
     public const int MaxSensorCheckDays = 365;
+
+    public const string BabyLeafSpacingKey = "Transplant:BabyLeafSpacingCm";
+    public const string AdultSpacingKey = "Transplant:AdultSpacingCm";
+    public const string DecisionGddKey = "Transplant:DecisionGdd";
+    public const string PlantsPerHourKey = "Transplant:PlantsPerHour";
+    public const string LaborCostPerHourKey = "Transplant:LaborCostPerHour";
+    public const string StressDaysKey = "Transplant:StressDays";
+    public const string MaxSizeFactorKey = "BabyLeaf:MaxSizeFactor";
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
@@ -276,6 +315,78 @@ public class SystemParametersService
 
         _logger.LogInformation("Límites de errores de sensores actualizados por {User}: {Limits}", user.Identity?.Name,
             string.Join(", ", limits.Select(l => $"{l.SensorType} {l.Min}–{l.Max} salto {l.Jump}")));
+        return new ParametersUpdateResult(true, []);
+    }
+
+    /// <summary>Trasplante y tamaño de Baby Leaf: los cargados o los de fábrica.</summary>
+    public async Task<TransplantParameters> GetTransplantParametersAsync(CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        return await LoadTransplantAsync(context, ct);
+    }
+
+    /// <summary>Lo mismo con un contexto propio (flujo diario, trasplante, entorno de simulación).</summary>
+    public static async Task<TransplantParameters> LoadTransplantAsync(HydroPilotDbContext context, CancellationToken ct = default)
+    {
+        string[] keys = [BabyLeafSpacingKey, AdultSpacingKey, DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey];
+        var values = await context.AppSettings.AsNoTracking()
+            .Where(s => keys.Contains(s.Key))
+            .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
+        decimal Value(string key, decimal fallback) =>
+            values.TryGetValue(key, out var text)
+            && decimal.TryParse(text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value)
+                ? value
+                : fallback;
+
+        var d = TransplantParameters.Defaults;
+        return new TransplantParameters(
+            Value(BabyLeafSpacingKey, d.BabyLeafSpacingCm),
+            Value(AdultSpacingKey, d.AdultSpacingCm),
+            Value(DecisionGddKey, d.DecisionGdd),
+            (int)Value(PlantsPerHourKey, d.PlantsPerHour),
+            Value(LaborCostPerHourKey, d.LaborCostPerHour),
+            (int)Value(StressDaysKey, d.StressDays),
+            Value(MaxSizeFactorKey, d.MaxSizeFactor));
+    }
+
+    public static IReadOnlyList<string> ValidateTransplant(TransplantParameters p)
+    {
+        var errors = new List<string>();
+        if (p.BabyLeafSpacingCm is <= 0m or > 100m || p.AdultSpacingCm is <= 0m or > 100m)
+            errors.Add("Las separaciones tienen que estar entre 0 y 100 cm.");
+        else if (p.AdultSpacingCm <= p.BabyLeafSpacingCm)
+            errors.Add("La separación de Adultas tiene que ser mayor que la de Baby Leaf.");
+        if (p.DecisionGdd is <= 0m or > 1_000m)
+            errors.Add("El GDD de decisión tiene que estar entre 0 y 1.000.");
+        if (p.PlantsPerHour is < 1 or > 100_000)
+            errors.Add("Las plantas por hora tienen que estar entre 1 y 100.000.");
+        if (p.LaborCostPerHour is < 0m or > 10_000_000m)
+            errors.Add("El costo de la hora de trabajo no puede ser negativo.");
+        if (p.StressDays is < 0 or > 30)
+            errors.Add("Los días de estrés tienen que estar entre 0 y 30.");
+        if (p.MaxSizeFactor is < 1m or > 3m)
+            errors.Add("El tamaño máximo de Baby Leaf tiene que estar entre 1 y 3 veces el ideal.");
+        return errors;
+    }
+
+    /// <summary>Guarda el trasplante y el tamaño de Baby Leaf. Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateTransplantParametersAsync(
+        TransplantParameters input, ClaimsPrincipal user, CancellationToken ct = default)
+    {
+        if (!CanEdit(user))
+            return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
+        var errors = ValidateTransplant(input);
+        if (errors.Count > 0)
+            return new ParametersUpdateResult(false, errors);
+
+        await _settings.SetDecimalAsync(BabyLeafSpacingKey, input.BabyLeafSpacingCm, ct);
+        await _settings.SetDecimalAsync(AdultSpacingKey, input.AdultSpacingCm, ct);
+        await _settings.SetDecimalAsync(DecisionGddKey, input.DecisionGdd, ct);
+        await _settings.SetDecimalAsync(PlantsPerHourKey, input.PlantsPerHour, ct);
+        await _settings.SetDecimalAsync(LaborCostPerHourKey, input.LaborCostPerHour, ct);
+        await _settings.SetDecimalAsync(StressDaysKey, input.StressDays, ct);
+        await _settings.SetDecimalAsync(MaxSizeFactorKey, input.MaxSizeFactor, ct);
+        _logger.LogInformation("Trasplante actualizado por {User}: {Parameters}", user.Identity?.Name, input);
         return new ParametersUpdateResult(true, []);
     }
 

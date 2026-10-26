@@ -149,11 +149,19 @@ public class SensorFaultSqlServerTests
         var prefix = await StartAsync();
         try
         {
-            // El nodo de repuesto manda (está vivo) pero su sonda de pH no manda hace media hora.
+            // El nodo de repuesto manda (está vivo) pero su sonda de pH no manda hace media hora. Su circuito tiene lote
+            // (un circuito sin lote no se vigila).
             var now = DateTime.UtcNow;
             await AddReadingAsync(_fx.SpareNodeId, "ph-solucion", 6.0m, now.AddMinutes(-30), prefix);
             await using (var context = _fx.NewContext())
+            {
                 await context.IotNodes.Where(n => n.Id == _fx.SpareNodeId).ExecuteUpdateAsync(s => s.SetProperty(n => n.LastAcceptedAt, now));
+                context.CircuitAssignments.Add(new CircuitAssignment
+                {
+                    CircuitId = _fx.SpareCircuitId, LotId = _fx.LotId, ValidFromUtc = now.AddHours(-1), Source = "test-sin-datos", CreatedAt = now,
+                });
+                await context.SaveChangesAsync();
+            }
 
             var faults = Faults(withAlerts: true);
             await faults.SweepAsync(DateTime.UtcNow);
@@ -189,7 +197,10 @@ public class SensorFaultSqlServerTests
         finally
         {
             await using (var context = _fx.NewContext())
+            {
                 await context.IotNodes.Where(n => n.Id == _fx.SpareNodeId).ExecuteUpdateAsync(s => s.SetProperty(n => n.LastAcceptedAt, (DateTime?)null));
+                await context.CircuitAssignments.Where(a => a.Source == "test-sin-datos").ExecuteDeleteAsync();
+            }
             await CleanupAsync(prefix);
         }
     }

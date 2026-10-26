@@ -1,3 +1,4 @@
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.Extensions.Options;
 
 namespace HydroPilotWeb.Services.SensorFaults;
@@ -28,11 +29,15 @@ public sealed class SensorFaultMonitorHostedService : BackgroundService
         {
             try
             {
-                await using var scope = _scopeFactory.CreateAsyncScope();
-                var result = await scope.ServiceProvider.GetRequiredService<SensorFaultService>().SweepAsync(DateTime.UtcNow, stoppingToken);
-                if (result.Opened > 0 || result.AlertsCreated > 0 || result.AlertsResolved > 0)
-                    _logger.LogInformation("Errores de sensores: {Opened} sin datos, {Created} alertas nuevas, {Resolved} alertas resueltas.",
-                        result.Opened, result.AlertsCreated, result.AlertsResolved);
+                using var lease = RegenerationPause.TryEnter();
+                if (lease is not null)
+                {
+                    await using var scope = _scopeFactory.CreateAsyncScope();
+                    var result = await scope.ServiceProvider.GetRequiredService<SensorFaultService>().SweepAsync(DateTime.UtcNow, stoppingToken);
+                    if (result.Opened > 0 || result.AlertsCreated > 0 || result.AlertsResolved > 0)
+                        _logger.LogInformation("Errores de sensores: {Opened} sin datos, {Created} alertas nuevas, {Resolved} alertas resueltas.",
+                            result.Opened, result.AlertsCreated, result.AlertsResolved);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

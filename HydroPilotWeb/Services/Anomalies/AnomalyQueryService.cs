@@ -41,6 +41,8 @@ public sealed class AnomalyQueryService
         if (filter.NodeId is { } nodeId)
             query = query.Where(e => e.NodeId == nodeId
                 || context.Sensors.Any(s => s.Id == e.SensorId && s.NodeId == nodeId));
+        if (filter.CircuitId is { } circuitId)
+            query = query.Where(e => context.Sensors.Any(s => s.Id == e.SensorId && s.CircuitId == circuitId));
         if (!string.IsNullOrWhiteSpace(filter.Status))
             query = query.Where(e => e.Status == filter.Status);
         if (filter.From.HasValue)

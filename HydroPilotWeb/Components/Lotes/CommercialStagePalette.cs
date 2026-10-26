@@ -24,6 +24,9 @@ public static class CommercialStagePalette
     /// <summary>Posición configurada sin planta: gris claro. NO es una planta descartada.</summary>
     public static CellStyle Empty => new("#e4e7eb", "#8a94a0", "·", "Posición vacía");
 
+    /// <summary>Hueco del denso de una planta trasplantada: vacío con borde de Adulta (el color va en el CSS).</summary>
+    public static CellStyle Transplanted => new("transparent", "inherit", "AD", "Trasplantada");
+
     /// <summary>Planta descartada: gris oscuro atenuado con patrón, distinto de la vacía.</summary>
     public static CellStyle Discarded => new(
         "repeating-linear-gradient(45deg,#8a94a0,#8a94a0 4px,#9aa3ad 4px,#9aa3ad 8px)",

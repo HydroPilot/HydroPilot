@@ -1,8 +1,8 @@
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Alta de un lote (va dentro del modal "Nuevo lote"): sin m² (cada planta tiene su hueco); la grilla
-   define cuántas plantas se crean. Las metas del lote son opcionales: vacías quedan sin definir. *@
+@* Alta de un lote (va dentro del modal "Nuevo lote"): sin m² (cada planta tiene su hueco); se siembra un circuito
+   denso libre y su grilla define cuántas plantas se crean. Las metas del lote son opcionales: vacías quedan sin definir. *@
 @if (SingleChoices is { } single)
 {
     @* Con un solo cultivo o invernadero no hay nada que elegir: se muestra arriba, destacado. *@
@@ -39,7 +39,7 @@
             </select>
         </div>
     }
-    @* Circuito donde se planta: solo los libres (los que tienen un lote en curso se ven, deshabilitados). *@
+    @* Circuito denso donde se siembra: solo los libres (los que tienen un lote en curso se ven, deshabilitados). *@
     <div class="lot-editor__field">
         <label class="form-label mb-1" for="new-lot-circuit">Circuito</label>
         <select id="new-lot-circuit" class="form-select" @bind="circuitId">
@@ -52,29 +52,22 @@
                 <option value="@circuit.Id" disabled="@(!circuit.IsFree)">@circuit.Name@(circuit.IsFree ? null : $" · ocupado ({circuit.CurrentLot})")</option>
             }
         </select>
+        @if (Chosen is { } chosen)
+        {
+            <p class="lot-editor__help">@chosen.GridRows × @chosen.GridColumns: @LotFormat.Plants(chosen.Holes), todas en desarrollo.</p>
+        }
     </div>
     <div class="lot-editor__field">
         <label class="form-label mb-1" for="new-lot-sowing">Fecha de siembra</label>
         <input id="new-lot-sowing" type="date" class="form-control" max="@Today.ToString("yyyy-MM-dd")"
                @bind="sowingDate" />
     </div>
-    <div class="lot-editor__field">
-        <label class="form-label mb-1" for="new-lot-rows">Grilla (filas × columnas)</label>
-        <div class="lot-grid-input">
-            <input id="new-lot-rows" type="number" class="form-control" min="1" max="@NewLotRules.MaxGridSide" step="1"
-                   aria-label="Filas" @bind="rows" @bind:event="oninput" />
-            <span aria-hidden="true">×</span>
-            <input id="new-lot-columns" type="number" class="form-control" min="1" max="@NewLotRules.MaxGridSide" step="1"
-                   aria-label="Columnas" @bind="columns" @bind:event="oninput" />
-        </div>
-        <p class="lot-editor__help">@PlantsHelp Se crean todas en desarrollo.</p>
-    </div>
 </div>
 
 <h4 class="lot-modal__section">Metas del lote <span>(Dejá un campo vacío para no definirlo)</span></h4>
 <div class="lot-editor">
     <LotGoalFields @bind-BabyLeafGoal="babyLeafGoal" @bind-ExpectedActive="expectedActive"
-                   TotalPlants="@(rows is int r && r > 0 && columns is int c && c > 0 ? r * c : null)" />
+                   TotalPlants="@Chosen?.Holes" />
 </div>
 
 @if (Errors.Count > 0)
@@ -108,9 +101,6 @@
     private int greenhouseId;
     private int circuitId;
     private DateOnly sowingDate = Today;
-    // Por defecto la grilla del lote demo (6 × 10).
-    private int? rows = 6;
-    private int? columns = 10;
     private decimal? babyLeafGoal;
     private decimal? expectedActive;
     private NewLotOptions? loadedFrom;
@@ -135,9 +125,7 @@
     /// <summary>El primer circuito libre del invernadero elegido (0 si no hay).</summary>
     private void PickFreeCircuit() => circuitId = CircuitsOfGreenhouse.FirstOrDefault(c => c.IsFree)?.Id ?? 0;
 
-    private string PlantsHelp => rows is int r && r > 0 && columns is int c && c > 0
-        ? $"{LotFormat.Plants(r * c)} en total."
-        : "Cantidad de posiciones de la grilla.";
+    private NewLotCircuitChoice? Chosen => CircuitsOfGreenhouse.FirstOrDefault(c => c.Id == circuitId && c.IsFree);
 
     // Con un solo cultivo o invernadero no hay nada que elegir: se informa en vez de mostrar el selector.
     private string? SingleChoices
@@ -154,5 +142,5 @@
     }
 
     private Task SaveAsync() => OnSave.InvokeAsync(new NewLotInput(
-        name, cropTypeId, greenhouseId, sowingDate, rows ?? 0, columns ?? 0, babyLeafGoal, expectedActive, circuitId));
+        name, cropTypeId, greenhouseId, sowingDate, babyLeafGoal, expectedActive, circuitId));
 }

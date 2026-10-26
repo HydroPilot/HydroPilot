@@ -283,7 +283,11 @@
                         <div class="mini-card"><span>Kg</span><strong>@(chosen.TotalKg is { } kg ? LotFormat.KgFine(kg) : "—")</strong></div>
                         <div class="mini-card"><span>Ingresos</span><strong>@Money(chosen.Revenue, result.Reference.Prices.Currency)</strong></div>
                         <div class="mini-card"><span>Gastos del sistema</span><strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong></div>
-                        <div class="mini-card"><span>Margen sobre gastos del sistema</span><strong class="@(chosen.Margin < 0 ? "text-danger" : null)">@Money(chosen.Margin, result.Reference.Prices.Currency)</strong></div>
+                        @if (chosen.Space is { Adults: > 0 } space)
+                        {
+                            <div class="mini-card" title="@SpaceTitle(space, result.Reference.Prices.Currency)"><span>Lugar ocupado</span><strong>@Money(space.Total, result.Reference.Prices.Currency)</strong></div>
+                        }
+                        <div class="mini-card" title="Ingresos − gastos del sistema − lugar ocupado por las Adultas"><span>Margen</span><strong class="@(chosen.Margin < 0 ? "text-danger" : null)">@Money(chosen.Margin, result.Reference.Prices.Currency)</strong></div>
                     </div>
                     <div class="small text-muted mt-2">
                         Pesos y precios: Baby Leaf @Grams(result.Reference.Weights.BabyLeafGramsPerPlant) · @PricePerKg(result.Reference.Prices.BabyLeafPerKg) ·
@@ -319,6 +323,14 @@
                                     <td class="small text-muted">total / kg cosechados</td>
                                     <td>@(chosen.CostPerKg is { } perKg ? $"{LotFormat.Money(perKg, chosen.Costs.CurrencyCode)}/kg" : "—")</td>
                                 </tr>
+                                @if (chosen.Space is { Adults: > 0 } spaceRow)
+                                {
+                                    <tr>
+                                        <td>Lugar ocupado</td>
+                                        <td class="small text-muted">@SpaceTitle(spaceRow, chosen.Costs.CurrencyCode)</td>
+                                        <td title="@spaceRow.NotCalculableReason">@Money(spaceRow.Total, chosen.Costs.CurrencyCode)</td>
+                                    </tr>
+                                }
                             </tbody>
                         </table>
                     </div>
@@ -336,7 +348,7 @@
                                     <th>Corte adultas</th>
                                     <th>Días de ciclo</th>
                                     <th>Kg</th>
-                                    <th>Margen sobre gastos del sistema</th>
+                                    <th title="Ingresos − gastos del sistema − lugar ocupado por las Adultas">Margen</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -591,9 +603,16 @@
 
     private static string Days(int days) => LotFormat.Days(days);
 
+    /// <summary>"12 adultas × (10,4 − 1) × $410 por Baby Leaf".</summary>
+    private static string SpaceTitle(SimulationSpaceCost space, string currency) =>
+        space.Equivalence is { } eq && space.BabyLeafMarginPerPlant is { } margin
+            ? $"{LotFormat.Count(space.Adults, "adulta", "adultas")} × ({LotFormat.Num(eq)} Baby Leafs por adulta − 1) × {LotFormat.Money(margin, currency)} por Baby Leaf"
+            : space.NotCalculableReason ?? "—";
+
     /// <summary>Fórmula con las cantidades que calculó el sistema (semillas, litros, días).</summary>
     private static string CostFormula(SimulationCostComponent component, SimulationCostBreakdown costs) => component.Name switch
     {
+        "Trasplante" => $"{LotFormat.Count(costs.Transplanted, "planta trasplantada", "plantas trasplantadas")} × costo por planta (hora ÷ plantas por hora)",
         "Semillas" => $"precio por semilla × {LotFormat.Count(costs.Seeds, "semilla", "semillas")}",
         "Nutrientes" when costs.Usage is { } usage =>
             $"{usage.NutrientLiters.ToString("0.##", LotFormat.Culture)} L de nutrientes × precio por litro · " +

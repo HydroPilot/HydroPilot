@@ -1,3 +1,4 @@
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.Extensions.Options;
 
 namespace HydroPilotWeb.Services.Control;
@@ -45,6 +46,9 @@ public sealed class ControlSweepHostedService : BackgroundService
 
     private async Task RunSafelyAsync(CancellationToken ct)
     {
+        using var lease = RegenerationPause.TryEnter();
+        if (lease is null)
+            return;
         try
         {
             using var scope = _scopeFactory.CreateScope();

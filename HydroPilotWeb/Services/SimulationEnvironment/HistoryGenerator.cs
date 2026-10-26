@@ -21,7 +21,9 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 ///   (<see cref="ControlEngine"/>) con la receta aprendida (<see cref="RecipeRules"/>), medición de efecto,
 ///   calibración y pausas;
 /// - una vez por día, la evaluación de cada planta (score con <see cref="BabyLeafScoreCalculator"/>) y el flujo
-///   diario (<see cref="PlantDecisionEngine"/>, <see cref="HarvestReadinessRules"/>); cortes y descartes;
+///   diario (<see cref="PlantDecisionEngine"/>); a los 250 GDD, el trasplante a las mesadas de Adultas
+///   (<see cref="TransplantRules"/>); el corte Baby Leaf en el pico de aptas (<see cref="BabyLeafOptimumRules"/>), el de
+///   las adultas en su óptimo, y los descartes;
 /// - anomalías (<see cref="AnomalyEvaluator"/>) y notificaciones de lo que pasó.
 /// </summary>
 public sealed partial class HistoryGenerator
@@ -88,10 +90,17 @@ public sealed partial class HistoryGenerator
         _climate = HistoryPlanner.Climate(historyStart.AddDays(-150), _today.AddDays(8), _rng);
         _autoStart = _today.AddDays(-190);
 
-        // Lotes en curso: mesada A cerca de la ventana Baby Leaf; mesada B recién sembrada.
+        // Lotes en curso: mesada A cerca de la ventana Baby Leaf; mesada B recién sembrada. Solo se siembra en las
+        // mesadas densas; las de Adultas reciben las trasplantadas.
         var plans = new List<PlannedLot>();
+        var dense = 0;
         for (var i = 0; i < _w.Benches.Count; i++)
-            plans.AddRange(HistoryPlanner.Plan(_climate, i, _today.AddDays(i == 0 ? -12 : -4 - 4 * (i - 1)), historyStart));
+        {
+            if (_w.Benches[i].IsAdult)
+                continue;
+            plans.AddRange(HistoryPlanner.Plan(_climate, i, _today.AddDays(dense == 0 ? -12 : -4 - 4 * (dense - 1)), historyStart));
+            dense++;
+        }
         plans = HistoryPlanner.AssignIncidents(plans, _climate, _autoStart, _today);
 
         for (var i = 0; i < _w.Benches.Count; i++)
@@ -121,7 +130,7 @@ public sealed partial class HistoryGenerator
         var date = DateOnly.FromDateTime(local);
         var minute = (int)local.TimeOfDay.TotalMinutes;
 
-        // Siembra a la medianoche del día planificado (si el lote anterior seguía abierto, se termina de cosechar antes).
+        // Siembra a la medianoche del día planificado (si el lote anterior seguía en la mesada, se termina antes).
         if (bench.NextPlan < bench.Plans.Count && bench.Plans[bench.NextPlan].Sowing <= date)
         {
             if (bench.Lot is not null)
@@ -133,7 +142,7 @@ public sealed partial class HistoryGenerator
         var lot = bench.Lot;
         if (lot is not null && bench.Tank is { } tank)
         {
-            var alive = lot.Plants.Count(p => p.Active);
+            var alive = lot.Plants.Count(p => p.Active && p.Bench == bench);
             var rootHealth = lot.RootHealth;
             var uptake = LettuceUptake.For(alive, (double)lot.Gdd, _stepMinutes * 60, local.TimeOfDay.TotalHours,
                 climate.Temperature, climate.Humidity, tank.Ec, tank.Liters, rootHealth);
@@ -200,9 +209,10 @@ public sealed partial class HistoryGenerator
             StatusId = _w.LotStatusIds[LotStatusNames.Activo],
             Name = LotName(bench, plan),
             SowingDate = plan.Sowing,
-            PlantedAreaM2 = 4.5m,
-            GridRows = 6,
-            GridColumns = 10,
+            // Superficie de la mesada densa (huecos × separación²): la usa el rendimiento por m² del pronóstico.
+            PlantedAreaM2 = Math.Round(bench.Bench.Holes * (_w.TransplantOrDefault.BabyLeafSpacingCm / 100m) * (_w.TransplantOrDefault.BabyLeafSpacingCm / 100m), 2),
+            GridRows = bench.Bench.GridRows,
+            GridColumns = bench.Bench.GridColumns,
             BabyLeafHarvestTargetPercent = 70m,
             BabyLeafGoalPercent = bl,
             ExpectedActivePercent = 90m,
@@ -230,9 +240,12 @@ public sealed partial class HistoryGenerator
             // Costumbres del operario en la época manual: cada lote trabaja un poco distinto (el del calor, con CE alta).
             PhBias = Math.Round(-0.3 + _rng.NextDouble() * 0.55, 2),
             EcBias = plan.Incident == Incident.HeatTipburn ? 0.3 : Math.Round(-0.25 + _rng.NextDouble() * 0.45, 2),
+            DenseBench = bench,
         };
-        AddPlants(run, t);
+        AddPlants(run, bench, t);
         bench.Lot = run;
+        bench.Assignment = assignment;
+        bench.Day = new DayStats();
 
         // Sondas calibradas al armar el lote; incidentes de hardware programados.
         bench.Calibrations[bench.Bench.Sensors[AnomalyContract.SensorTypePh].Id] = t.AddMinutes(-40);
@@ -244,9 +257,13 @@ public sealed partial class HistoryGenerator
                 var saturday = plan.Sowing.AddDays(8);
                 while (saturday.DayOfWeek != DayOfWeek.Saturday)
                     saturday = saturday.AddDays(1);
-                bench.OfflineFrom = ToUtc(saturday.ToDateTime(new TimeOnly(20, 0)));
-                bench.OfflineUntil = bench.OfflineFrom.Value.AddHours(31);
-                run.Events.Add((bench.OfflineFrom.Value, "offline", "router del invernadero caído"));
+                var offlineFrom = ToUtc(saturday.ToDateTime(new TimeOnly(20, 0)));
+                foreach (var each in _benches)
+                {
+                    each.OfflineFrom = offlineFrom;
+                    each.OfflineUntil = offlineFrom.AddHours(31);
+                }
+                run.Events.Add((offlineFrom, "offline", "router del invernadero caído"));
                 break;
             case Incident.PhDownClogged:
                 run.ArmedIncident = (ControlContract.KindPhDown, t.AddDays(9));
@@ -266,20 +283,26 @@ public sealed partial class HistoryGenerator
         _data.Story.Add($"{lot.Name}: siembra {plan.Sowing:dd/MM/yyyy}{(plan.Incident != Incident.None ? $" · {IncidentText(plan.Incident)}" : null)}");
     }
 
-    /// <summary>El lote anterior seguía con plantas el día de la siguiente siembra: se cosecha lo que queda.</summary>
+    /// <summary>
+    /// El lote anterior seguía en la mesada el día de la siguiente siembra: las Baby Leaf que quedan se cortan y el resto
+    /// se descarta (no hay lugar para seguir como adulta). Sus adultas siguen en las mesadas de Adultas.
+    /// </summary>
     private void ForceClose(BenchRun bench, DateTime t)
     {
         var run = bench.Lot!;
         var date = LocalDate(t).AddDays(-1);
-        var risk = _w.CommercialStageIds[CommercialStageNames.RiesgoFueraDeVentana];
-        foreach (var plant in run.Plants.Where(p => p.Active).ToList())
+        var apt = _w.CommercialStageIds[CommercialStageNames.BabyLeafApta];
+        foreach (var plant in run.Plants.Where(p => p.Active && p.Bench == bench).ToList())
         {
-            if (plant.Plant.CommercialStageId == risk)
-                Discard(run, plant, date, t.AddHours(-12), "Fuera de ventana al cierre del ciclo");
+            if (plant.Plant.CommercialStageId == apt)
+                HarvestPlant(run, plant, date, t.AddHours(-12), babyLeaf: true);
             else
-                HarvestPlant(run, plant, date, t.AddHours(-12), babyLeaf: false);
+                Discard(run, plant, date, t.AddHours(-12), "Fuera de ventana al cierre del ciclo");
         }
-        CloseLot(bench, t.AddHours(-11));
+        // Hasta la medianoche las lecturas de la mesada siguen siendo del lote.
+        ReleaseBench(bench, run, t);
+        if (run.Plants.All(p => !p.Active))
+            CloseLot(run, t);
     }
 
     private static string LotName(BenchRun bench, PlannedLot plan)
@@ -288,13 +311,27 @@ public sealed partial class HistoryGenerator
         return $"Lote {bench.Bench.Letter}{plan.Number:00} · {month}";
     }
 
-    private void CloseLot(BenchRun bench, DateTime t)
+    /// <summary>El lote deja la mesada: se cierra su asignación, se resuelve lo abierto en sus sondas y se vacía el tanque.</summary>
+    private void ReleaseBench(BenchRun bench, LotRun run, DateTime t)
     {
-        var run = bench.Lot!;
+        if (bench.Assignment is { } assignment)
+            assignment.ValidUntilUtc = t;
+        BuildAnomalies(run, bench, t);
+        bench.Lot = null;
+        bench.Tank = null;
+        bench.Assignment = null;
+        bench.Day = new DayStats();
+        bench.ClearReadings();
+    }
+
+    /// <summary>No le quedan plantas activas: el lote se cierra con su rendimiento, su pico de aptas y su receta.</summary>
+    private void CloseLot(LotRun run, DateTime t)
+    {
         var lot = run.Lot;
         run.Closed = true;
         run.EndUtc = t;
-        run.Assignment.ValidUntilUtc = t;
+        foreach (var hosting in _benches.Where(b => b.Lot == run).ToList())
+            ReleaseBench(hosting, run, t);
 
         var harvested = run.Plants.Where(p => p.Plant.OperationalState == PlantOperationalState.Cosechada).ToList();
         if (harvested.Count > 0)
@@ -320,15 +357,16 @@ public sealed partial class HistoryGenerator
         lot.AccumulatedGdd = Math.Round(run.Gdd, 2);
         lot.CurrentPh = run.LastPh;
         lot.CurrentEc = run.LastEc;
+        lot.BabyLeafPeakGdd = BabyLeafOptimumRules.Peak(run.AptCurve)?.Gdd;
         if (run.Recipe is { } recipe)
             _data.Recipes.Add(recipe);
 
-        // Las anomalías del lote se cierran con su ciclo.
-        BuildAnomalies(run, t);
+        if (run.HarvestAlert is { IsResolved: false } harvest)
+        {
+            harvest.IsResolved = true;
+            harvest.ResolvedAtUtc = t;
+        }
         _closedLots.Add(run);
-        bench.Lot = null;
-        bench.Tank = null;
-        bench.ClearReadings();
     }
 
     // ------------------------------------------------------------------
@@ -423,7 +461,7 @@ public sealed partial class HistoryGenerator
             CreatedAt = receivedAt,
         });
 
-        var assigned = lot is not null && batch.ObservedAtUtc >= lot.Assignment.ValidFromUtc && !lot.Closed;
+        var assigned = lot is not null && bench.Assignment is { } current && batch.ObservedAtUtc >= current.ValidFromUtc && !lot.Closed;
         foreach (var (sensor, value) in batch.Values)
         {
             var classification = _validation.Classify(sensor.Type, value, batch.ObservedAtUtc, sensor.UnitSymbol, sensor.UnitSymbol,
@@ -448,7 +486,7 @@ public sealed partial class HistoryGenerator
                 SensorId = sensor.Id,
                 NodeId = bench.Bench.NodeId,
                 LotId = toLot ? lot!.Lot.Id : null,
-                CircuitAssignmentId = toLot ? lot!.Assignment.Id : null,
+                CircuitAssignmentId = toLot ? bench.Assignment!.Id : null,
                 Value = value,
                 MeasurementUnitId = sensor.UnitId,
                 ObservedAtUtc = batch.ObservedAtUtc,
@@ -488,7 +526,13 @@ public sealed partial class HistoryGenerator
                 bench.Remember(type, reading);
                 if (lot is not null && reading.LotId == lot.Lot.Id)
                 {
-                    lot.Remember(type, reading);
+                    if (type == AnomalyContract.SensorTypePh)
+                        bench.Day.AddPh((double)reading.Value);
+                    else
+                        bench.Day.AddEc((double)reading.Value);
+                    // La receta aprende de la solución del circuito denso (la de la Baby Leaf).
+                    if (bench == lot.DenseBench)
+                        lot.Remember(type, reading);
                     TrackAnomaly(bench, lot, type, reading);
                     if (type == AnomalyContract.SensorTypePh)
                         lot.LastPh = reading.Value;

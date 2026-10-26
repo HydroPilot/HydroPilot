@@ -10,7 +10,8 @@ public sealed record SimSensor(int Id, string Type, int? UnitId, string UnitSymb
 
 /// <summary>
 /// Una mesada del invernadero = un circuito: su Pi, sus sensores (pH y CE; la primera mesada lleva además los de
-/// temperatura y humedad del invernadero) y sus bombas. Cada mesada tiene un lote por vez.
+/// temperatura y humedad del invernadero), sus bombas, su tipo (densa, donde se siembra, o de Adultas, donde van las
+/// trasplantadas) y sus huecos. Cada mesada tiene un lote por vez.
 /// </summary>
 public sealed record SimBench(
     int NodeId,
@@ -19,10 +20,17 @@ public sealed record SimBench(
     IReadOnlyDictionary<string, SimSensor> Sensors,
     IReadOnlyList<Actuator> Actuators,
     int CircuitId = 0,
-    string CircuitName = "")
+    string CircuitName = "",
+    string Kind = CircuitKinds.Dense,
+    int GridRows = 6,
+    int GridColumns = 10)
 {
     /// <summary>La mesada que manda la temperatura y la humedad del invernadero (una sola).</summary>
     public bool HasAmbient => Sensors.ContainsKey(AnomalyContract.SensorTypeTemperatura);
+
+    public bool IsAdult => Kind == CircuitKinds.Adult;
+
+    public int Holes => GridRows * GridColumns;
 }
 
 public sealed record SimUser(int Id, string Email, string Name, string Role);
@@ -46,7 +54,11 @@ public sealed record SimWorld(
     SimUser Operator,
     IReadOnlyList<SimUser> Recipients,
     decimal BabyLeafGramsPerPlant,
-    decimal ConventionalGramsPerPlant);
+    decimal ConventionalGramsPerPlant,
+    TransplantParameters? Transplant = null) // trasplante a Adultas (Ajustes > Parámetros); null = de fábrica
+{
+    public TransplantParameters TransplantOrDefault => Transplant ?? TransplantParameters.Defaults;
+}
 
 /// <summary>Todo lo que genera el historial, con sus Id ya asignados (se inserta tal cual, en orden de dependencias).</summary>
 public sealed class HistoryData

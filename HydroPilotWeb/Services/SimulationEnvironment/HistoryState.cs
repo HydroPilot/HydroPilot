@@ -39,6 +39,14 @@ internal sealed class BenchRun
     public Dictionary<string, DateTime> LastResume { get; } = [];
     public Dictionary<int, DateTime?> Calibrations { get; } = [];
 
+    /// <summary>Asignación del lote en este circuito (el denso desde la siembra; uno de Adultas desde el trasplante).</summary>
+    public CircuitAssignment? Assignment { get; set; }
+
+    /// <summary>pH y CE del día de este tanque (lo que vivieron las plantas que están acá).</summary>
+    public DayStats Day { get; set; } = new();
+
+    public bool IsAdult => Bench.IsAdult;
+
     public long Sequence { get; set; }
     public DateTime? LastConnectionUtc { get; set; }
     public DateTime? LastAcceptedUtc { get; set; }
@@ -167,7 +175,20 @@ internal sealed class LotRun(PlannedLot plan, Lot lot, CircuitAssignment assignm
     /// <summary>Bomba que se va a tapar (o bidón que se va a vaciar) en la próxima dosis desde esa fecha.</summary>
     public (string Kind, DateTime From)? ArmedIncident { get; set; }
 
-    /// <summary>Episodio de anomalía en curso por magnitud y última resolución (para el cooldown).</summary>
+    /// <summary>Mesada densa donde se sembró (las de Adultas reciben las trasplantadas).</summary>
+    public BenchRun? DenseBench { get; set; }
+
+    /// <summary>El trasplante a Adultas ya se decidió (una vez, desde el GDD de decisión).</summary>
+    public bool TransplantDone { get; set; }
+
+    /// <summary>Hasta qué día frenan las trasplantadas, y el GDD que pasó mientras (corre el corte adulto).</summary>
+    public DateOnly? StressUntil { get; set; }
+    public decimal StressGdd { get; set; }
+
+    /// <summary>Curva de aptas de la ruta Baby Leaf: el corte va en el pico.</summary>
+    public List<Lotes.AptCurvePoint> AptCurve { get; } = [];
+
+    /// <summary>Episodio de anomalía en curso por circuito y magnitud ("{circuito}:{tipo}") y última resolución (cooldown).</summary>
     public Dictionary<string, EpisodeRun> OpenEpisodes { get; } = [];
     public Dictionary<string, DateTime> LastResolved { get; } = [];
 
@@ -178,6 +199,7 @@ internal sealed class LotRun(PlannedLot plan, Lot lot, CircuitAssignment assignm
     public LotSetpointHistory? LastSetpoint { get; set; }
     public List<SetpointPeriod> Periods { get; } = [];
 
+    /// <summary>Temperatura y humedad del día (del invernadero); el pH y la CE son de cada tanque (BenchRun.Day).</summary>
     public DayStats Day { get; set; } = new();
     public DateOnly? EvaluatedOn { get; set; }
     public DateOnly? HarvestCheckedOn { get; set; }
@@ -203,12 +225,12 @@ internal sealed class LotRun(PlannedLot plan, Lot lot, CircuitAssignment assignm
             : (value, value);
     }
 
+    /// <summary>Con qué pH y CE trabajó el circuito denso respecto de los niveles de la etapa (para la receta).</summary>
     public void Remember(string type, SensorReading reading)
     {
         var period = Periods.Count > 0 ? Periods[^1] : null;
         if (type == AnomalyContract.SensorTypePh)
         {
-            Day.AddPh((double)reading.Value);
             if (period is { BasePh: { } basePh })
             {
                 period.PhSum += reading.Value - basePh;
@@ -217,7 +239,6 @@ internal sealed class LotRun(PlannedLot plan, Lot lot, CircuitAssignment assignm
         }
         else
         {
-            Day.AddEc((double)reading.Value);
             if (period is { BaseEc: { } baseEc })
             {
                 period.EcSum += reading.Value - baseEc;
@@ -254,11 +275,17 @@ internal sealed record ResolvedAnomalyRule(string Code, string Name, int Consecu
 /// <summary>Lecturas de un paso que la Pi no pudo mandar (sin conexión): las manda al volver.</summary>
 internal sealed record PendingBatch(DateTime ObservedAtUtc, long Sequence, List<(SimSensor Sensor, decimal Value)> Values);
 
-/// <summary>Una planta (celda de siembra densa) durante el recorrido.</summary>
+/// <summary>Una planta durante el recorrido: en su hueco del circuito denso o, trasplantada, en uno de Adultas.</summary>
 internal sealed class PlantRun(Plant plant, double vigor)
 {
     public Plant Plant { get; } = plant;
     public double Vigor { get; } = vigor;
+
+    /// <summary>Mesada donde está.</summary>
+    public BenchRun? Bench { get; set; }
+
+    /// <summary>Trasplantada a Adultas: se corta como adulta.</summary>
+    public bool AdultRoute { get; set; }
 
     /// <summary>Crecimiento acumulado: GDD × eficiencia. Una planta perfecta llega a 300 en el óptimo Baby Leaf.</summary>
     public double Size { get; set; }
@@ -279,6 +306,9 @@ internal sealed class PlantRun(Plant plant, double vigor)
     public int QualityDays { get; set; }
     public double AverageQuality => QualityDays > 0 ? QualitySum / QualityDays : 1;
     public decimal? LastScore { get; set; }
+
+    /// <summary>La última evaluación salió Baby Leaf (sin el riesgo por anomalía, como la curva de aptas de la web).</summary>
+    public bool EvaluatedApt { get; set; }
     public bool WasApt { get; set; }
     public bool CutAsBabyLeaf { get; set; }
 

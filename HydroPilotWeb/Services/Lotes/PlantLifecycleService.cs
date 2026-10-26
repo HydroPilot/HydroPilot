@@ -11,12 +11,12 @@ public sealed record PlantBatchResult(int BabyLeaf, int Adult, int Discarded, st
     public int Harvested => BabyLeaf + Adult;
 }
 
-/// <summary>Destino de cosecha según el estado comercial de la planta (lógica pura).</summary>
+/// <summary>Destino de cosecha según la ruta y el estado comercial de la planta (lógica pura).</summary>
 public static class PlantHarvestRules
 {
-    /// <summary>Baby Leaf o candidata → Baby Leaf; el resto (en desarrollo, adulta, riesgo) → adulta.</summary>
-    public static HarvestDestination DestinationFor(string? commercialStageName) =>
-        commercialStageName is CommercialStageNames.BabyLeafApta or CommercialStageNames.CandidataBabyLeaf
+    /// <summary>Trasplantada → adulta; en el denso, Baby Leaf o candidata → Baby Leaf; el resto → adulta.</summary>
+    public static HarvestDestination DestinationFor(string? commercialStageName, bool isAdultRoute = false) =>
+        !isAdultRoute && commercialStageName is CommercialStageNames.BabyLeafApta or CommercialStageNames.CandidataBabyLeaf
             ? HarvestDestination.BabyLeaf
             : HarvestDestination.Convencional;
 }
@@ -26,7 +26,9 @@ public static class PlantHarvestRules
 /// o de varias elegidas en el mapa.
 /// La cosecha/descarte se decide a nivel planta y se registra en el estado
 /// operativo; el estado comercial del momento queda congelado como histórico.
-/// Cuando al lote ya no le quedan plantas activas, el lote se cierra solo (CloseLotIfDoneAsync).
+/// Cuando a un circuito del lote ya no le quedan plantas activas del lote, el circuito se libera (el denso después del
+/// último corte de Baby Leaf; el de Adultas con la última adulta); cuando no le queda ninguna, el lote se cierra solo
+/// (CloseLotIfDoneAsync).
 /// </summary>
 public class PlantLifecycleService
 {
@@ -142,7 +144,7 @@ public class PlantLifecycleService
     private static HarvestDestination Harvest(
         HydroPilotDbContext context, Plant plant, CommercialStage? adult, DateOnly date, DateTime now, string source)
     {
-        var destination = PlantHarvestRules.DestinationFor(plant.CommercialStage?.Name);
+        var destination = PlantHarvestRules.DestinationFor(plant.CommercialStage?.Name, plant.IsAdultRoute);
         var previousStageId = plant.CommercialStageId;
         plant.OperationalState = PlantOperationalState.Cosechada;
         plant.HarvestDate = date;
@@ -196,6 +198,7 @@ public class PlantLifecycleService
         if (lot?.Status?.Name is not (LotStatusNames.Activo or LotStatusNames.EnPausa))
             return null;
 
+        await ReleaseCircuitsAsync(context, lot, ct);
         var plants = context.Plants.Where(p => p.LotId == lotId);
         if (!await plants.AnyAsync(ct) || await plants.AnyAsync(p => p.OperationalState == PlantOperationalState.Activa, ct))
             return null;
@@ -216,8 +219,30 @@ public class PlantLifecycleService
             lot.ActualHarvestDate = harvestDate;
             await _parameters.ApplyHarvestReferenceAsync(context, lot, harvestDate, ct);
         }
+        // El pico de aptas del ciclo: el óptimo que aprenden los lotes siguientes.
+        lot.BabyLeafPeakGdd ??= await BabyLeafOptimumService.PeakGddAsync(context, lot.Id, ct);
 
         await context.SaveChangesAsync(ct);
         return statusName;
+    }
+
+    /// <summary>
+    /// Libera los circuitos del lote que ya no tienen plantas activas del lote: el denso cuando se cortó, descartó o
+    /// trasplantó la última; el de Adultas con la última adulta. Guarda los cambios.
+    /// </summary>
+    public static async Task ReleaseCircuitsAsync(HydroPilotDbContext context, Lot lot, CancellationToken ct)
+    {
+        var open = await context.CircuitAssignments.Where(a => a.LotId == lot.Id && a.ValidUntilUtc == null).ToListAsync(ct);
+        if (open.Count == 0)
+            return;
+        var busy = await context.Plants
+            .Where(p => p.LotId == lot.Id && p.OperationalState == PlantOperationalState.Activa)
+            .Select(p => p.CircuitId ?? lot.CircuitId)
+            .Distinct()
+            .ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        foreach (var assignment in open.Where(a => !busy.Contains(a.CircuitId)))
+            assignment.ValidUntilUtc = now;
+        await context.SaveChangesAsync(ct);
     }
 }

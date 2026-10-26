@@ -51,6 +51,8 @@ builder.Services.AddScoped<RecentVisitService>();
 builder.Services.AddScoped<GreenhouseDashboardService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<BabyLeafOutlookService>();
+builder.Services.AddScoped<BabyLeafOptimumService>();
+builder.Services.AddScoped<PlantTransplantService>();
 
 // --- Módulo de anomalías (plan 15 / ANO-01..09) ---
 // El proveedor de riesgo REAL se registra después del NoPlantRiskProvider: gana el último.
@@ -202,6 +204,26 @@ if(!useLocalDb)
 {
     app.UseHttpsRedirection();
 }
+
+// Mientras se regenera el historial desde Admin > Mantenimiento, la API no atiende (la Pi reintenta): el historial se
+// carga con sus Id y lo que entre en ese rato choca.
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Path.StartsWithSegments("/api"))
+    {
+        await next(context);
+        return;
+    }
+    using var lease = HydroPilotWeb.Services.SimulationEnvironment.RegenerationPause.TryEnter();
+    if (lease is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        context.Response.Headers.RetryAfter = "60";
+        await context.Response.WriteAsJsonAsync(new { error = "Se está regenerando el historial del entorno de simulación." });
+        return;
+    }
+    await next(context);
+});
 
 app.UseAntiforgery();
 

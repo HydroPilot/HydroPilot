@@ -1,5 +1,6 @@
 using System.Globalization;
 using Azure.Messaging.EventHubs.Consumer;
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.Extensions.Options;
 
 namespace HydroPilotWeb.Services.Control.IotHub;
@@ -68,6 +69,8 @@ public sealed class IotHubConsumerHostedService : BackgroundService
                     if (data is null)
                         continue;
 
+                    // Mientras se regenera el historial, el mensaje espera (no se puede saltear).
+                    using (await RegenerationPause.EnterAsync(ct))
                     using (var scope = _scopeFactory.CreateScope())
                     {
                         var handler = scope.ServiceProvider.GetRequiredService<IotHubMessageHandler>();

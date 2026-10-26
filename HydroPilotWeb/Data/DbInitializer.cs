@@ -78,9 +78,12 @@ public static class DbInitializer
         // temperatura y humedad son del invernadero ---
         if (!context.Circuits.Any())
         {
-            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 1", ControlContract.DefaultReservoirLiters, default)
+            // Densos con la grilla del lote demo (6 × 10); los de Adultas los agrega el entorno de simulación o Ajustes > Circuitos.
+            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 1", ControlContract.DefaultReservoirLiters, default,
+                    CircuitKinds.Dense, 6, 10)
                 .GetAwaiter().GetResult();
-            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 2", ControlContract.DefaultReservoirLiters, default)
+            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 2", ControlContract.DefaultReservoirLiters, default,
+                    CircuitKinds.Dense, 6, 10)
                 .GetAwaiter().GetResult();
         }
         CircuitSetup.EnsureAmbientSensorsAsync(context, greenhouse.Id, node.Id, default).GetAwaiter().GetResult();
@@ -470,6 +473,12 @@ public static class DbInitializer
                 CreatedAt = DateTime.UtcNow
             });
             demoLot.CircuitId = circuit.Id;
+            context.SaveChanges();
+        }
+        if (demoLot.CircuitId is { } demoCircuit)
+        {
+            foreach (var plant in context.Plants.Where(p => p.LotId == demoLot.Id && p.CircuitId == null))
+                plant.CircuitId = demoCircuit;
             context.SaveChanges();
         }
     }

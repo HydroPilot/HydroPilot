@@ -138,10 +138,10 @@ public class SimulationSqlServerTests
         var babyLeaf = result.Strategies[0];
         Assert.Equal(Today.AddDays(6), babyLeaf.BabyLeafCut!.Date);
         Assert.Equal(16, babyLeaf.Costs.CycleDays);             // siembra (hoy-10) → corte (hoy+6)
-        // 10 plantas: 14 días antes de Baby Leaf (abre hoy+3) × 0,15 L + 2 días en Baby Leaf × 0,3 L = 27 L.
+        // 10 plantas: 14 días antes de Baby Leaf (abre hoy+3) × 0,04 L + 2 días en Baby Leaf × 0,075 L = 7,1 L.
         Assert.Equal(10, babyLeaf.Costs.Seeds);                 // las plantas del lote
-        Assert.Equal(27m, babyLeaf.Costs.Usage!.WaterLiters);
-        Assert.Equal(25.68m, babyLeaf.Costs.Total);             // 10 × 2,5 + 0,135 L × $5
+        Assert.Equal(7.1m, babyLeaf.Costs.Usage!.WaterLiters);
+        Assert.Equal(25.18m, babyLeaf.Costs.Total);             // 10 × 2,5 + 0,0355 L × $5
         Assert.Equal(new DestinationYield(10, 0.3m, 900m), babyLeaf.BabyLeaf); // 10 × 30 g × $3000/kg
 
         // Curva: medido hasta hoy + proyección del escenario.

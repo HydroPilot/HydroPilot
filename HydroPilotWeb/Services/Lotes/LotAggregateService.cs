@@ -103,31 +103,60 @@ public class LotAggregateService
 
         var (predominantName, isMixed) = Predominance.Resolve(activeCounts);
 
-        // Mapa: celda por posición configurada.
-        var cells = new List<PlantCellDto>(rows * columns);
-        var byPosition = plants.ToDictionary(p => (p.Row, p.Column));
-        for (var row = 1; row <= rows; row++)
+        // Mapa: celda por hueco. El del circuito denso (la grilla del lote) y uno por circuito de Adultas con
+        // trasplantadas. Las plantas sin circuito (lotes de antes de los circuitos) son del denso. En el denso, el hueco
+        // de cada trasplantada queda marcado con dónde está ahora.
+        static List<PlantCellDto> Cells(int rows, int columns, IEnumerable<Plant> plants, int? circuitId,
+            IReadOnlyDictionary<(int Row, int Column), PlantCellMove>? moved = null)
         {
-            for (var col = 1; col <= columns; col++)
+            var cells = new List<PlantCellDto>(rows * columns);
+            var byPosition = plants.GroupBy(p => (p.Row, p.Column)).ToDictionary(g => g.Key, g => g.First());
+            for (var row = 1; row <= rows; row++)
             {
-                if (byPosition.TryGetValue((row, col), out var plant))
+                for (var col = 1; col <= columns; col++)
                 {
-                    var discarded = plant.OperationalState == PlantOperationalState.Descartada;
-                    var harvested = plant.OperationalState == PlantOperationalState.Cosechada;
-                    cells.Add(new PlantCellDto(
-                        row, col, plant.Id,
-                        plant.CommercialStage?.Name,
-                        plant.OperationalState,
-                        discarded ? "discarded" : harvested ? "plant" : "plant"
-                        // Nota: cosechada se muestra con su estado comercial congelado.
-                        ));
-                }
-                else
-                {
-                    cells.Add(new PlantCellDto(row, col, null, null, null, "empty"));
+                    if (byPosition.TryGetValue((row, col), out var plant))
+                    {
+                        // Cosechada se muestra con su estado comercial congelado.
+                        var discarded = plant.OperationalState == PlantOperationalState.Descartada;
+                        cells.Add(new PlantCellDto(row, col, plant.Id, plant.CommercialStage?.Name, plant.OperationalState,
+                            discarded ? "discarded" : "plant", circuitId, plant.IsAdultRoute));
+                    }
+                    else if (moved is not null && moved.TryGetValue((row, col), out var to))
+                    {
+                        cells.Add(new PlantCellDto(row, col, null, null, null, "transplanted", circuitId, MovedTo: to));
+                    }
+                    else
+                    {
+                        cells.Add(new PlantCellDto(row, col, null, null, null, "empty", circuitId));
+                    }
                 }
             }
+            return cells;
         }
+
+        var denseId = lot.CircuitId;
+        bool InDense(Plant p) => p.CircuitId is null || p.CircuitId == denseId;
+
+        var adultIds = plants.Where(p => !InDense(p)).Select(p => p.CircuitId!.Value).Distinct().ToList();
+        var circuits = await context.Circuits.AsNoTracking()
+            .Where(c => adultIds.Contains(c.Id) || c.Id == denseId)
+            .Select(c => new { c.Id, c.Name, c.GridRows, c.GridColumns })
+            .ToListAsync(ct);
+        var names = circuits.ToDictionary(c => c.Id, c => c.Name);
+        PlantCellMove MoveOf(Plant p) => new(p.CircuitId!.Value, names.GetValueOrDefault(p.CircuitId.Value, "Adultas"), p.Row, p.Column);
+        var moved = plants
+            .Where(p => !InDense(p) && p.DenseRow is not null && p.DenseColumn is not null)
+            .GroupBy(p => (p.DenseRow!.Value, p.DenseColumn!.Value))
+            .ToDictionary(g => g.Key, g => MoveOf(g.First()));
+        var cells = Cells(rows, columns, plants.Where(InDense), denseId, moved);
+
+        var adultMaps = circuits
+            .Where(c => adultIds.Contains(c.Id))
+            .OrderBy(c => c.Name)
+            .Select(c => new LotCircuitMapDto(c.Id, c.Name, c.GridRows, c.GridColumns,
+                Cells(c.GridRows, c.GridColumns, plants.Where(p => p.CircuitId == c.Id), c.Id)))
+            .ToList();
 
         var stageCounts = activeCounts
             .OrderByDescending(kv => kv.Value)
@@ -168,7 +197,9 @@ public class LotAggregateService
             CommercialCounts: stageCounts,
             Cells: cells,
             HarvestReadiness: readiness,
-            Warnings: warnings);
+            Warnings: warnings,
+            AdultMaps: adultMaps,
+            CircuitName: circuits.FirstOrDefault(c => c.Id == denseId)?.Name);
     }
 
     /// <summary>

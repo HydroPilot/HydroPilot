@@ -453,9 +453,9 @@ else
         {
             view = await ControlService.GetViewAsync(circuitId);
             trend = await ControlService.GetTrendAsync(circuitId, trendHours);
-            // Episodios del lote del desplegable (sin lote, no hay episodios de solución).
+            // Episodios del lote del desplegable en las sondas de este circuito (sin lote, no hay episodios de solución).
             episodes = view?.LotId is { } lotId
-                ? await AnomalyQuery.GetTimelineAsync(new AnomalyFilter(null, null, lotId, null, null, null), EpisodeCount)
+                ? await AnomalyQuery.GetTimelineAsync(new AnomalyFilter(null, null, lotId, null, null, null, CircuitId: circuitId), EpisodeCount)
                 : [];
             sensorFaults = await SensorFaults.RecentAsync(circuitId, EpisodeCount, view?.LotSinceUtc);
             error = null;

@@ -40,13 +40,15 @@ public sealed partial class HistoryGenerator
         // Con una alerta crítica abierta en horario de trabajo, el operario corrige en ~30 min (una vez por alerta).
         if (local.Hour is >= 8 and < 19)
         {
-            foreach (var (type, episode) in bench.Lot!.OpenEpisodes)
+            var prefix = EpisodeKey(bench, string.Empty);
+            foreach (var (key, episode) in bench.Lot!.OpenEpisodes)
             {
-                if (episode.Event.Status == Models.AnomalyContract.StatusAbierta && !episode.Answered
+                if (key.StartsWith(prefix, StringComparison.Ordinal)
+                    && episode.Event.Status == Models.AnomalyContract.StatusAbierta && !episode.Answered
                     && t - episode.Event.CreatedAtUtc >= TimeSpan.FromMinutes(30))
                 {
                     episode.Answered = true;
-                    ManualCorrection(bench, t, type);
+                    ManualCorrection(bench, t, key[prefix.Length..]);
                     return;
                 }
             }
@@ -210,7 +212,7 @@ public sealed partial class HistoryGenerator
         var trigger = bench.Last(parameter);
         var effect = pump.Effect ?? ControlContract.DefaultFor(kind)?.Effect ?? 1m;
 
-        if (run.ArmedIncident is { } armed && armed.Kind == kind && created >= armed.From)
+        if (bench == run.DenseBench && run.ArmedIncident is { } armed && armed.Kind == kind && created >= armed.From)
         {
             bench.BrokenPump = kind;
             run.ArmedIncident = null;
@@ -402,7 +404,8 @@ public sealed partial class HistoryGenerator
             return;
         var day = DateOnly.FromDateTime(local).DayNumber - run.Lot.SowingDate.DayNumber;
 
-        switch (run.Plan.Incident)
+        // Los incidentes del lote son de su mesada densa.
+        switch (bench == run.DenseBench ? run.Plan.Incident : Incident.None)
         {
             case Incident.PhProbeDrift when day >= 6 && bench.PhProbeOffset >= 0:
                 // La sonda se corre ~0,025 pH por día hasta que se recalibra (cuando el operario ve plantas amarillas).
@@ -440,10 +443,9 @@ public sealed partial class HistoryGenerator
 
     private void RefreshRecipes(DateTime t)
     {
-        foreach (var bench in _benches)
+        // Una vez por lote (aunque esté en el denso y en Adultas).
+        foreach (var run in _benches.Select(b => b.Lot).OfType<LotRun>().Where(r => !r.Closed).Distinct().ToList())
         {
-            if (bench.Lot is not { Closed: false } run)
-                continue;
             var before = (run.Recipe?.PhOffset, run.Recipe?.EcOffset);
             run.Recipe = ComputeRecipe(run, t, run.Recipe);
             if ((run.Recipe.PhOffset, run.Recipe.EcOffset) != before)

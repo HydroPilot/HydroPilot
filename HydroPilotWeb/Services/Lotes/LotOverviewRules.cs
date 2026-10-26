@@ -1,3 +1,4 @@
+using HydroPilotWeb.Models;
 using HydroPilotWeb.Services.Forecasting;
 
 namespace HydroPilotWeb.Services.Lotes;
@@ -158,14 +159,15 @@ public sealed record YieldHistory(int Lots, bool SameSeason, decimal BabyLeafSha
 
 /// <summary>
 /// De dónde sale el esperado: LotWeight = peso de la situación actual del lote (0 = solo el histórico,
-/// 1 = solo el lote), según la fase del ciclo; History = null si no hay lotes cerrados.
+/// 1 = solo el lote), según la fase del ciclo; History = null si no hay lotes cerrados. AdultRoom = huecos libres de
+/// Adultas que el lote todavía puede usar (null = sin tope); AdultsCapped = el tope bajó el esperado de adultas.
 /// </summary>
-public sealed record YieldBasis(decimal LotWeight, YieldHistory? History);
+public sealed record YieldBasis(decimal LotWeight, YieldHistory? History, int? AdultRoom = null, bool AdultsCapped = false);
 
 /// <summary>
-/// Rendimiento del lote por destino. Actual: lo que se puede cosechar hoy (aptas para Baby Leaf,
-/// convencionales). Esperado: lo que va a dar el ciclo completo (incluye lo ya cosechado), mezclando el
-/// histórico con la situación del lote según la fase (ver LotYieldRules.Estimate).
+/// Rendimiento del lote por destino. Actual: lo cosechado más lo listo para cosechar hoy (aptas para Baby Leaf;
+/// adultas que llegaron a su corte). Esperado: lo que va a dar el ciclo completo (incluye lo ya cosechado), mezclando
+/// el histórico con la situación del lote según la fase (ver LotYieldRules.Estimate).
 /// </summary>
 public sealed record LotYieldEstimate(YieldScenario Current, YieldScenario Expected, YieldBasis Basis, YieldReference Reference, YieldPrices Prices);
 
@@ -185,19 +187,31 @@ public sealed record LotHarvestYield(YieldScenario Real, YieldReference Referenc
 
 public static class LotYieldRules
 {
-    /// <summary>Plantas del lote por estado; las cosechadas cuentan para el esperado (son parte del ciclo).</summary>
+    /// <summary>
+    /// Plantas del lote por estado; las cosechadas cuentan para el actual y el esperado (son parte del ciclo).
+    /// AdultsReady = las adultas llegaron a su corte (<see cref="CycleTimeline.AdultCutReached"/>).
+    /// AdultRoom = huecos libres de Adultas que el lote todavía puede usar (0 si ya no se puede trasplantar; null = sin
+    /// tope, sin trasplante).
+    /// Developing = las en desarrollo del circuito denso; Conventional = las activas de la ruta Adulta (trasplantadas, en
+    /// desarrollo o ya adultas): ver <see cref="LotPlantBreakdown.DenseDeveloping"/> y <see cref="LotPlantBreakdown.Adults"/>.
+    /// </summary>
     public sealed record Input(
         int Apta, int Candidate, int Developing, int Conventional,
-        int Risk = 0, int HarvestedBabyLeaf = 0, int HarvestedConventional = 0);
+        int Risk = 0, int HarvestedBabyLeaf = 0, int HarvestedConventional = 0, bool AdultsReady = false,
+        int? AdultRoom = null);
 
     /// <summary>
-    /// Actual: aptas × peso Baby Leaf y convencionales × peso convencional.
+    /// Actual: lo cosechado de cada destino más lo listo hoy: aptas × peso Baby Leaf y, si llegaron a su corte, las
+    /// adultas × peso adulta.
     /// Esperado del ciclo = (1 − w) × histórico + w × situación del lote, con w = LotWeight:
-    /// - Situación del lote: cosechadas de cada destino + aptas y candidatas a Baby Leaf; en desarrollo
-    ///   y convencionales, a convencional (las en riesgo se cuentan como pérdida).
+    /// - Situación del lote: cosechadas de cada destino + aptas y candidatas a Baby Leaf; las adultas y las en
+    ///   desarrollo que entran en los huecos libres de Adultas, a adulta (las en riesgo y las que no entran se
+    ///   cuentan como pérdida).
     /// - Histórico: cosechadas + las activas repartidas con el % de Baby Leaf y de convencional de los
     ///   lotes cerrados (el resto de ese reparto es lo que se suele descartar).
-    /// Sin histórico, solo la situación del lote. Las plantas se redondean al entero.
+    /// Sin histórico, solo la situación del lote. Las plantas se redondean al entero. Después:
+    /// - adultas: como mucho las que ya lo son (cosechadas y activas) más los huecos libres (son las trasplantadas);
+    /// - cada destino, nunca menos que el actual (lo cosechado y lo listo ya están).
     /// </summary>
     public static LotYieldEstimate Estimate(
         Input plants, YieldReference reference, YieldPrices prices, YieldHistory? history = null, decimal lotWeight = 1m)
@@ -206,8 +220,11 @@ public static class LotYieldRules
         DestinationYield Conventional(int count) => Destination(count, reference.ConventionalGramsPerPlant, prices.ConventionalPerKg);
 
         var weight = history is null ? 1m : Math.Clamp(lotWeight, 0m, 1m);
+        var adults = plants.HarvestedConventional + plants.Conventional;
+        var futureAdults = plants.AdultRoom is { } room ? Math.Min(plants.Developing, room) : plants.Developing;
         decimal lotBabyLeaf = plants.HarvestedBabyLeaf + plants.Apta + plants.Candidate;
-        decimal lotConventional = plants.HarvestedConventional + plants.Developing + plants.Conventional;
+        decimal lotConventional = adults + futureAdults;
+        decimal uncappedConventional = adults + plants.Developing;
         var (babyLeaf, conventional) = (lotBabyLeaf, lotConventional);
 
         if (history is not null)
@@ -217,12 +234,23 @@ public static class LotYieldRules
             var historyConventional = plants.HarvestedConventional + history.ConventionalShare * active;
             babyLeaf = (1m - weight) * historyBabyLeaf + weight * lotBabyLeaf;
             conventional = (1m - weight) * historyConventional + weight * lotConventional;
+            uncappedConventional = (1m - weight) * historyConventional + weight * uncappedConventional;
         }
 
+        // Las adultas son las trasplantadas: no pueden ser más que las que ya lo son más los huecos libres.
+        if (plants.AdultRoom is { } free)
+            conventional = Math.Min(conventional, adults + free);
+
+        var current = new YieldScenario(
+            BabyLeaf(plants.HarvestedBabyLeaf + plants.Apta),
+            Conventional(plants.HarvestedConventional + (plants.AdultsReady ? plants.Conventional : 0)));
+        var capped = plants.AdultRoom is not null && Plants(uncappedConventional) > Plants(conventional);
         return new LotYieldEstimate(
-            new YieldScenario(BabyLeaf(plants.Apta), Conventional(plants.Conventional)),
-            new YieldScenario(BabyLeaf(Plants(babyLeaf)), Conventional(Plants(conventional))),
-            new YieldBasis(weight, history),
+            current,
+            new YieldScenario(
+                BabyLeaf(Math.Max(Plants(babyLeaf), current.BabyLeaf.Plants)),
+                Conventional(Math.Max(Plants(conventional), current.Conventional.Plants))),
+            new YieldBasis(weight, history, plants.AdultRoom, capped),
             reference,
             prices);
     }
@@ -248,6 +276,14 @@ public static class LotYieldRules
     }
 
     private static int Plants(decimal count) => (int)Math.Round(Math.Max(0m, count), MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// Trasplantadas activas que todavía no son "Adulta" (siguen en desarrollo hasta su corte), sin las en riesgo.
+    /// Son de la ruta Adulta: no cuentan como en desarrollo del denso.
+    /// </summary>
+    public static int TransplantedDeveloping(IEnumerable<PlantCellDto> cells) =>
+        cells.Count(c => c.IsAdultRoute && c.PlantId is not null && c.OperationalState == PlantOperationalState.Activa
+                         && c.CommercialStageName is not (CommercialStageNames.CosechaConvencional or CommercialStageNames.RiesgoFueraDeVentana));
 
     /// <summary>Ciclo cerrado: cosechadas como Baby Leaf y como convencional, con la referencia de la cosecha.</summary>
     public static LotHarvestYield Harvested(int harvestedBabyLeaf, int harvestedConventional, YieldReference reference, YieldPrices prices) => new(
@@ -459,7 +495,9 @@ public sealed record CycleTimeline(
     CycleMilestone BabyLeafOptimum,
     CycleMilestone BabyLeafCloses,
     CycleMilestone ConventionalOptimum,
-    CycleMilestone Overmaturity)
+    CycleMilestone Overmaturity,
+    CycleMilestone? Transplant = null,                          // decisión de trasplante a Adultas (GDD de Parámetros)
+    OptimumSource BabyLeafOptimumSource = OptimumSource.Fabrica) // de dónde sale el óptimo Baby Leaf
 {
     /// <summary>Corte Baby Leaf hasta que cierra su ventana; después, el convencional. Null en sobremadurez.</summary>
     public HarvestCut? NextCut => Phase switch
@@ -467,9 +505,16 @@ public sealed record CycleTimeline(
         CyclePhase.Desarrollo or CyclePhase.VentanaBabyLeaf => new HarvestCut(
             HarvestDestination.BabyLeaf, BabyLeafOptimum, BabyLeafCloses, AccumulatedGdd >= BabyLeafOptimum.Gdd),
         CyclePhase.VentanaConvencional => new HarvestCut(
-            HarvestDestination.Convencional, ConventionalOptimum, Overmaturity, AccumulatedGdd >= ConventionalOptimum.Gdd),
+            HarvestDestination.Convencional, ConventionalOptimum, Overmaturity, AdultCutReached),
         _ => null
     };
+
+    /// <summary>
+    /// La Adulta llegó a su corte: el GDD de su óptimo (650) y los días de estrés del trasplante después (la fecha del
+    /// óptimo ya los suma). Sin fecha (el historial no tiene el día), alcanza con el GDD.
+    /// </summary>
+    public bool AdultCutReached =>
+        AccumulatedGdd >= ConventionalOptimum.Gdd && (ConventionalOptimum.Date is not { } date || AsOfDate >= date);
 }
 
 /// <summary>
@@ -480,11 +525,11 @@ public sealed record CycleTimeline(
 public static class CycleTimelineLogic
 {
     /// <summary>
-    /// Óptimos de corte por GDD, fijos por ahora (después irán a Ajustes &gt; Parámetros). El sistema
-    /// no puede calcularlos: no sabe cómo crece cada planta (sin análisis de imagen, peso fijo).
-    /// Baby Leaf = GDD objetivo del cultivo; convencional = margen antes de la sobremadurez.
+    /// Óptimos de corte por GDD de fábrica. El de Baby Leaf sale de la curva de aptas (<see cref="BabyLeafOptimumRules"/>)
+    /// y este es el respaldo sin historial; el de Adulta (convencional) es el margen antes de la sobremadurez, y su
+    /// fecha se corre los días de estrés del trasplante.
     /// </summary>
-    public const decimal BabyLeafOptimumGdd = 300m;
+    public const decimal BabyLeafOptimumGdd = BabyLeafOptimumRules.FactoryOptimumGdd;
     public const decimal ConventionalOptimumGdd = 650m;
 
     public static CyclePhase PhaseFor(decimal gdd, decimal babyLeafMin, decimal babyLeafMax, decimal overmaturity) =>
@@ -526,10 +571,17 @@ public static class CycleTimelineLogic
         decimal babyLeafMax,
         decimal overmaturity,
         decimal babyLeafOptimum = BabyLeafOptimumGdd,
-        decimal conventionalOptimum = ConventionalOptimumGdd)
+        decimal conventionalOptimum = ConventionalOptimumGdd,
+        int adultDelayDays = 0,
+        decimal? transplantGdd = null,
+        OptimumSource babyLeafOptimumSource = OptimumSource.Fabrica)
     {
         // Cada óptimo queda dentro de su ventana aunque la configuración del cultivo cambie.
         static decimal Within(decimal value, decimal min, decimal max) => Math.Min(Math.Max(value, min), max);
+
+        // La Adulta frena los días de estrés del trasplante: su corte y su sobremadurez se corren esos días.
+        CycleMilestone Delayed(CycleMilestone milestone) =>
+            adultDelayDays > 0 && milestone.Date is { } date ? milestone with { Date = date.AddDays(adultDelayDays) } : milestone;
 
         return new(
             sowingDate,
@@ -540,8 +592,10 @@ public static class CycleTimelineLogic
             Milestone(babyLeafMin, accumulated, history, projection),
             Milestone(Within(babyLeafOptimum, babyLeafMin, babyLeafMax), accumulated, history, projection),
             Milestone(babyLeafMax, accumulated, history, projection),
-            Milestone(Within(conventionalOptimum, babyLeafMax, overmaturity), accumulated, history, projection),
-            Milestone(overmaturity, accumulated, history, projection));
+            Delayed(Milestone(Within(conventionalOptimum, babyLeafMax, overmaturity), accumulated, history, projection)),
+            Delayed(Milestone(overmaturity, accumulated, history, projection)),
+            transplantGdd is { } decision ? Milestone(decision, accumulated, history, projection) : null,
+            babyLeafOptimumSource);
     }
 }
 

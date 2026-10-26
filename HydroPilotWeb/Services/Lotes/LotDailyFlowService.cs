@@ -22,19 +22,22 @@ public class LotDailyFlowService
     private readonly PlantEvaluationService _plantEvaluationService;
     private readonly LotAggregateService _aggregateService;
     private readonly IPlantRiskProvider _riskProvider;
+    private readonly PlantLifecycleService _lifecycle;
 
     public LotDailyFlowService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         GddService gddService,
         PlantEvaluationService plantEvaluationService,
         LotAggregateService aggregateService,
-        IPlantRiskProvider riskProvider)
+        IPlantRiskProvider riskProvider,
+        PlantLifecycleService lifecycle)
     {
         _dbFactory = dbFactory;
         _gddService = gddService;
         _plantEvaluationService = plantEvaluationService;
         _aggregateService = aggregateService;
         _riskProvider = riskProvider;
+        _lifecycle = lifecycle;
     }
 
     public async Task<LotDailyFlowResult?> RunDailyAsync(
@@ -86,16 +89,20 @@ public class LotDailyFlowService
 
         var evaluated = 0;
         var changed = 0;
+        // Las de la ruta Baby Leaf que ya no pueden serlo (ventana cerrada, se pasaron de tamaño) se descartan después.
+        var toDiscard = new List<(int PlantId, string Reason)>();
         foreach (var plant in plants.Where(p => p.OperationalState == PlantOperationalState.Activa))
         {
             evaluated++;
             risks.TryGetValue(plant.Id, out var risk);
-            var didChange = thresholds is not null && phenoStage is not null
+            var (didChange, decision) = thresholds is not null && phenoStage is not null
                 ? await _plantEvaluationService.EvaluateActivePlantAsync(
                     context, plant, lot.CropTypeId, phenoStage.Id, lotGdd, thresholds, risk, ct)
-                : false;
+                : (false, null);
             if (didChange)
                 changed++;
+            if (decision is { Discard: true })
+                toDiscard.Add((plant.Id, decision.Reason ?? "Ya no puede ser Baby Leaf"));
         }
 
         // 10-11. Agregados y predominancia (con Mixto) sobre activas.
@@ -132,6 +139,13 @@ public class LotDailyFlowService
         var readiness = await _aggregateService.ComputeReadinessAsync(lot, lotGdd, activeCounts, plants, ct);
 
         await context.SaveChangesAsync(ct);
+
+        var discardDate = asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        foreach (var group in toDiscard.GroupBy(d => d.Reason))
+        {
+            await _lifecycle.DiscardPlantsAsync(lot.Id, group.Select(d => d.PlantId).ToList(), group.Key, discardDate, ct);
+            warnings.Add($"Se descartaron {group.Count()} plantas: {group.Key}.");
+        }
 
         return new LotDailyFlowResult(
             LotId: lot.Id,

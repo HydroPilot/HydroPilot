@@ -36,6 +36,7 @@ public class SimulationService
     private readonly LotAggregateService _lotAggregate;
     private readonly SystemParametersService _parameters;
     private readonly BabyLeafOutlookService _outlook;
+    private readonly BabyLeafOptimumService _optimum;
 
     public SimulationService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
@@ -43,7 +44,8 @@ public class SimulationService
         ClimateScenarioProvider climateProvider,
         LotAggregateService lotAggregate,
         SystemParametersService parameters,
-        BabyLeafOutlookService outlook)
+        BabyLeafOutlookService outlook,
+        BabyLeafOptimumService? optimum = null)
     {
         _dbFactory = dbFactory;
         _gddService = gddService;
@@ -51,6 +53,7 @@ public class SimulationService
         _lotAggregate = lotAggregate;
         _parameters = parameters;
         _outlook = outlook;
+        _optimum = optimum ?? new BabyLeafOptimumService(dbFactory);
     }
 
     /// <summary>
@@ -169,6 +172,12 @@ public class SimulationService
             .OrderByDescending(s => s.Order)
             .FirstOrDefaultAsync(ct);
 
+        // Clima esperado del ciclo para comparar con los lotes previos: lo que va (medido o del escenario) más la proyección.
+        var expectedDays = history.Where(p => p.Source != GddPointSource.Fallback).Select(p => p.Gdd)
+            .Concat(plan.Points.Select(p => p.Gdd)).ToList();
+        var expectedAverage = expectedDays.Count > 0 ? Math.Round(expectedDays.Average(), 2) : (decimal?)null;
+        var transplant = await SystemParametersService.LoadTransplantAsync(context, ct);
+
         CycleTimeline? timeline = null;
         if (config is null || lastStage is null)
         {
@@ -176,9 +185,14 @@ public class SimulationService
         }
         else
         {
+            // El óptimo Baby Leaf como en Lotes: la curva de aptas del lote o el pico de los lotes parecidos.
+            var optimum = await _optimum.ResolveAsync(crop.Id, sowingDate, accumulated, expectedAverage,
+                config.GddMin, config.GddMax, lot?.Id, ct);
             timeline = CycleTimelineLogic.Build(
                 sowingDate, today, accumulated, history, projection,
-                config.GddMin, config.GddMax, lastStage.GddMax);
+                config.GddMin, config.GddMax, lastStage.GddMax,
+                babyLeafOptimum: optimum.Gdd, adultDelayDays: transplant.StressDays, transplantGdd: transplant.DecisionGdd,
+                babyLeafOptimumSource: optimum.Source);
         }
         var curve = GddCurveLogic.Build(sowingDate, today, history, projection);
 
@@ -217,11 +231,6 @@ public class SimulationService
         var outlook = BabyLeafOutlook.None;
         if (timeline is not null)
         {
-            // Clima esperado del ciclo para comparar con los lotes previos: lo que va (medido o del
-            // escenario) más la proyección.
-            var cycleDays = history.Where(p => p.Source != GddPointSource.Fallback).Select(p => p.Gdd)
-                .Concat(plan.Points.Select(p => p.Gdd)).ToList();
-            var expectedAverage = cycleDays.Count > 0 ? Math.Round(cycleDays.Average(), 2) : (decimal?)null;
             outlook = await _outlook.GetOutlookAsync(
                 new BabyLeafOutlookRequest(crop.Id, sowingDate, timeline, expectedAverage, lot?.Id), ct);
 
@@ -238,13 +247,25 @@ public class SimulationService
             ? request.Costs with { NutrientPricePerLiter = await _parameters.GetNutrientPricePerLiterAsync(ct) }
             : request.Costs;
 
-        // --- 7. Estrategias: máximo Baby Leaf / meta Baby Leaf / todo convencional ---
+        // Trasplante: las que van a Adulta ocupan huecos de Adultas (los libres para el lote; para planificar sin lote,
+        // todos), cuestan la mano de obra y pagan el lugar que ocupan. Las ya trasplantadas son adultas siempre.
+        var fixedAdults = lot is null ? 0 : await context.Plants.CountAsync(p => p.LotId == lot.Id
+            && p.OperationalState == PlantOperationalState.Activa && p.TransplantedOn != null, ct);
+        var adultCapacity = lot is not null
+            ? (await PlantTransplantService.RoomAsync(context, lot, ct)).Sum(r => r.FreeHoles)
+            : await PlantTransplantService.TotalAdultHolesAsync(context, ct);
+        if (adultCapacity == 0 && fixedAdults == 0)
+            warnings.Add("No hay huecos libres en circuitos de Adultas: las que no llegan a Baby Leaf se pierden.");
+        var transplantScenario = new SimulationStrategies.TransplantScenario(
+            transplant.BabyLeafSpacingCm, transplant.AdultSpacingCm, transplant.CostPerPlant, adultCapacity, fixedAdults);
+
+        // --- 7. Estrategias: máximo Baby Leaf / meta Baby Leaf / todo adulta ---
         IReadOnlyList<SimulationStrategyOutcome> strategies = timeline is null
             ? []
             : SimulationStrategies.Build(new SimulationStrategies.Input(
                 sowingDate, today, timeline, plants, request.Harvest.BabyLeafGoalPercent,
                 outlook.AptRate, outlook.RemainingEarlyLossRate, outlook.RemainingLateLossRate,
-                reference.Weights, reference.Prices, costs, seeds, exitedPlantDates));
+                reference.Weights, reference.Prices, costs, seeds, exitedPlantDates, transplantScenario));
 
         // --- Contexto de lote + grilla (SIM-08/10, solo lectura) ---
         SimulationLotInfo? lotInfo = null;

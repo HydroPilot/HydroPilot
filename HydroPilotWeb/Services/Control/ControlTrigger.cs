@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using HydroPilotWeb.Services.SimulationEnvironment;
 
 namespace HydroPilotWeb.Services.Control;
 
@@ -48,6 +49,9 @@ public sealed class ControlWorker : BackgroundService
                 {
                     try
                     {
+                        using var lease = RegenerationPause.TryEnter();
+                        if (lease is null)
+                            continue;
                         using var scope = _scopeFactory.CreateScope();
                         await scope.ServiceProvider.GetRequiredService<ControlService>()
                             .EvaluateCircuitAsync(circuitId, DateTime.UtcNow, stoppingToken);

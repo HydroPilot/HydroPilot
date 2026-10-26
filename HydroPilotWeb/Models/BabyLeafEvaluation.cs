@@ -42,6 +42,12 @@ public class BabyLeafEvaluation
     /// <summary>Indica si los criterios obligatorios de la configuración fueron aprobados.</summary>
     public bool MandatoryCriteriaMet { get; set; }
 
+    /// <summary>
+    /// Tamaño respecto del ideal de Baby Leaf (1 = el ideal), del análisis de imagen. Por encima del máximo de
+    /// Ajustes &gt; Parámetros la planta se pasó: ya no es Baby Leaf. Null = sin medición de tamaño.
+    /// </summary>
+    public decimal? SizeRatio { get; set; }
+
     public decimal? FoliarAreaUsed { get; set; }
     public decimal? LeafLengthUsed { get; set; }
     public decimal? GrowthRateUsed { get; set; }

@@ -1,3 +1,4 @@
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.Extensions.Options;
 
 namespace HydroPilotWeb.Services.Anomalies;
@@ -49,6 +50,9 @@ public sealed class AnomalySweepHostedService : BackgroundService
 
     private async Task RunSweepSafelyAsync(CancellationToken ct)
     {
+        using var lease = RegenerationPause.TryEnter();
+        if (lease is null)
+            return;
         try
         {
             using var scope = _scopeFactory.CreateScope();

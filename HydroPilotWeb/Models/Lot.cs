@@ -115,6 +115,15 @@ public class Lot
     /// <summary>GDD diario promedio del ciclo (clima de adentro), para comparar lotes por clima parecido.</summary>
     public decimal? CycleAverageDailyGdd { get; set; }
 
+    /// <summary>
+    /// GDD del día con más plantas Baby Leaf a la vez (pico de la curva de aptas), guardado al cerrar el ciclo: el
+    /// óptimo de corte que se aprende para los lotes siguientes.
+    /// </summary>
+    public decimal? BabyLeafPeakGdd { get; set; }
+
+    /// <summary>Costo de mano de obra por planta trasplantada a Adultas (costo de la hora ÷ plantas por hora) el día del trasplante.</summary>
+    public decimal? TransplantCostPerPlant { get; set; }
+
     public Greenhouse? Greenhouse { get; set; }
     public Circuit? Circuit { get; set; }
     public CropType? CropType { get; set; }

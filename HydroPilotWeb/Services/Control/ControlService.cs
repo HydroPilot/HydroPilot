@@ -90,17 +90,21 @@ public sealed class ControlService
             .ToList();
     }
 
-    /// <summary>Circuito donde está plantado el lote (para abrir Optimización desde un lote).</summary>
+    /// <summary>
+    /// Circuito del lote para abrir Optimización desde un lote: el denso donde se sembró mientras lo tenga; después del
+    /// último corte de Baby Leaf, el de Adultas más reciente.
+    /// </summary>
     public async Task<int?> CircuitForLotAsync(int lotId, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var now = DateTime.UtcNow;
-        return await context.CircuitAssignments.AsNoTracking()
+        var dense = await context.Lots.AsNoTracking().Where(l => l.Id == lotId).Select(l => l.CircuitId).FirstOrDefaultAsync(ct);
+        var open = await context.CircuitAssignments.AsNoTracking()
             .Where(a => a.LotId == lotId && a.ValidFromUtc <= now && (a.ValidUntilUtc == null || a.ValidUntilUtc > now))
             .OrderByDescending(a => a.ValidFromUtc)
-            .Select(a => (int?)a.CircuitId)
-            .FirstOrDefaultAsync(ct)
-            ?? await context.Lots.AsNoTracking().Where(l => l.Id == lotId).Select(l => l.CircuitId).FirstOrDefaultAsync(ct);
+            .Select(a => a.CircuitId)
+            .ToListAsync(ct);
+        return dense is { } d && open.Contains(d) ? d : open.Count > 0 ? open[0] : dense;
     }
 
     public async Task<ControlViewDto?> GetViewAsync(int circuitId, CancellationToken ct = default)

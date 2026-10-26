@@ -3879,6 +3879,18 @@ button.lot-chip[aria-pressed="true"] {
     opacity: 0.55;
 }
 
+/* Hueco del denso de una trasplantada: vacío con borde y letras de Adulta. */
+.lot-cell--transplanted {
+    background: transparent;
+    border: 2px dashed #8a4fd3;
+    color: #8a4fd3;
+}
+
+[data-theme="dark"] .lot-cell--transplanted {
+    border-color: #a77ae6;
+    color: #b993ee;
+}
+
 .lot-cell--dim {
     opacity: 0.15;
 }
@@ -4610,4 +4622,37 @@ a.gh-row:focus-visible {
     .gh-bars__value {
         margin: 0 0 0 6px;
     }
+}
+
+/* Mapas por circuito: el denso donde se sembró y los de Adultas con las trasplantadas. */
+.lot-map-subtitle {
+    margin: 16px 0 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+/* Card de trasplante a Adultas: cuántas pasan, su costo y los huecos libres. */
+.lot-transplant {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lot-transplant__main {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.lot-transplant__value {
+    font-size: 1.6rem;
+    font-weight: 750;
+    color: var(--text-primary);
+}
+
+.lot-transplant__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
 }

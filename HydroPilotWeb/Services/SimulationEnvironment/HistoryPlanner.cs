@@ -41,14 +41,18 @@ internal enum Incident
 internal sealed record PlannedLot(int Bench, int Number, DateOnly Sowing, DateOnly PlannedEnd, Incident Incident = Incident.None);
 
 /// <summary>
-/// Clima del período y calendario de lotes por mesada (lógica pura). Los lotes de una mesada van uno detrás del otro:
-/// se siembra, se corta Baby Leaf en la ventana y el resto sigue a convencional hasta su óptimo (650 GDD, el de Lotes);
-/// después, 3 días de limpieza. Se planifica hacia atrás desde los lotes en curso para que terminen hoy en la etapa
+/// Clima del período y calendario de lotes por mesada densa (lógica pura). Los lotes de una mesada van uno detrás del
+/// otro: se siembra, a los 250 GDD las que van a Adulta se trasplantan, se corta Baby Leaf en el pico y la mesada queda
+/// libre (se planifica hasta 400 GDD, antes de que cierre la ventana); después, 3 días de limpieza. Las adultas siguen
+/// en las mesadas de Adultas. Se planifica hacia atrás desde los lotes en curso para que terminen hoy en la etapa
 /// buscada.
 /// </summary>
 internal static class HistoryPlanner
 {
     public const int CleaningDays = 3;
+
+    /// <summary>GDD con que se planifica el fin del lote en la mesada densa (el pico de aptas suele ser ~300–350).</summary>
+    public const double DenseCycleGdd = 400;
 
     /// <summary>Clima día por día: anomalía del tiempo (autocorrelada), olas de calor en verano y frentes fríos en invierno.</summary>
     public static Dictionary<DateOnly, ClimateDay> Climate(DateOnly from, DateOnly to, Random rng)
@@ -89,10 +93,10 @@ internal static class HistoryPlanner
         }
     }
 
-    /// <summary>Día en que un lote sembrado en <paramref name="sowing"/> llega al óptimo convencional (se corta ese día).</summary>
+    /// <summary>Día en que un lote sembrado en <paramref name="sowing"/> deja libre la mesada densa (planificado).</summary>
     public static DateOnly ConventionalCut(Dictionary<DateOnly, ClimateDay> climate, DateOnly sowing)
     {
-        var target = (double)CycleTimelineLogic.ConventionalOptimumGdd;
+        var target = DenseCycleGdd;
         var sum = 0.0;
         for (var date = sowing; ; date = date.AddDays(1))
         {

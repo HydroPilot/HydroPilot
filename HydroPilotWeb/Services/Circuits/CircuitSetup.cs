@@ -42,9 +42,10 @@ public static class CircuitSetup
         return $"Circuito {n}";
     }
 
-    /// <summary>Crea el circuito con sus sensores de pH y CE y sus 4 bombas (guarda los cambios).</summary>
+    /// <summary>Crea el circuito (denso o de Adultas, con su grilla) con sus sensores de pH y CE y sus 4 bombas (guarda los cambios).</summary>
     public static async Task<Circuit> CreateAsync(
-        HydroPilotDbContext context, int greenhouseId, int nodeId, string name, decimal reservoirLiters, CancellationToken ct)
+        HydroPilotDbContext context, int greenhouseId, int nodeId, string name, decimal reservoirLiters, CancellationToken ct,
+        string kind = CircuitKinds.Dense, int gridRows = Circuit.DefaultGridRows, int gridColumns = Circuit.DefaultGridColumns)
     {
         // Posición en la Pi para las claves: la siguiente cuyas claves estén libres.
         var position = await context.Circuits.CountAsync(c => c.NodeId == nodeId, ct) + 1;
@@ -60,6 +61,9 @@ public static class CircuitSetup
             ReservoirLiters = reservoirLiters,
             SourceWaterEc = ControlContract.DefaultSourceWaterEc,
             IsActive = true,
+            Kind = kind,
+            GridRows = gridRows,
+            GridColumns = gridColumns,
             CreatedAt = DateTime.UtcNow,
         };
         context.Circuits.Add(circuit);

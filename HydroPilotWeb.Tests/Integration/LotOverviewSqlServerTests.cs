@@ -408,15 +408,16 @@ public class LotOverviewSqlServerTests
         {
             var overview = await service.GetOverviewAsync(lot.Id);
 
-            // Activas: 2 aptas, 1 candidata, 1 en desarrollo, 0 convencionales.
+            // Activas: 2 aptas, 1 candidata, 1 en desarrollo, 0 convencionales; 1 cosechada como Baby Leaf.
             Assert.NotNull(overview);
             var yield = overview.Yield;
             Assert.Equal(new YieldReference(40m, 250m), yield.Reference);
-            Assert.Equal(new DestinationYield(2, 0.08m, 240m), yield.Current.BabyLeaf);       // 2 × 40 g × $3000/kg
+            Assert.Equal(new DestinationYield(3, 0.12m, 360m), yield.Current.BabyLeaf);       // (1 cosechada + 2 aptas) × 40 g × $3000/kg
             Assert.Equal(new DestinationYield(0, 0m, 0m), yield.Current.Conventional);
             // Esperado: lo arma la regla con la situación del lote (y el histórico del invernadero, si hay).
             var expected = LotYieldRules.Estimate(
-                new LotYieldRules.Input(Apta: 2, Candidate: 1, Developing: 1, Conventional: 0, Risk: 0, HarvestedBabyLeaf: 1),
+                new LotYieldRules.Input(Apta: 2, Candidate: 1, Developing: 1, Conventional: 0, Risk: 0, HarvestedBabyLeaf: 1,
+                    AdultRoom: yield.Basis.AdultRoom),
                 yield.Reference, yield.Prices, yield.Basis.History, yield.Basis.LotWeight);
             Assert.Equal(expected.Expected, yield.Expected);
         }

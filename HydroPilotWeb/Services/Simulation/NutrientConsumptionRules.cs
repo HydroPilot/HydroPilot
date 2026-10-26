@@ -9,17 +9,18 @@ public sealed record NutrientUsage(decimal WaterLiters, decimal NutrientLiters);
 /// de agua y a cuántas plantas hay vivas cada día. Valores fijos por ahora (después pueden ir a
 /// Ajustes &gt; Parámetros):
 /// <list type="bullet">
-/// <item>Antes de la ventana Baby Leaf: 0,15 L de agua por planta y día, con 5 ml de nutrientes por litro.</item>
-/// <item>Ventana Baby Leaf: 0,3 L por planta y día, con 5 ml/L.</item>
-/// <item>Después (fase convencional): 0,65 L por planta y día, con 10 ml/L.</item>
+/// <item>Antes de la ventana Baby Leaf: 0,04 L de agua por planta y día, con 5 ml de nutrientes por litro.</item>
+/// <item>Ventana Baby Leaf: 0,075 L por planta y día, con 5 ml/L.</item>
+/// <item>Después (la adulta): 0,25 L por planta y día, con 10 ml/L.</item>
 /// </list>
+/// Por planta individual (un hueco, desde 2026-10-26): una Baby Leaf de 30 g y una adulta de 280 g.
 /// Lógica pura, testeable sin I/O.
 /// </summary>
 public static class NutrientConsumptionRules
 {
-    public const decimal WaterBeforeBabyLeaf = 0.15m;
-    public const decimal WaterDuringBabyLeaf = 0.3m;
-    public const decimal WaterConventional = 0.65m;
+    public const decimal WaterBeforeBabyLeaf = 0.04m;
+    public const decimal WaterDuringBabyLeaf = 0.075m;
+    public const decimal WaterConventional = 0.25m;
     public const decimal NutrientMlPerLiterUntilBabyLeafEnd = 5m;
     public const decimal NutrientMlPerLiterConventional = 10m;
 

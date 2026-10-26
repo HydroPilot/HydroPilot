@@ -9,7 +9,10 @@ namespace HydroPilotWeb.Services.Lotes;
 /// <summary>Opción del selector de lotes (nombre legible + estado).</summary>
 public sealed record LotOption(int Id, string Name, string? StatusName, DateOnly SowingDate, bool IsOperational);
 
-/// <summary>Composición de las plantas del lote (las activas por estado comercial).</summary>
+/// <summary>
+/// Composición de las plantas del lote (las activas por estado comercial). Developing incluye las trasplantadas que
+/// siguen "En desarrollo" (TransplantedDeveloping): crecen en Adultas hasta su corte, no son del denso.
+/// </summary>
 public sealed record LotPlantBreakdown(
     int TotalPlants,
     int Active,
@@ -21,7 +24,15 @@ public sealed record LotPlantBreakdown(
     int Harvested,
     int HarvestedAsBabyLeaf,
     int Discarded,
-    int EmptyPositions);
+    int EmptyPositions,
+    int TransplantedDeveloping = 0)
+{
+    /// <summary>En desarrollo que siguen en el circuito denso (pueden ser Baby Leaf o trasplantarse).</summary>
+    public int DenseDeveloping => Developing - TransplantedDeveloping;
+
+    /// <summary>Activas de la ruta Adulta (trasplantadas, en desarrollo o ya adultas), sin las en riesgo.</summary>
+    public int Adults => Conventional + TransplantedDeveloping;
+}
 
 /// <summary>Resultado de un ciclo cerrado (cosechado o descartado), con lo registrado en el lote.</summary>
 public sealed record ClosedCycleDto(
@@ -73,6 +84,7 @@ public class LotOverviewService
     private readonly GddService _gdd;
     private readonly SystemParametersService _parameters;
     private readonly ILogger<LotOverviewService> _logger;
+    private readonly BabyLeafOptimumService _optimum;
 
     public LotOverviewService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
@@ -80,7 +92,8 @@ public class LotOverviewService
         ForecastService forecast,
         GddService gdd,
         SystemParametersService parameters,
-        ILogger<LotOverviewService> logger)
+        ILogger<LotOverviewService> logger,
+        BabyLeafOptimumService? optimum = null)
     {
         _dbFactory = dbFactory;
         _aggregate = aggregate;
@@ -88,6 +101,7 @@ public class LotOverviewService
         _gdd = gdd;
         _parameters = parameters;
         _logger = logger;
+        _optimum = optimum ?? new BabyLeafOptimumService(dbFactory);
     }
 
     public static bool CanEditObjectives(ClaimsPrincipal user) =>
@@ -160,6 +174,7 @@ public class LotOverviewService
             .FirstOrDefaultAsync(ct);
 
         var isClosed = state.StatusName is LotStatusNames.Cosechado or LotStatusNames.Descartado;
+        var transplant = await SystemParametersService.LoadTransplantAsync(context, ct);
 
         CycleTimeline? timeline = null;
         GddCurve? curve = null;
@@ -174,17 +189,28 @@ public class LotOverviewService
             // proyección); las ventanas que no se alcanzaron quedan sin fecha.
             var closedOn = await ClosedOnAsync(context, lot, asOfDate, ct);
             var history = await _gdd.GetGddHistoryAsync(lot, closedOn, ct);
+            // El óptimo de un ciclo cerrado es el pico que tuvo.
             timeline = CycleTimelineLogic.Build(
                 lot.SowingDate, closedOn, history.Daily.Sum(p => p.Gdd), history.Daily, [],
-                config.GddMin, config.GddMax, lastStage.GddMax);
+                config.GddMin, config.GddMax, lastStage.GddMax,
+                babyLeafOptimum: lot.BabyLeafPeakGdd ?? CycleTimelineLogic.BabyLeafOptimumGdd,
+                adultDelayDays: transplant.StressDays, transplantGdd: transplant.DecisionGdd,
+                babyLeafOptimumSource: lot.BabyLeafPeakGdd is null ? OptimumSource.Fabrica : OptimumSource.Lote);
             curve = GddCurveLogic.Build(lot.SowingDate, closedOn, history.Daily, []);
         }
         else if (forecast is not null)
         {
+            // Óptimo Baby Leaf: la curva de aptas del lote o el pico de los lotes parecidos (clima esperado: lo medido + la proyección).
+            var days = forecast.GddHistory.Where(p => p.Source != GddPointSource.Fallback).Select(p => p.Gdd)
+                .Concat(forecast.FutureProjection.Select(p => p.Gdd)).ToList();
+            var optimum = await _optimum.ResolveAsync(lot.CropTypeId, lot.SowingDate, forecast.GddAccumulated,
+                days.Count > 0 ? Math.Round(days.Average(), 2) : null, config.GddMin, config.GddMax, lot.Id, ct);
             timeline = CycleTimelineLogic.Build(
                 lot.SowingDate, forecast.AsOfDate, forecast.GddAccumulated,
                 forecast.GddHistory, forecast.FutureProjection,
-                config.GddMin, config.GddMax, lastStage.GddMax);
+                config.GddMin, config.GddMax, lastStage.GddMax,
+                babyLeafOptimum: optimum.Gdd, adultDelayDays: transplant.StressDays, transplantGdd: transplant.DecisionGdd,
+                babyLeafOptimumSource: optimum.Source);
             curve = GddCurveLogic.Build(lot.SowingDate, forecast.AsOfDate, forecast.GddHistory, forecast.FutureProjection);
         }
 
@@ -202,11 +228,19 @@ public class LotOverviewService
             plants.TotalPlants, plants.HarvestedAsBabyLeaf, plants.Apta, plants.Candidate,
             plants.Discarded, objectives.BabyLeafGoalPercent, objectives.ExpectedActivePercent));
 
+        // Huecos de Adultas que el lote todavía puede usar: se trasplanta hasta que cierra la ventana Baby Leaf.
+        int? adultRoom = isClosed || timeline is null ? null
+            : timeline.Phase is CyclePhase.Desarrollo or CyclePhase.VentanaBabyLeaf
+                ? (await PlantTransplantService.RoomAsync(context, lot, ct)).Sum(r => r.FreeHoles)
+                : 0;
+
         // Rendimiento por plantas (cada una tiene su hueco): peso de referencia × plantas de cada destino.
         // El esperado mezcla el histórico del invernadero con la situación del lote según la fase.
         var yieldEstimate = LotYieldRules.Estimate(
-            new LotYieldRules.Input(plants.Apta, plants.Candidate, plants.Developing, plants.Conventional,
-                plants.Risk, plants.HarvestedAsBabyLeaf, plants.Harvested - plants.HarvestedAsBabyLeaf),
+            new LotYieldRules.Input(plants.Apta, plants.Candidate, plants.DenseDeveloping, plants.Adults,
+                plants.Risk, plants.HarvestedAsBabyLeaf, plants.Harvested - plants.HarvestedAsBabyLeaf,
+                AdultsReady: timeline?.AdultCutReached ?? state.GddAccumulated >= CycleTimelineLogic.ConventionalOptimumGdd,
+                AdultRoom: adultRoom),
             await _parameters.GetYieldReferenceAsync(ct),
             await SystemParametersService.ResolveLotPricesAsync(context, lot, asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow), ct),
             isClosed ? null : await YieldHistoryAsync(context, lot, ct),
@@ -352,6 +386,7 @@ public class LotOverviewService
 
         return new LotPlantBreakdown(
             state.TotalPlants, state.ActivePlants, apta, candidate, developing, conventional, risk,
-            state.HarvestedPlants, harvestedAsBabyLeaf, state.DiscardedPlants, state.EmptyPositions);
+            state.HarvestedPlants, harvestedAsBabyLeaf, state.DiscardedPlants, state.EmptyPositions,
+            LotYieldRules.TransplantedDeveloping(state.AllCells));
     }
 }

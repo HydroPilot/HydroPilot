@@ -103,7 +103,8 @@ public sealed class SensorFaultService
     /// <summary>
     /// Barrido: abre "sin datos" para los sensores activos que no mandan lecturas en un nodo que sí está mandando (si
     /// el nodo entero se cortó, avisa la alerta de nodo desconectado), crea la alerta de cada error abierto y cierra
-    /// las de los errores ya resueltos.
+    /// las de los errores ya resueltos. Las sondas de un circuito sin lote no se vigilan (un tanque vacío no mide): sus
+    /// "sin datos" se cierran.
     /// </summary>
     public async Task<SensorFaultSweepResult> SweepAsync(DateTime nowUtc, CancellationToken ct = default)
     {
@@ -119,7 +120,8 @@ public sealed class SensorFaultService
                 continue;
 
             var sensors = await context.Sensors.AsNoTracking()
-                .Where(s => s.NodeId == node.Id && s.IsActive)
+                .Where(s => s.NodeId == node.Id && s.IsActive
+                            && (s.CircuitId == null || context.CircuitAssignments.Any(a => a.CircuitId == s.CircuitId && a.ValidUntilUtc == null)))
                 .Select(s => new
                 {
                     s.Id,
@@ -147,7 +149,17 @@ public sealed class SensorFaultService
             }
         }
 
-        if (opened > 0)
+        var idle = await context.SensorFaults
+            .Where(f => f.Kind == SensorFaultKinds.SinDatos && f.ResolvedAtUtc == null && f.Sensor!.CircuitId != null
+                        && !context.CircuitAssignments.Any(a => a.CircuitId == f.Sensor.CircuitId && a.ValidUntilUtc == null))
+            .ToListAsync(ct);
+        foreach (var fault in idle)
+        {
+            fault.ResolvedAtUtc = nowUtc;
+            fault.ResolvedBy = "Circuito sin lote";
+        }
+
+        if (opened > 0 || idle.Count > 0)
         {
             try
             {

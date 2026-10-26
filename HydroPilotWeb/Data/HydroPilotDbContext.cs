@@ -167,6 +167,10 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.SourceWaterEc).HasColumnType("decimal(4,2)").HasDefaultValue(ControlContract.DefaultSourceWaterEc);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            entity.Property(e => e.Kind).IsRequired().HasMaxLength(10).HasDefaultValue(CircuitKinds.Dense);
+            entity.Property(e => e.GridRows).HasDefaultValue(Circuit.DefaultGridRows);
+            entity.Property(e => e.GridColumns).HasDefaultValue(Circuit.DefaultGridColumns);
+            entity.Ignore(e => e.Holes);
 
             entity.HasIndex(e => new { e.GreenhouseId, e.Name }).IsUnique();
 
@@ -565,6 +569,8 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.HarvestConventionalPricePerKg).HasColumnType("decimal(12,2)");
             entity.Property(e => e.HarvestPriceCurrency).HasMaxLength(10);
             entity.Property(e => e.CycleAverageDailyGdd).HasColumnType("decimal(6,2)");
+            entity.Property(e => e.BabyLeafPeakGdd).HasColumnType("decimal(8,2)");
+            entity.Property(e => e.TransplantCostPerPlant).HasColumnType("decimal(12,2)");
 
             entity.HasIndex(e => e.StatusId);
             entity.HasIndex(e => e.CropTypeId);
@@ -768,9 +774,19 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.DiscardReason).HasMaxLength(300);
             entity.Property(e => e.CreatedAtUtc).HasDefaultValueSql("GETUTCDATE()");
 
-            // (LoteId, Fila, Columna) única: una posición admite una sola planta.
-            entity.HasIndex(e => new { e.LotId, e.Row, e.Column }).IsUnique();
+            entity.Ignore(e => e.IsAdultRoute);
+
+            // (Lote, Circuito, Fila, Columna) única: un hueco del circuito admite una sola planta del lote.
+            // Sin filtro: las plantas sin circuito (lotes de antes de los circuitos) también tienen posición única.
+            entity.HasIndex(e => new { e.LotId, e.CircuitId, e.Row, e.Column }).IsUnique().HasFilter(null);
             entity.HasIndex(e => e.LotId);
+            entity.HasIndex(e => e.CircuitId);
+
+            entity.HasOne(e => e.Circuit)
+                  .WithMany()
+                  .HasForeignKey(e => e.CircuitId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.CommercialStageId);
 
             entity.HasOne(e => e.Lot)
@@ -847,6 +863,7 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.FoliarAreaUsed).HasColumnType("decimal(12,2)");
             entity.Property(e => e.LeafLengthUsed).HasColumnType("decimal(8,2)");
             entity.Property(e => e.GrowthRateUsed).HasColumnType("decimal(8,2)");
+            entity.Property(e => e.SizeRatio).HasColumnType("decimal(6,3)");
 
             entity.HasIndex(e => e.PlantId);
             entity.HasIndex(e => e.EvaluatedAtUtc);

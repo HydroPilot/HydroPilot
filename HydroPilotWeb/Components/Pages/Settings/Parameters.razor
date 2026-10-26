@@ -103,6 +103,85 @@
         <article class="panel settings-panel">
             <div class="settings-panel__header">
                 <div>
+                    <span class="settings-eyebrow">Lotes</span>
+                    <h3>Trasplante a Adultas</h3>
+                    <p class="panel__subtitle">
+                        Desde el GDD de decisión se proponen las plantas que pasan del circuito denso al de Adultas. La
+                        separación dice cuánto lugar ocupa cada una; el trasplante cuesta la hora de trabajo ÷ plantas por hora.
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (transplant is not null)
+            {
+                <div class="lot-editor">
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-bl-spacing">Separación Baby Leaf (cm)</label>
+                        <input id="param-bl-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.BabyLeafSpacingCm" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-adult-spacing">Separación Adulta (cm)</label>
+                        <input id="param-adult-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.AdultSpacingCm" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-decision-gdd">GDD de decisión</label>
+                        <input id="param-decision-gdd" type="number" class="form-control" min="0" step="5" @bind="transplant.DecisionGdd" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-stress">Días de estrés</label>
+                        <input id="param-stress" type="number" class="form-control" min="0" step="1" @bind="transplant.StressDays" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-plants-hour">Plantas por hora (operario)</label>
+                        <input id="param-plants-hour" type="number" class="form-control" min="1" step="10" @bind="transplant.PlantsPerHour" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-labor-cost">Costo de la hora (@(current?.Currency ?? "ARS"))</label>
+                        <input id="param-labor-cost" type="number" class="form-control" min="0" step="100" @bind="transplant.LaborCostPerHour" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-max-size">Tamaño máximo Baby Leaf (× ideal)</label>
+                        <input id="param-max-size" type="number" class="form-control" min="1" step="0.05" @bind="transplant.MaxSizeFactor" disabled="@(!canEdit)" />
+                    </div>
+                </div>
+                <p class="lot-muted mt-2 mb-0">
+                    Trasplante: @LotFormat.Money(TransplantRow.ToParameters(transplant).CostPerPlant, current?.Currency ?? "ARS") por planta.
+                </p>
+
+                @if (transplantErrors.Count > 0)
+                {
+                    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+                        <ul class="mb-0">
+                            @foreach (var transplantError in transplantErrors)
+                            {
+                                <li>@transplantError</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (canEdit)
+                {
+                    <div class="lot-editor__actions">
+                        @if (!string.IsNullOrEmpty(transplantSavedMessage))
+                        {
+                            <span class="lot-muted mt-0 me-auto">@transplantSavedMessage</span>
+                        }
+                        <button class="btn btn-success btn-sm" @onclick="SaveTransplantAsync" disabled="@savingTransplant">
+                            @(savingTransplant ? "Guardando…" : "Guardar trasplante")
+                        </button>
+                    </div>
+                }
+            }
+        </article>
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
                     <span class="settings-eyebrow">Sensores</span>
                     <h3>Chequeo de sensores</h3>
                     <p class="panel__subtitle">
@@ -317,6 +396,33 @@
 
     private IReadOnlyList<AnomalyRuleOverview> anomalyRules = [];
 
+    // Trasplante a Adultas (editable en el formulario; se valida al guardar).
+    private sealed class TransplantRow
+    {
+        public decimal BabyLeafSpacingCm { get; set; }
+        public decimal AdultSpacingCm { get; set; }
+        public decimal DecisionGdd { get; set; }
+        public int PlantsPerHour { get; set; }
+        public decimal LaborCostPerHour { get; set; }
+        public int StressDays { get; set; }
+        public decimal MaxSizeFactor { get; set; }
+
+        public static TransplantRow From(TransplantParameters p) => new()
+        {
+            BabyLeafSpacingCm = p.BabyLeafSpacingCm, AdultSpacingCm = p.AdultSpacingCm, DecisionGdd = p.DecisionGdd,
+            PlantsPerHour = p.PlantsPerHour, LaborCostPerHour = p.LaborCostPerHour, StressDays = p.StressDays,
+            MaxSizeFactor = p.MaxSizeFactor,
+        };
+
+        public static TransplantParameters ToParameters(TransplantRow r) => new(
+            r.BabyLeafSpacingCm, r.AdultSpacingCm, r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor);
+    }
+
+    private TransplantRow? transplant;
+    private bool savingTransplant;
+    private IReadOnlyList<string> transplantErrors = [];
+    private string? transplantSavedMessage;
+
     // Rango normal y salto máximo por tipo de sensor (errores de sensores).
     private sealed class FaultLimitRow
     {
@@ -345,6 +451,7 @@
             canEdit = SystemParametersService.CanEdit(user);
             current = await ParametersService.GetYieldParametersAsync();
             nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
+            transplant = TransplantRow.From(await ParametersService.GetTransplantParametersAsync());
             await LoadCheckIntervalsAsync();
             await LoadFaultLimitsAsync();
             anomalyRules = await AnomalyQuery.GetRulesAsync();
@@ -437,6 +544,32 @@
 
     // Sin ceros de más ("5.00" → "5").
     private static decimal? Trim(decimal? value) => value / 1.0000000000000000000000000000m;
+
+    private async Task SaveTransplantAsync()
+    {
+        if (transplant is null)
+            return;
+        savingTransplant = true;
+        transplantSavedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateTransplantParametersAsync(TransplantRow.ToParameters(transplant), user);
+            transplantErrors = result.Errors;
+            if (result.Succeeded)
+            {
+                transplant = TransplantRow.From(await ParametersService.GetTransplantParametersAsync());
+                transplantSavedMessage = "Trasplante guardado.";
+            }
+        }
+        catch (Exception ex)
+        {
+            transplantErrors = [$"No se pudo guardar el trasplante: {ex.Message}"];
+        }
+        finally
+        {
+            savingTransplant = false;
+        }
+    }
 
     private async Task SaveNutrientPriceAsync()
     {

@@ -3,9 +3,9 @@ using HydroPilotWeb.Services.Lotes;
 namespace HydroPilotWeb.Tests;
 
 /// <summary>
-/// Pruebas del árbol de decisión de la etapa comercial (plan 09).
-/// El orden documentado: riesgo primero → ventana Baby Leaf + score →
-/// ventana convencional → debajo de ventana.
+/// Pruebas del árbol de decisión de la etapa comercial (plan 09, con el trasplante a Adultas).
+/// El orden documentado: riesgo primero → trasplantada (Adulta) → ruta Baby Leaf: ventana cerrada o
+/// tamaño pasado (descarte), ventana + score, debajo de ventana.
 /// </summary>
 public class PlantDecisionEngineTests
 {
@@ -14,11 +14,13 @@ public class PlantDecisionEngineTests
         BabyLeafGddMax: 450m,
         OvermaturityGdd: 750m,
         ScoreMinCandidate: 60m,
-        ScoreMinReady: 80m);
+        ScoreMinReady: 80m,
+        MaxSizeFactor: 1.3m);
 
-    private static PlantDecisionEngine.PlantDecision Decide(decimal gdd, decimal? score = null, bool? mandatory = null, bool? maturity = null, bool risk = false, string? riskReason = null)
+    private static PlantDecisionEngine.PlantDecision Decide(decimal gdd, decimal? score = null, bool? mandatory = null, bool risk = false,
+        string? riskReason = null, bool adult = false, decimal? size = null)
         => PlantDecisionEngine.Evaluate(
-            new PlantDecisionEngine.PlantEvaluationInput(gdd, score, mandatory, maturity, risk, riskReason), T);
+            new PlantDecisionEngine.PlantEvaluationInput(gdd, score, mandatory, risk, riskReason, adult, size), T);
 
     [Fact]
     public void Riesgo_Tiene_Prioridad_Sobre_Score_Y_Ventana()
@@ -81,17 +83,31 @@ public class PlantDecisionEngineTests
     }
 
     [Fact]
-    public void VentanaConvencional_Con_Madurez_Confirmada_Es_CosechaConvencional()
+    public void Trasplantada_Es_Adulta_Aun_En_La_Ventana_Baby_Leaf()
     {
-        var decision = Decide(gdd: 550m, maturity: true);
+        var decision = Decide(gdd: 320m, score: 95m, mandatory: true, adult: true);
         Assert.Equal(CommercialStageNames.CosechaConvencional, decision.CommercialStageName);
+        Assert.False(decision.Discard);
     }
 
     [Fact]
-    public void VentanaConvencional_Sin_Madurez_Confirmada_Es_En_Desarrollo()
+    public void Ruta_Baby_Leaf_Con_La_Ventana_Cerrada_Se_Descarta()
     {
-        var decision = Decide(gdd: 550m, maturity: null);
-        Assert.Equal(CommercialStageNames.EnDesarrollo, decision.CommercialStageName);
+        // En el denso no hay lugar para seguir como adulta.
+        var decision = Decide(gdd: 550m, score: 90m, mandatory: true);
+        Assert.Equal(CommercialStageNames.RiesgoFueraDeVentana, decision.CommercialStageName);
+        Assert.True(decision.Discard);
+    }
+
+    [Fact]
+    public void Se_Paso_Del_Tamano_Maximo_Deja_De_Ser_Baby_Leaf()
+    {
+        var passed = Decide(gdd: 340m, score: 95m, mandatory: true, size: 1.4m);
+        Assert.Equal(CommercialStageNames.RiesgoFueraDeVentana, passed.CommercialStageName);
+        Assert.True(passed.Discard);
+
+        var ideal = Decide(gdd: 340m, score: 95m, mandatory: true, size: 1.2m);
+        Assert.Equal(CommercialStageNames.BabyLeafApta, ideal.CommercialStageName);
     }
 
     [Theory]
@@ -105,13 +121,13 @@ public class PlantDecisionEngineTests
     }
 
     [Fact]
-    public void Limite_450_Pertenece_A_Ventana_Convencional_No_BabyLeaf()
+    public void Limite_450_Cierra_La_Ventana_Baby_Leaf()
     {
-        // [250,450) es Baby Leaf; 450 cae en la ventana convencional.
+        // [250,450) es Baby Leaf; en 450 la que sigue en el denso se descarta.
         var bl = Decide(gdd: 449m, score: 90m, mandatory: true);
         Assert.Equal(CommercialStageNames.BabyLeafApta, bl.CommercialStageName);
 
-        var conv = Decide(gdd: 450m, maturity: true);
-        Assert.Equal(CommercialStageNames.CosechaConvencional, conv.CommercialStageName);
+        var closed = Decide(gdd: 450m, score: 90m, mandatory: true);
+        Assert.True(closed.Discard);
     }
 }

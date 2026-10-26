@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 
 namespace HydroPilotWeb.Tests.Unit;
 
-/// <summary>Mundo de prueba igual al seed (catálogos, 2 nodos con 4 sensores y 4 bombas, usuarios).</summary>
+/// <summary>Mundo de prueba igual al entorno de simulación (catálogos, una Pi con 2 mesadas densas de 10 × 20 y 5 de Adultas de 4 × 5, usuarios).</summary>
 internal static class SimulationWorlds
 {
     public static SimWorld Seeded()
@@ -55,10 +55,12 @@ internal static class SimulationWorlds
                 SensorTypeName = AnomalyContract.SensorTypeCe, ConsecutiveToOpen = 2, CooldownMinutes = 30, IsActive = true },
         };
 
-        // Una Pi (nodo 1) con dos circuitos; la temperatura y la humedad del invernadero las manda el primero.
+        // Una Pi (nodo 1) con 7 circuitos: 2 densos (A, B) y 5 de Adultas (C–G); la temperatura y la humedad del
+        // invernadero las manda el primero.
         var benches = new List<SimBench>();
-        for (var i = 0; i < 2; i++)
+        for (var i = 0; i < 7; i++)
         {
+            var adult = i >= 2;
             const int nodeId = 1;
             var circuitId = i + 1;
             var suffix = i == 0 ? string.Empty : $"-{i + 1}";
@@ -79,7 +81,9 @@ internal static class SimulationWorlds
                     Unit = a.Unit, MaxPerCommand = a.MaxPerCommand, MaxPerDay = a.MaxPerDay, EffectPerUnit = a.Effect, IsActive = true,
                 })
                 .ToList();
-            benches.Add(new SimBench(nodeId, "rpi-inv-01", ((char)('A' + i)).ToString(), sensors, actuators, circuitId, $"Circuito {circuitId}"));
+            benches.Add(new SimBench(nodeId, "rpi-inv-01", ((char)('A' + i)).ToString(), sensors, actuators, circuitId,
+                adult ? $"Adultas {i - 1}" : $"Circuito {circuitId}", adult ? CircuitKinds.Adult : CircuitKinds.Dense,
+                adult ? 4 : 10, adult ? 5 : 20));
         }
 
         var producer = new SimUser(2, "carla.gomez@hydropilot.test", "Carla Gómez", "Productor");
@@ -87,7 +91,7 @@ internal static class SimulationWorlds
         return new SimWorld(1, TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires"), crop, stages, commercial, config, criteria,
             statuses, rules, benches, producer, @operator,
             [new SimUser(1, "admin@hydropilot.local", "Admin", "Administrador"), producer, @operator],
-            120m, 280m);
+            30m, 280m);
     }
 }
 
@@ -129,10 +133,12 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
                 Assert.NotNull(ordered[i - 1].ValidUntilUtc);
                 Assert.True(ordered[i - 1].ValidUntilUtc <= ordered[i].ValidFromUtc, "dos lotes a la vez en la misma mesada");
             }
-            Assert.Null(ordered[^1].ValidUntilUtc); // el lote en curso
+            if (node.Key is 1 or 2)
+                Assert.Null(ordered[^1].ValidUntilUtc); // las mesadas densas tienen su lote en curso
         }
 
-        var open = _data.Lots.Where(l => l.StatusId == 1).OrderBy(l => l.SowingDate).ToList();
+        // Los en curso de las mesadas densas (puede haber otro con sus adultas en las de Adultas).
+        var open = _data.Lots.Where(l => l.StatusId == 1).OrderByDescending(l => l.SowingDate).Take(2).OrderBy(l => l.SowingDate).ToList();
         Assert.Equal(2, open.Count);
         var today = new DateOnly(2026, 10, 20);
         Assert.Equal(today.AddDays(-12), open[0].SowingDate); // mesada A: cerca de la ventana Baby Leaf
@@ -150,7 +156,8 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
             {
                 var a = assignments[id];
                 Assert.Equal(a.LotId, reading.LotId);
-                Assert.True(reading.ObservedAtUtc >= a.ValidFromUtc && (a.ValidUntilUtc is null || reading.ObservedAtUtc < a.ValidUntilUtc));
+                Assert.True(reading.ObservedAtUtc >= a.ValidFromUtc && (a.ValidUntilUtc is null || reading.ObservedAtUtc < a.ValidUntilUtc),
+                    $"lectura {reading.ExternalReadingId} del {reading.ObservedAtUtc:o} fuera de la asignación {a.Id} ({a.ValidFromUtc:o} – {a.ValidUntilUtc:o})");
                 Assert.Equal(TelemetryContract.ResultAceptada, reading.IngestionResult);
             }
             else
@@ -207,8 +214,9 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
             if (lot.StatusId != 2)
                 continue;
             var babyLeaf = plants.Count(p => p.OperationalState == PlantOperationalState.Cosechada && p.CommercialStageId != 4);
-            var conventional = plants.Count(p => p.CommercialStageId == 4);
-            Assert.Equal(Math.Round((babyLeaf * 120m + conventional * 280m) / 1000m, 2), lot.ActualYieldKg);
+            // Las trasplantadas son "Adulta" desde el trasplante: cuentan las cosechadas.
+            var conventional = plants.Count(p => p.OperationalState == PlantOperationalState.Cosechada && p.CommercialStageId == 4);
+            Assert.Equal(Math.Round((babyLeaf * 30m + conventional * 280m) / 1000m, 2), lot.ActualYieldKg);
             Assert.Equal(plants.Max(p => p.HarvestDate), lot.ActualHarvestDate);
             Assert.NotNull(lot.HarvestBabyLeafPricePerKg);
         }
@@ -253,8 +261,8 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
         var cold = new NutrientTank(500, 6, 1.5);
         for (var hour = 0; hour < 24; hour++)
         {
-            hot.Step(3600, LettuceUptake.For(60, 300, 3600, hour, 31, 50, hot.Ec, hot.Liters));
-            cold.Step(3600, LettuceUptake.For(60, 300, 3600, hour, 13, 80, cold.Ec, cold.Liters));
+            hot.Step(3600, LettuceUptake.For(200, 300, 3600, hour, 31, 50, hot.Ec, hot.Liters));
+            cold.Step(3600, LettuceUptake.For(200, 300, 3600, hour, 13, 80, cold.Ec, cold.Liters));
         }
         Assert.True(hot.Liters < 480 && hot.Ec > 1.5, $"calor: {hot.Liters:0} L, CE {hot.Ec:0.000}");
         Assert.True(cold.Ec < 1.5, $"frío: CE {cold.Ec:0.000}");
@@ -268,9 +276,9 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
         Assert.Equal((double)Services.Simulation.NutrientConsumptionRules.WaterDuringBabyLeaf, LettuceUptake.WaterDuringBabyLeaf);
         Assert.Equal((double)Services.Simulation.NutrientConsumptionRules.WaterConventional, LettuceUptake.WaterConventional);
 
-        // 60 plantas en la ventana, día normal: 18 L en el día (casi todo de día).
-        var day = Enumerable.Range(0, 24).Sum(h => LettuceUptake.For(60, 300, 3600, h + 0.5, 20, 65, 1.5, 500).WaterLiters);
-        Assert.Equal(18, day, 0);
+        // 200 plantas (una mesada densa) en la ventana, día normal: 15 L en el día (casi todo de día).
+        var day = Enumerable.Range(0, 24).Sum(h => LettuceUptake.For(200, 300, 3600, h + 0.5, 20, 65, 1.5, 500).WaterLiters);
+        Assert.Equal(15, day, 0);
     }
 
     [Fact]

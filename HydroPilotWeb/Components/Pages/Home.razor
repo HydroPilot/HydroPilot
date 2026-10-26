@@ -39,7 +39,7 @@ else
                 <span class="gh-kpi__value gh-kpi__value--accent">@data.ActiveLots</span>
                 <span class="gh-kpi__label">@(data.ActiveLots == 1 ? "Lote activo" : "Lotes activos")</span>
             </section>
-            @Kpi(data.CurrentRevenue, "Rendimiento actual", "Lo listo para cosechar hoy en los lotes activos")
+            @Kpi(data.CurrentRevenue, "Rendimiento actual", "Lo cosechado y lo listo para cosechar en los lotes activos")
             @Kpi(data.ExpectedRevenue, "Rendimiento esperado", "Lo que se espera del ciclo completo de los lotes activos")
 
             <section class="lot-card gh-chart gh-chart--bars" aria-labelledby="gh-stages-title">

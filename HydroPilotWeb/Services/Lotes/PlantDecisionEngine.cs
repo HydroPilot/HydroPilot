@@ -5,24 +5,27 @@ namespace HydroPilotWeb.Services.Lotes;
 /// Se evalúa de arriba hacia abajo y el riesgo tiene prioridad sobre todo lo demás.
 /// Lógica pura (sin I/O): testeable sin base de datos.
 ///
-/// Orden documentado en el plan:
-/// 1. Riesgo/bolting/mal estado visual o GDD sobre sobremadurez → Riesgo / fuera de ventana.
-/// 2. Ventana Baby Leaf ([GddMin, GddMax)) → por score: apta / candidata / en desarrollo.
-/// 3. Ventana convencional ([GddMax, sobremadurez]) → madurez confirmada → convencional.
-/// 4. GDD bajo la ventana Baby Leaf → En desarrollo.
+/// Orden (desde 2026-10-26, con el trasplante a Adultas):
+/// 1. Riesgo (anomalía) o GDD sobre sobremadurez → Riesgo / fuera de ventana.
+/// 2. Trasplantada (ruta Adulta) → Adulta: se corta como adulta.
+/// 3. Ruta Baby Leaf (sigue en el circuito denso):
+///    - ventana cerrada sin cortarse → se descarta (no hay lugar para seguir como adulta);
+///    - en la ventana: se pasó del tamaño máximo → se descarta; si no, por score: Baby Leaf / candidata / en desarrollo;
+///    - antes de la ventana → En desarrollo.
 ///
-/// UMBRALES: 250, 450, 750, 60 y 80 son configurables (valores de arranque), nunca
-/// constantes ocultas: llegan por PlantDecisionThresholds desde los catálogos.
+/// UMBRALES: 250, 450, 750, 60, 80 y el tamaño máximo son configurables (valores de arranque), nunca
+/// constantes ocultas: llegan por PlantDecisionThresholds desde los catálogos y los parámetros.
 /// </summary>
 public static class PlantDecisionEngine
 {
-    /// <summary>Umbrales de arranque tomados de los catálogos (LOT-02).</summary>
+    /// <summary>Umbrales de arranque tomados de los catálogos (LOT-02) y de Ajustes &gt; Parámetros.</summary>
     public sealed record PlantDecisionThresholds(
         decimal BabyLeafGddMin,     // ConfiguracionBabyLeaf.GddMin (arranque 250)
         decimal BabyLeafGddMax,     // ConfiguracionBabyLeaf.GddMax (arranque 450)
         decimal OvermaturityGdd,    // GddMax de la última etapa fenológica (arranque 750)
         decimal ScoreMinCandidate,  // ConfiguracionBabyLeaf.ScoreMinCandidate (arranque 60)
-        decimal ScoreMinReady);     // ConfiguracionBabyLeaf.ScoreMinReady (arranque 80)
+        decimal ScoreMinReady,      // ConfiguracionBabyLeaf.ScoreMinReady (arranque 80)
+        decimal? MaxSizeFactor = null); // tamaño máximo Baby Leaf × el ideal (arranque 1,3); null = sin control
 
     /// <summary>
     /// Entradas de evaluación de una planta ACTIVA.
@@ -32,11 +35,13 @@ public static class PlantDecisionEngine
         decimal LotGdd,
         decimal? BabyLeafScore,         // null = sin evaluación disponible
         bool? MandatoryCriteriaMet,     // null = criterios obligatorios sin confirmar
-        bool? HasSufficientMaturity,    // null = sin análisis de imagen (madurez no confirmada)
         bool HasRisk,
-        string? RiskReason);
+        string? RiskReason,
+        bool IsAdultRoute = false,      // trasplantada a un circuito de Adultas
+        decimal? SizeRatio = null);     // tamaño respecto del ideal (última evaluación); null = sin medición
 
-    public sealed record PlantDecision(string CommercialStageName, string? Reason);
+    /// <summary>Discard = la planta ya no puede ser Baby Leaf ni tiene lugar como adulta: el flujo diario la descarta.</summary>
+    public sealed record PlantDecision(string CommercialStageName, string? Reason, bool Discard = false);
 
     public static PlantDecision Evaluate(PlantEvaluationInput input, PlantDecisionThresholds thresholds)
     {
@@ -49,9 +54,22 @@ public static class PlantDecisionEngine
             return new PlantDecision(CommercialStageNames.RiesgoFueraDeVentana,
                 $"GDD {input.LotGdd} supera el umbral de sobremadurez ({thresholds.OvermaturityGdd})");
 
-        // 2. Ventana Baby Leaf [GddMin, GddMax).
-        if (input.LotGdd >= thresholds.BabyLeafGddMin && input.LotGdd < thresholds.BabyLeafGddMax)
+        // 2. Ruta Adulta: se corta como adulta en su óptimo.
+        if (input.IsAdultRoute)
+            return new PlantDecision(CommercialStageNames.CosechaConvencional, "Trasplantada a Adultas: se corta como adulta");
+
+        // 3. Ruta Baby Leaf: la ventana cerró sin cortarla → descarte.
+        if (input.LotGdd >= thresholds.BabyLeafGddMax)
+            return new PlantDecision(CommercialStageNames.RiesgoFueraDeVentana,
+                $"Pasó la ventana Baby Leaf ({thresholds.BabyLeafGddMax} GDD) sin cortarse", Discard: true);
+
+        // Ventana Baby Leaf [GddMin, GddMax).
+        if (input.LotGdd >= thresholds.BabyLeafGddMin)
         {
+            if (thresholds.MaxSizeFactor is { } maxSize && input.SizeRatio is { } size && size > maxSize)
+                return new PlantDecision(CommercialStageNames.RiesgoFueraDeVentana,
+                    $"Se pasó del tamaño Baby Leaf ({size:0.##} veces el ideal; máximo {maxSize:0.##})", Discard: true);
+
             if (input.BabyLeafScore is null)
                 return new PlantDecision(CommercialStageNames.EnDesarrollo,
                     $"Sin evaluación de score disponible (GDD {input.LotGdd} en ventana Baby Leaf)");
@@ -75,18 +93,7 @@ public static class PlantDecisionEngine
                 $"Score {input.BabyLeafScore} por debajo del umbral candidata ({thresholds.ScoreMinCandidate})");
         }
 
-        // 3. Ventana convencional [GddMax, sobremadurez].
-        if (input.LotGdd >= thresholds.BabyLeafGddMax && input.LotGdd <= thresholds.OvermaturityGdd)
-        {
-            if (input.HasSufficientMaturity == true)
-                return new PlantDecision(CommercialStageNames.CosechaConvencional,
-                    "Ventana adulta con madurez confirmada por análisis de imagen");
-
-            return new PlantDecision(CommercialStageNames.EnDesarrollo,
-                "Ventana adulta sin madurez confirmada (falta procesamiento de imagen)");
-        }
-
-        // 4. GDD por debajo de la ventana Baby Leaf.
+        // Antes de la ventana Baby Leaf.
         return new PlantDecision(CommercialStageNames.EnDesarrollo,
             $"GDD {input.LotGdd} por debajo de la ventana Baby Leaf ({thresholds.BabyLeafGddMin})");
     }

@@ -23,8 +23,9 @@
                     <span class="settings-eyebrow">Invernadero</span>
                     <h3>Circuitos</h3>
                     <p class="panel__subtitle">
-                        Cada circuito es un tanque con sus sensores de pH y CE y 4 bombas; un lote se planta en un circuito
-                        libre. La temperatura y la humedad son del invernadero.
+                        Cada circuito es un tanque con sus sensores de pH y CE y 4 bombas. Un lote se siembra en un circuito
+                        denso libre y las que van a Adulta se trasplantan a uno de Adultas. La temperatura y la humedad son
+                        del invernadero.
                         @if (greenhouses is { Count: 1 })
                         {
                             <text> Todos los maneja la Pi <strong>@greenhouses[0].PiIdentifier</strong>.</text>
@@ -56,6 +57,8 @@
                                 {
                                     <th>Invernadero</th>
                                 }
+                                <th>Tipo</th>
+                                <th>Huecos</th>
                                 <th class="text-end">Tanque</th>
                                 <th>Lote en curso</th>
                                 <th>Claves en la Pi</th>
@@ -86,6 +89,38 @@
                                     {
                                         <td>@circuit.GreenhouseName · Pi @circuit.NodeIdentifier</td>
                                     }
+                                    @{ var locked = circuit.CurrentLot is not null; }
+                                    <td>
+                                        @if (editing && !locked)
+                                        {
+                                            <select class="form-select form-select-sm" aria-label="Tipo de circuito" @bind="editKind">
+                                                @foreach (var kind in CircuitKinds.All)
+                                                {
+                                                    <option value="@kind">@CircuitKinds.Label(kind)</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            @CircuitKinds.Label(circuit.Kind)
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (editing && !locked)
+                                        {
+                                            <span class="circuits-table__grid">
+                                                <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control form-control-sm"
+                                                       aria-label="Filas" @bind="editRows" />
+                                                ×
+                                                <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control form-control-sm"
+                                                       aria-label="Columnas" @bind="editColumns" />
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            @($"{circuit.GridRows} × {circuit.GridColumns}")
+                                        }
+                                    </td>
                                     <td class="text-end">
                                         @if (editing)
                                         {
@@ -159,6 +194,23 @@
                         <input id="circuit-name" class="form-control" maxlength="@Models.Circuit.NameMaxLength" @bind="newName" />
                     </div>
                     <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="circuit-kind">Tipo</label>
+                        <select id="circuit-kind" class="form-select" @bind="newKind">
+                            @foreach (var kind in CircuitKinds.All)
+                            {
+                                <option value="@kind">@CircuitKinds.Label(kind)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="circuit-rows">Huecos (filas × columnas)</label>
+                        <span class="circuits-table__grid">
+                            <input id="circuit-rows" type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control" aria-label="Filas" @bind="newRows" />
+                            ×
+                            <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control" aria-label="Columnas" @bind="newColumns" />
+                        </span>
+                    </div>
+                    <div class="lot-editor__field">
                         <label class="form-label mb-1" for="circuit-liters">Tanque (litros)</label>
                         <input id="circuit-liters" type="number" min="1" max="@ControlContract.MaxReservoirLiters" step="1"
                                class="form-control" @bind="newLiters" />
@@ -213,6 +265,16 @@
         white-space: nowrap;
     }
 
+    .circuits-table__grid {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .circuits-table__grid input {
+        width: 70px;
+    }
+
     .circuits-table__liters {
         width: 90px;
         margin-left: auto;
@@ -251,11 +313,17 @@
     private int newGreenhouseId;
     private string? newName;
     private decimal newLiters = ControlContract.DefaultReservoirLiters;
+    private string newKind = CircuitKinds.Dense;
+    private int newRows = Models.Circuit.DefaultGridRows;
+    private int newColumns = Models.Circuit.DefaultGridColumns;
 
     private int? editingId;
     private string? editName;
     private decimal editLiters;
     private bool editActive;
+    private string editKind = CircuitKinds.Dense;
+    private int editRows;
+    private int editColumns;
 
     private bool ManyGreenhouses => circuits?.Select(c => c.GreenhouseId).Distinct().Count() > 1;
 
@@ -290,7 +358,7 @@
         savedMessage = null;
         try
         {
-            var result = await CircuitService.CreateAsync(newGreenhouseId, newName, newLiters, user);
+            var result = await CircuitService.CreateAsync(newGreenhouseId, newName, newLiters, user, newKind, newRows, newColumns);
             errors = result.Errors;
             if (result.Succeeded)
             {
@@ -315,6 +383,9 @@
         editName = circuit.Name;
         editLiters = circuit.ReservoirLiters;
         editActive = circuit.IsActive;
+        editKind = circuit.Kind;
+        editRows = circuit.GridRows;
+        editColumns = circuit.GridColumns;
         errors = [];
         savedMessage = null;
     }
@@ -332,7 +403,7 @@
         saving = true;
         try
         {
-            var result = await CircuitService.UpdateAsync(id, editName, editLiters, editActive, user);
+            var result = await CircuitService.UpdateAsync(id, editName, editLiters, editActive, user, editKind, editRows, editColumns);
             errors = result.Errors;
             if (result.Succeeded)
             {

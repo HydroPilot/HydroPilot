@@ -187,7 +187,8 @@ public sealed record SimulationCostBreakdown(
     int CycleDays, // días de la siembra al último corte de la estrategia
     int Seeds,     // plantas del lote (todas) o del escenario
     NutrientUsage? Usage, // agua y nutrientes del ciclo; null = sin fecha de corte
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    int Transplanted = 0); // plantas trasplantadas a Adultas en el ciclo
 
 /// <summary>
 /// Resultado de una estrategia: cuántas plantas van a cada destino y cuántas se prevé perder,
@@ -207,9 +208,10 @@ public sealed record SimulationStrategyOutcome(
     decimal? TotalKg,
     decimal? Revenue,
     SimulationCostBreakdown Costs,
-    decimal? Margin,
+    decimal? Margin,       // ingresos − gastos del sistema − lugar ocupado por las Adultas
     decimal? CostPerKg,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    SimulationSpaceCost? Space = null); // lugar ocupado por las Adultas (con trasplante)
 
 /// <summary>Resultado completo de una simulación preview (SIM-02: un único resultado por corrida).</summary>
 public sealed record SimulationResult(
