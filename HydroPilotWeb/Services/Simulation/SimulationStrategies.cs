@@ -14,7 +14,7 @@ namespace HydroPilotWeb.Services.Simulation;
 /// <item>Gastos del sistema = semillas + nutrientes (según plantas vivas y etapa, <see cref="NutrientConsumptionRules"/>),
 /// de la siembra al último corte; margen sobre gastos del sistema = ingresos − esos gastos.</item>
 /// </list>
-/// Estrategias: "Máximo Baby Leaf", "Meta Baby Leaf (X %)" (si hay meta) y "Todo convencional".
+/// Estrategias: "Máximo Baby Leaf", "Meta Baby Leaf (X %)" (si hay meta) y "Todo adulta".
 /// Lógica pura, testeable sin I/O.
 /// </summary>
 public static class SimulationStrategies
@@ -54,7 +54,7 @@ public static class SimulationStrategies
             strategies.Add(Strategy(SimulationStrategyKind.BabyLeafGoal, $"Meta Baby Leaf ({goal:0.#} %)",
                 input, babyLeafCut, conventionalCut));
         }
-        strategies.Add(Strategy(SimulationStrategyKind.AllConventional, "Todo convencional", input, babyLeafCut, conventionalCut));
+        strategies.Add(Strategy(SimulationStrategyKind.AllConventional, "Todo adulta", input, babyLeafCut, conventionalCut));
         return strategies;
     }
 
@@ -131,9 +131,9 @@ public static class SimulationStrategies
                 : "Sin proyección de GDD para estimar el corte Baby Leaf.");
         }
         if (usesConventional && conventionalCut.Date is null)
-            warnings.Add("Sin proyección de GDD para estimar el corte convencional.");
+            warnings.Add("Sin proyección de GDD para estimar el corte de adultas.");
         if (usesConventional && conventionalCut.IsOverdue)
-            warnings.Add("El lote ya pasó la sobremadurez: el corte convencional sería ahora, fuera de la ventana.");
+            warnings.Add("El lote ya pasó la sobremadurez: el corte de adultas sería ahora, fuera de la ventana.");
         if (babyLeafPlants + conventionalPlants == 0)
             warnings.Add("No hay plantas para cosechar en el escenario.");
 

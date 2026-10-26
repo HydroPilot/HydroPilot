@@ -27,6 +27,21 @@ public class AnomalyEvaluatorTests
     }
 
     [Fact]
+    public void Peak_EsLaLecturaMasLejanaDeLaBanda()
+    {
+        // Abajo de la banda (5,8–6,2): el pico es el mínimo; arriba, el máximo.
+        Assert.Equal(4.9m, AnomalyEvaluator.Peak(5.5m, 4.9m, PhBand));
+        Assert.Equal(4.9m, AnomalyEvaluator.Peak(4.9m, 5.5m, PhBand));
+        Assert.Equal(7.1m, AnomalyEvaluator.Peak(6.4m, 7.1m, PhBand));
+        Assert.Equal(6.4m, AnomalyEvaluator.Peak(null, 6.4m, PhBand));
+
+        var below = new AnomalySegment(SegmentKind.OutOfBand, T(10), T(8), 3, 5.5m, 5.6m, MinValue: 5.1m, MaxValue: 5.6m);
+        Assert.Equal(5.1m, AnomalyEvaluator.Peak(below, PhBand));
+        var above = new AnomalySegment(SegmentKind.OutOfBand, T(10), T(8), 3, 6.4m, 6.3m, MinValue: 6.3m, MaxValue: 6.9m);
+        Assert.Equal(6.9m, AnomalyEvaluator.Peak(above, PhBand));
+    }
+
+    [Fact]
     public void IsOutOfBand_WithoutBand_NeverFires()
     {
         // Banda null = regla pendiente (sin umbral aprobado): ningún valor es "fuera de banda".

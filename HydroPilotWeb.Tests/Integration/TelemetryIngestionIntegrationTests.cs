@@ -38,15 +38,12 @@ public class TelemetryIngestionIntegrationTests
 
         var nodeId = await IntegrationTestHelpers.NodeIdAsync(reset);
 
-        // Limpia asignaciones y crea una propia con ventana abierta.
-        reset.NodeLotAssignments.RemoveRange(reset.NodeLotAssignments);
+        // Limpia asignaciones y planta el lote en el circuito de las sondas con ventana abierta.
+        reset.CircuitAssignments.RemoveRange(reset.CircuitAssignments);
         await reset.SaveChangesAsync();
         var lot = await reset.Lots.OrderBy(l => l.Id).FirstAsync();
-        var assignmentService = new NodeLotAssignmentService(_fixture.Factory);
-        var created = await assignmentService.CreateAsync(
-            nodeId, lot.Id, IntegrationTestHelpers.NowUtc.AddDays(-30), null,
-            TelemetryContract.AssignmentSourceFixture, default);
-        Assert.Null(created.Error);
+        await IntegrationTestHelpers.AssignAsync(reset, await IntegrationTestHelpers.CircuitIdAsync(reset), lot.Id,
+            IntegrationTestHelpers.NowUtc.AddDays(-30));
 
         var ingestion = CreateIngestion();
         var envelope = IntegrationTestHelpers.Envelope("b-valid-1",
@@ -62,19 +59,28 @@ public class TelemetryIngestionIntegrationTests
         {
             Assert.Equal(TelemetryContract.ResultAceptada, r.Result);
             Assert.Equal(TelemetryContract.QualityValid, r.Quality);
+        });
+        // pH y CE van al lote del circuito; temperatura y humedad son del invernadero (sin lote).
+        Assert.All(outcome.Readings!.Where(r => r.SensorRef is "ph-solucion" or "ec-solucion"), r =>
+        {
             Assert.True(r.Assigned);
             Assert.Equal(TelemetryContract.AssignmentStateAsignado, r.AssignmentState);
+        });
+        Assert.All(outcome.Readings!.Where(r => r.SensorRef is "temp-ambiente" or "hum-ambiente"), r =>
+        {
+            Assert.False(r.Assigned);
+            Assert.Null(r.LotId);
+            Assert.Equal(TelemetryContract.AssignmentStateInvernadero, r.AssignmentState);
         });
 
         await using var verify = _fixture.Factory.CreateDbContext();
         Assert.Equal(4, await verify.SensorReadings.CountAsync());
         Assert.All(await verify.SensorReadings.ToListAsync(), r =>
         {
-            Assert.Equal(lot.Id, r.LotId);
             Assert.Equal(TelemetryContract.QualityValid, r.Quality);
             Assert.Equal(TelemetryContract.ResultAceptada, r.IngestionResult);
-            Assert.Equal(TelemetryContract.AssignmentStateAsignado, r.LotId.HasValue ? TelemetryContract.AssignmentStateAsignado : null);
         });
+        Assert.Equal(2, await verify.SensorReadings.CountAsync(r => r.LotId == lot.Id && r.CircuitAssignmentId != null));
 
         Assert.NotNull(await verify.TelemetryBatches.FirstOrDefaultAsync(b => b.BatchId == "b-valid-1"));
 
@@ -271,7 +277,7 @@ public class TelemetryIngestionIntegrationTests
     {
         await using var reset = _fixture.Factory.CreateDbContext();
         await IntegrationTestHelpers.ResetTelemetryAsync(reset);
-        reset.NodeLotAssignments.RemoveRange(reset.NodeLotAssignments);
+        reset.CircuitAssignments.RemoveRange(reset.CircuitAssignments);
         await reset.SaveChangesAsync();
 
         var ingestion = CreateIngestion();
@@ -292,14 +298,65 @@ public class TelemetryIngestionIntegrationTests
     }
 
     [Fact]
+    public async Task Una_Pi_con_dos_circuitos_manda_cada_lectura_al_lote_de_su_circuito()
+    {
+        await using var reset = _fixture.Factory.CreateDbContext();
+        await IntegrationTestHelpers.ResetTelemetryAsync(reset);
+        reset.CircuitAssignments.RemoveRange(reset.CircuitAssignments);
+        await reset.SaveChangesAsync();
+
+        // El seed: la Pi rpi-inv-01 maneja dos circuitos (sondas "ph-solucion" y "ph-solucion-2").
+        var first = await IntegrationTestHelpers.CircuitIdAsync(reset, "ph-solucion");
+        var second = await IntegrationTestHelpers.CircuitIdAsync(reset, "ph-solucion-2");
+        Assert.NotEqual(first, second);
+
+        var lotA = await reset.Lots.OrderBy(l => l.Id).FirstAsync();
+        var crop = await reset.CropTypes.FirstAsync();
+        var status = await reset.LotStatuses.FirstAsync(s => s.Name == "ACTIVO");
+        var lotB = new Lot
+        {
+            GreenhouseId = lotA.GreenhouseId,
+            CropTypeId = crop.Id,
+            StatusId = status.Id,
+            SowingDate = DateOnly.FromDateTime(IntegrationTestHelpers.NowUtc.AddDays(-5)),
+            PlantedAreaM2 = 0m,
+        };
+        reset.Lots.Add(lotB);
+        await reset.SaveChangesAsync();
+        await IntegrationTestHelpers.AssignAsync(reset, first, lotA.Id, IntegrationTestHelpers.NowUtc.AddDays(-30));
+        await IntegrationTestHelpers.AssignAsync(reset, second, lotB.Id, IntegrationTestHelpers.NowUtc.AddDays(-5));
+
+        var trigger = new HydroPilotWeb.Services.Control.ControlTrigger();
+        var ingestion = new TelemetryIngestionService(_fixture.Factory, new TelemetryValidationService(Options.Create(new TelemetryOptions())),
+            Options.Create(new TelemetryOptions()), Microsoft.Extensions.Logging.Abstractions.NullLogger<TelemetryIngestionService>.Instance, trigger);
+        var outcome = await ingestion.IngestAsync(IntegrationTestHelpers.Envelope("b-two-circuits",
+            IntegrationTestHelpers.R("r-a", "ph-solucion", 6.0m, unit: "pH"),
+            IntegrationTestHelpers.R("r-b", "ph-solucion-2", 6.2m, unit: "pH"),
+            IntegrationTestHelpers.R("r-t", "temp-ambiente", 22m, unit: "°C")), default);
+
+        Assert.Equal(IngestBatchStatus.Processed, outcome.Status);
+        var byRef = outcome.Readings!.ToDictionary(r => r.SensorRef);
+        Assert.Equal(lotA.Id, byRef["ph-solucion"].LotId);
+        Assert.Equal(lotB.Id, byRef["ph-solucion-2"].LotId);
+        Assert.Null(byRef["temp-ambiente"].LotId);
+        Assert.Equal(TelemetryContract.AssignmentStateInvernadero, byRef["temp-ambiente"].AssignmentState);
+
+        // El control evalúa el tanque de cada circuito que recibió pH.
+        var circuits = new HashSet<int>();
+        while (trigger.Reader.TryRead(out var circuitId))
+            circuits.Add(circuitId);
+        Assert.Equal(new HashSet<int> { first, second }, circuits);
+    }
+
+    [Fact]
     public async Task Asignacion_temporal_se_resuelve_por_fecha_de_observacion()
     {
         await using var reset = _fixture.Factory.CreateDbContext();
         await IntegrationTestHelpers.ResetTelemetryAsync(reset);
-        reset.NodeLotAssignments.RemoveRange(reset.NodeLotAssignments);
+        reset.CircuitAssignments.RemoveRange(reset.CircuitAssignments);
         await reset.SaveChangesAsync();
 
-        var nodeId = await IntegrationTestHelpers.NodeIdAsync(reset);
+        var circuitId = await IntegrationTestHelpers.CircuitIdAsync(reset);
         var firstLot = await reset.Lots.OrderBy(l => l.Id).FirstAsync();
 
         // Fixture necesita 2 lotes para probar la ventana temporal; crea el segundo.
@@ -317,11 +374,9 @@ public class TelemetryIngestionIntegrationTests
         await reset.SaveChangesAsync();
         var lots = new[] { firstLot, secondLot };
 
-        var assignmentService = new NodeLotAssignmentService(_fixture.Factory);
-        Assert.Null((await assignmentService.CreateAsync(nodeId, lots[0].Id,
-            IntegrationTestHelpers.NowUtc.AddDays(-30), IntegrationTestHelpers.NowUtc.AddDays(-10), "fixture", default)).Error);
-        Assert.Null((await assignmentService.CreateAsync(nodeId, lots[1].Id,
-            IntegrationTestHelpers.NowUtc.AddDays(-10), null, "fixture", default)).Error);
+        await IntegrationTestHelpers.AssignAsync(reset, circuitId, lots[0].Id,
+            IntegrationTestHelpers.NowUtc.AddDays(-30), IntegrationTestHelpers.NowUtc.AddDays(-10));
+        await IntegrationTestHelpers.AssignAsync(reset, circuitId, lots[1].Id, IntegrationTestHelpers.NowUtc.AddDays(-10));
 
         var ingestion = CreateIngestion();
         var duringFirst = IntegrationTestHelpers.Envelope("b-asig-a",

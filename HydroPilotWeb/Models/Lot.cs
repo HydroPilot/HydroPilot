@@ -8,6 +8,9 @@ public class Lot
 
     public int GreenhouseId { get; set; }
 
+    /// <summary>Circuito donde se plantó (null en lotes viejos sin circuito).</summary>
+    public int? CircuitId { get; set; }
+
     public int CropTypeId { get; set; }
 
     /// <summary>Estado operativo del lote (catalogo LotStatus: ACTIVO/COSECHADO/DESCARTADO/EN_PAUSA).</summary>
@@ -57,7 +60,7 @@ public class Lot
     public bool IsCommercialStageMixed { get; set; }
 
     /// <summary>
-    /// Porcentaje configurable (0-100) de plantas "Baby Leaf apta" para declarar la
+    /// Porcentaje configurable (0-100) de plantas "Baby Leaf" para declarar la
     /// cosecha del lote (regla híbrida GDD + porcentaje). Null = decisión pendiente:
     /// NO se reemplaza por una constante oculta; la vista expone la advertencia.
     /// </summary>
@@ -70,8 +73,11 @@ public class Lot
     /// </summary>
     public decimal? BabyLeafGoalPercent { get; set; }
 
-    /// <summary>Meta del ciclo (0-100): % máximo de plantas descartadas tolerado. Null = sin meta definida.</summary>
-    public decimal? MaxLossPercent { get; set; }
+    /// <summary>
+    /// Meta del ciclo (0-100): % de las plantas del lote que se espera que lleguen al final sin
+    /// descartarse (siguen activas o ya se cosecharon). Null = sin meta definida.
+    /// </summary>
+    public decimal? ExpectedActivePercent { get; set; }
 
     // --- Referencia guardada al cosechar el lote: pesos y precios vigentes ese día ---
     // Los parámetros del sistema cambian con el tiempo; el rendimiento real del ciclo se valoriza con
@@ -110,6 +116,7 @@ public class Lot
     public decimal? CycleAverageDailyGdd { get; set; }
 
     public Greenhouse? Greenhouse { get; set; }
+    public Circuit? Circuit { get; set; }
     public CropType? CropType { get; set; }
     public LotStatus? Status { get; set; }
     public PhenologicalStage? AppliedPhenologicalStage { get; set; }

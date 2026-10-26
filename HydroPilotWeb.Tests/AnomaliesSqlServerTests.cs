@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Services.Anomalies;
+using HydroPilotWeb.Services.SensorFaults;
 
 namespace HydroPilotWeb.Tests;
 
@@ -63,6 +64,29 @@ public class AnomaliesSqlServerTests
         Assert.Equal(AnomalyContract.SeverityCritica, ev.Severity);
         Assert.Equal(2, ev.ReadingCount);
         Assert.Equal(6.0m, ev.TargetValue); // objetivo desde CropType
+        Assert.Equal(3.0m, ev.PeakValue);   // la peor (la más lejana de la banda), no la última
+    }
+
+    [Fact]
+    public async Task Peak_SeActualizaConLasLecturasNuevasDelEpisodio()
+    {
+        await using var context = _fixture.NewContext();
+        var lot = await AnomaliesSqlFixture.CreateActiveLotAsync(context, "Lote pico");
+        var ph = await AnomaliesSqlFixture.GetSensorAsync(context, "pH");
+
+        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 4.0m, Ago(10), "peak-a");
+        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 4.2m, Ago(9), "peak-b");
+        var service = _fixture.NewEventService();
+        await service.SweepAsync(CancellationToken.None);
+
+        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.6m, Ago(8), "peak-c");
+        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 4.4m, Ago(7), "peak-d");
+        await service.SweepAsync(CancellationToken.None);
+
+        var ev = await context.AnomalyEvents.AsNoTracking().SingleAsync(e => e.LotId == lot.Id);
+        Assert.Equal(4, ev.ReadingCount);
+        Assert.Equal(4.4m, ev.ObservedValue);
+        Assert.Equal(3.6m, ev.PeakValue);
     }
 
     [Fact]
@@ -132,6 +156,51 @@ public class AnomaliesSqlServerTests
     // ---------------------------------------------------------------------------
     // ANO-04: recuperación, cooldown y lote finalizado
     // ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ErrorDeSensor_SusLecturasNoAbrenEpisodioDeSolucion()
+    {
+        await using var context = _fixture.NewContext();
+        var lot = await AnomaliesSqlFixture.CreateActiveLotAsync(context, "Lote error de sensor");
+        var ph = await AnomaliesSqlFixture.GetSensorAsync(context, "pH");
+
+        // La sonda marca 3,0 y 3,05 y hay un error de sensor abierto desde la primera (misma hora que esa lectura).
+        var first = Ago(10);
+        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.0m, first, "sf-a");
+        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.05m, Ago(9), "sf-b");
+        var fault = new SensorFault
+        {
+            NodeId = ph.NodeId, SensorId = ph.Id, SensorType = AnomalyContract.SensorTypePh,
+            Kind = SensorFaultKinds.FueraDeRango, Value = 3.0m, DetectedAtUtc = first,
+        };
+        context.SensorFaults.Add(fault);
+        await context.SaveChangesAsync();
+        try
+        {
+            var service = _fixture.NewEventService();
+            await service.SweepAsync(CancellationToken.None);
+            Assert.False(await context.AnomalyEvents.AnyAsync(e => e.LotId == lot.Id));
+
+            // Alguien lo resolvió: las lecturas del lapso del error siguen sin contar; las de después, sí.
+            fault.ResolvedAtUtc = Ago(8);
+            fault.ResolvedBy = "tester";
+            await context.SaveChangesAsync();
+            await service.SweepAsync(CancellationToken.None);
+            Assert.False(await context.AnomalyEvents.AnyAsync(e => e.LotId == lot.Id));
+
+            await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.1m, Ago(7), "sf-c");
+            await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.15m, Ago(6), "sf-d");
+            await service.SweepAsync(CancellationToken.None);
+
+            var ev = await context.AnomalyEvents.SingleAsync(e => e.LotId == lot.Id);
+            Assert.Equal(AnomalyContract.StatusAbierta, ev.Status);
+            Assert.Equal(2, ev.ReadingCount);
+        }
+        finally
+        {
+            await context.SensorFaults.Where(f => f.SensorId == ph.Id).ExecuteDeleteAsync();
+        }
+    }
 
     [Fact]
     public async Task NormalConsecutiveReadings_ResolveEpisode()
@@ -314,32 +383,8 @@ public class AnomaliesSqlServerTests
         Assert.Empty(await provider.GetActiveRisksAsync(lot.Id));
     }
 
-    [Fact]
-    public async Task RiskCount_IsExposedPerLot_WithoutInventedLotThreshold()
-    {
-        await using var context = _fixture.NewContext();
-        var lot = await AnomaliesSqlFixture.CreateActiveLotAsync(context, "Lote conteo riesgo");
-        var ph = await AnomaliesSqlFixture.GetSensorAsync(context, "pH");
-        await AnomaliesSqlFixture.AddPlantAsync(context, lot, 1, 1);
-
-        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.0m, Ago(20), "cnt-a");
-        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.1m, Ago(19), "cnt-b");
-        await _fixture.NewEventService().SweepAsync(CancellationToken.None);
-
-        var query = _fixture.NewQueryService();
-        var summaries = await query.GetLotRiskSummariesAsync();
-        var lotSummary = summaries.Single(s => s.LotId == lot.Id);
-
-        // ANO-08: se muestra el conteo (1 planta activa en riesgo); NO se genera un
-        // evento de lote automático (no hay umbral aprobado para eso).
-        Assert.Equal(1, lotSummary.ActivePlants);
-        Assert.Equal(1, lotSummary.PlantsAtRisk);
-        Assert.Equal(1, lotSummary.OpenCriticalEpisodes);
-        Assert.NotNull(lotSummary.RiskReason);
-    }
-
     // ---------------------------------------------------------------------------
-    // ANO-05: consultas de la UI (timeline, filtros, contadores)
+    // Consultas: episodios por lote / nodo y filtros; reglas para Parámetros
     // ---------------------------------------------------------------------------
 
     [Fact]
@@ -377,9 +422,10 @@ public class AnomaliesSqlServerTests
         var resolvedOnly = await query.GetTimelineAsync(new AnomalyFilter(null, null, null, AnomalyContract.StatusResuelta, null, null));
         Assert.DoesNotContain(resolvedOnly, e => e.LotId == lotA.Id || e.LotId == lotB.Id);
 
-        var summary = await query.GetSummaryAsync();
-        Assert.True(summary.OpenCritical >= 2); // mínimo: este test sumó 2 críticas
-        Assert.True(summary.HasOperationalData);
+        // Optimización: los episodios del nodo (vía sensor), con el mismo contrato.
+        var byNode = await query.GetTimelineAsync(new AnomalyFilter(null, null, null, null, null, null, NodeId: ph.NodeId));
+        Assert.Contains(byNode, e => e.Id == single.Id);
+        Assert.DoesNotContain(await query.GetTimelineAsync(new AnomalyFilter(null, null, null, null, null, null, NodeId: -1)), e => e.Id == single.Id);
 
         // El contrato del evento cubre lote/sensor/regla/valores/estado (plan 02).
         Assert.NotNull(single.LotName);
@@ -388,6 +434,24 @@ public class AnomaliesSqlServerTests
         Assert.Equal(3.1m, single.ObservedValue);
         Assert.Equal(5.8m, single.OperationalMin);
         Assert.Equal(6.2m, single.OperationalMax);
+    }
+
+    [Fact]
+    public async Task Reglas_Para_Parametros_Con_Banda_De_Cultivo_Y_Por_Etapa()
+    {
+        var rules = await _fixture.NewQueryService().GetRulesAsync();
+
+        var ph = rules.Single(r => r.SensorTypeName == AnomalyContract.SensorTypePh);
+        Assert.True(ph.Active);
+        Assert.Null(Assert.Single(ph.Bands).Stage);                 // una banda para todo el ciclo
+
+        var ce = rules.Single(r => r.SensorTypeName == AnomalyContract.SensorTypeCe);
+        Assert.True(ce.Bands.Count >= 1);
+        Assert.All(ce.Bands, b => Assert.NotNull(b.Stage));           // una por etapa fenológica
+
+        var temperature = rules.Single(r => r.SensorTypeName == AnomalyContract.SensorTypeTemperatura);
+        Assert.False(temperature.Active);                             // sin umbral aprobado: no se evalúa
+        Assert.Empty(temperature.Bands);
     }
 
     [Fact]

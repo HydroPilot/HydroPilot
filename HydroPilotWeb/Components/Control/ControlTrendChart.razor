@@ -1,0 +1,142 @@
+@using System.Globalization
+@using HydroPilotWeb.Components.Lotes
+@using HydroPilotWeb.Models.Control
+@using HydroPilotWeb.Services.Anomalies
+@using HydroPilotWeb.Services.Control
+
+@* Tendencia de pH o CE: la banda del lote (sombreada), donde actúa el motor (punteada), el objetivo, las lecturas y
+   cada dosis (▲ sube, ▼ baja; hueca si no llegó al tanque). La lógica está en notas/ux/logica-vista-control.md. *@
+
+<figure class="ctl-trend">
+    <figcaption class="ctl-trend__head">
+        <span class="ctl-trend__label">@Series.Parameter</span>
+        @if (Series.Points.Count > 0)
+        {
+            <strong class="ctl-trend__value">@Value(Series.Points[^1].Value)</strong>
+        }
+        <span class="ctl-trend__doses">@DosesText</span>
+    </figcaption>
+
+    @if (Series.Points.Count == 0)
+    {
+        <div class="ctl-trend__empty">Sin lecturas en la ventana.</div>
+    }
+    else
+    {
+        <svg class="ctl-trend__svg" viewBox="0 0 @W @H" role="img" aria-label="Tendencia de @Series.Parameter">
+            @if (Series.Band is { Min: { } min, Max: { } max })
+            {
+                <g>
+                    <rect class="ctl-trend__band" x="@N(Left)" y="@N(Y(max))" width="@N(PlotWidth)" height="@N(Y(min) - Y(max))" />
+                    <text class="ctl-trend__axis" x="@N(Left - 4)" y="@N(Y(max) + 3)" text-anchor="end">@Value(max)</text>
+                    <text class="ctl-trend__axis" x="@N(Left - 4)" y="@N(Y(min) + 3)" text-anchor="end">@Value(min)</text>
+                </g>
+            }
+            @if (Series.ActionBand is { Min: { } actMin, Max: { } actMax })
+            {
+                <line class="ctl-trend__action" x1="@N(Left)" x2="@N(W - Right)" y1="@N(Y(actMax))" y2="@N(Y(actMax))" />
+                <line class="ctl-trend__action" x1="@N(Left)" x2="@N(W - Right)" y1="@N(Y(actMin))" y2="@N(Y(actMin))" />
+            }
+            @if (Series.Band.Target is { } target)
+            {
+                <line class="ctl-trend__target" x1="@N(Left)" x2="@N(W - Right)" y1="@N(Y(target))" y2="@N(Y(target))" />
+            }
+
+            <polyline class="ctl-trend__line" points="@LinePoints" />
+
+            @foreach (var dose in Series.Doses)
+            {
+                var x = X(dose.AtUtc);
+                var raise = dose.Kind is ControlContract.KindPhUp or ControlContract.KindNutrient;
+                var y = raise ? H - Bottom - 2 : Top + 2;
+                var applied = dose.Status is ControlContract.StatusExecuted or ControlContract.StatusFailed or ControlContract.StatusUnconfirmed;
+                <g class="ctl-trend__dose @(applied ? null : "ctl-trend__dose--missed")" style="--dose: @Color(dose.Kind)">
+                    <line x1="@N(x)" x2="@N(x)" y1="@N(Top)" y2="@N(H - Bottom)" class="ctl-trend__dose-line" />
+                    <path d="@Triangle(x, y, raise)" />
+                    <title>@DoseTitle(dose)</title>
+                </g>
+            }
+
+            <text class="ctl-trend__axis" x="@N(Left)" y="@N(H - 4)">@Clock(From)</text>
+            <text class="ctl-trend__axis" x="@N(Left + PlotWidth / 2)" y="@N(H - 4)" text-anchor="middle">@Clock(From + (To - From) / 2)</text>
+            <text class="ctl-trend__axis" x="@N(W - Right)" y="@N(H - 4)" text-anchor="end">@Clock(To)</text>
+        </svg>
+    }
+</figure>
+
+@code {
+    [Parameter, EditorRequired] public ControlTrendSeries Series { get; set; } = null!;
+    [Parameter, EditorRequired] public DateTime From { get; set; }
+    [Parameter, EditorRequired] public DateTime To { get; set; }
+
+    private const double W = 600, H = 170, Left = 38, Right = 8, Top = 8, Bottom = 22;
+    private static double PlotWidth => W - Left - Right;
+    private static double PlotHeight => H - Top - Bottom;
+
+    private (double Min, double Max) Range
+    {
+        get
+        {
+            var values = Series.Points.Select(p => (double)p.Value)
+                .Concat(new[] { Series.Band.Min, Series.Band.Max }.Where(v => v is not null).Select(v => (double)v!.Value))
+                .ToList();
+            var min = values.Min();
+            var max = values.Max();
+            var pad = Math.Max((max - min) * 0.08, Series.Parameter == ControlContract.ParameterPh ? 0.05 : 0.03);
+            return (min - pad, max + pad);
+        }
+    }
+
+    private double X(DateTime at)
+    {
+        var span = (To - From).TotalSeconds;
+        var share = span <= 0 ? 1 : Math.Clamp((at - From).TotalSeconds / span, 0, 1);
+        return Left + share * PlotWidth;
+    }
+
+    private double Y(decimal value)
+    {
+        var (min, max) = Range;
+        return Top + (1 - ((double)value - min) / Math.Max(1e-6, max - min)) * PlotHeight;
+    }
+
+    private string LinePoints => string.Join(" ", Series.Points.Select(p => $"{N(X(p.AtUtc))},{N(Y(p.Value))}"));
+
+    private static string Triangle(double x, double y, bool up) => up
+        ? $"M {N(x - 5)} {N(y)} L {N(x + 5)} {N(y)} L {N(x)} {N(y - 8)} Z"
+        : $"M {N(x - 5)} {N(y)} L {N(x + 5)} {N(y)} L {N(x)} {N(y + 8)} Z";
+
+    private string DosesText
+    {
+        get
+        {
+            var applied = Series.Doses.Count(d => d.Status == ControlContract.StatusExecuted);
+            return applied == 0 ? "sin dosis" : applied == 1 ? "1 dosis" : $"{applied} dosis";
+        }
+    }
+
+    private static string DoseTitle(ControlTrendDose d)
+    {
+        var who = d.Source == ControlContract.SourceAuto
+            ? $"automático{(d.Strength is { } s ? $", fuerza {(s * 100m).ToString("0", LotFormat.Culture)} %" : null)}"
+            : "manual";
+        var effect = d.Effective switch { true => " · con efecto", false => " · sin efecto", _ => null };
+        var status = d.Status == ControlContract.StatusExecuted ? null : $" · {d.Status.ToLowerInvariant()}";
+        return $"{Clock(d.AtUtc)} · {d.ActuatorName} {d.Amount.ToString("0.#", LotFormat.Culture)} {d.Unit} ({who}){effect}{status}";
+    }
+
+    private static string Color(string kind) => kind switch
+    {
+        ControlContract.KindPhUp => "#7c3aed",
+        ControlContract.KindPhDown => "#e04f2b",
+        ControlContract.KindNutrient => "#0e9384",
+        ControlContract.KindWater => "#2f7dd1",
+        _ => "#94a3b8",
+    };
+
+    private static string Value(decimal value) => value.ToString("0.00", LotFormat.Culture);
+
+    private static string Clock(DateTime utc) => utc.ToLocalTime().ToString("HH:mm", LotFormat.Culture);
+
+    private static string N(double value) => value.ToString("0.#", CultureInfo.InvariantCulture);
+}

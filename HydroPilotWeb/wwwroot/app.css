@@ -52,16 +52,21 @@
   --sidebar-item-hover: rgba(255, 255, 255, 0.06);
   --sidebar-item-active: rgba(255, 255, 255, 0.1);
   --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-scrollbar: rgba(236, 253, 245, 0.22);
+  /* scroll de las listas dentro de una card: tono del texto sobre el fondo del panel */
+  --panel-scrollbar: rgba(18, 48, 43, 0.2);
 
   /* specific UI elements */
   --btn-pill-solid: linear-gradient(135deg, #16a34a 0%, var(--accent-dark) 100%);
   --status-dot: #16a34a;
   --chip-bg: rgba(18, 48, 43, 0.04);
+  --bg-picker: #ffffff;
   --row-hover: rgba(22, 163, 74, 0.03);
   --input-focus-shadow: rgba(22, 163, 74, 0.12);
 }
 
 [data-theme="dark"] {
+  --panel-scrollbar: rgba(228, 236, 246, 0.18);
   --bg-body-start: #0f1923;
   --bg-body-end: #0f1923;
   --bg-body-glow-1: transparent;
@@ -103,6 +108,7 @@
   --btn-pill-solid: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
   --status-dot: #22c55e;
   --chip-bg: rgba(255, 255, 255, 0.06);
+  --bg-picker: #1b2a3a;
   --row-hover: rgba(255, 255, 255, 0.02);
   --input-focus-shadow: rgba(34, 197, 94, 0.12);
 }
@@ -259,7 +265,34 @@ button {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    scrollbar-width: thin; /* en pantallas bajas el menú scrollea: que la barra no ocupe el riel */
+    /* En pantallas bajas el menú scrollea: barra fina, sin riel blanco y del color del menú; se ve al pasar el mouse. */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+.sidebar-nav:hover,
+.sidebar-nav:focus-within {
+    scrollbar-color: var(--sidebar-scrollbar) transparent;
+}
+
+/* Navegadores sin scrollbar-color (Safari, Chromium viejo). */
+.sidebar-nav::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track,
+.sidebar-nav::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
+}
+
+.sidebar-nav:hover::-webkit-scrollbar-thumb,
+.sidebar-nav:focus-within::-webkit-scrollbar-thumb {
+    background: var(--sidebar-scrollbar);
 }
 
 .sidebar-nav__section {
@@ -723,7 +756,7 @@ button {
 }
 
 .dashboard-secondary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
 }
 
 .anomaly-list {
@@ -797,8 +830,7 @@ button {
 
 @media (max-width: 1100px) {
     .dashboard-kpis,
-    .dashboard-main,
-    .dashboard-secondary {
+    .dashboard-main {
         grid-template-columns: 1fr;
     }
 }
@@ -1397,6 +1429,110 @@ button {
     color: var(--accent);
 }
 
+/* Acciones secundarias en pastilla clara, como los chips de filtro: Seleccionar / Seleccionar todas / Limpiar /
+   Cancelar del mapa, "+ Nuevo lote", comentarios del lote y "Calibrado hoy" del dashboard. */
+.btn.lot-select-bar__btn,
+.btn.lot-toolbar__new,
+.btn.lot-toolbar__comments,
+.btn.gh-row__action {
+    --bs-btn-border-radius: 999px;
+    --bs-btn-font-weight: 650;
+    --bs-btn-bg: var(--chip-bg);
+    --bs-btn-border-color: var(--border-input);
+    --bs-btn-color: var(--text-primary);
+    --bs-btn-hover-bg: var(--chip-bg);
+    --bs-btn-hover-border-color: var(--accent);
+    --bs-btn-hover-color: var(--accent);
+    --bs-btn-active-bg: var(--chip-bg);
+    --bs-btn-active-border-color: var(--accent);
+    --bs-btn-active-color: var(--accent);
+    --bs-btn-disabled-bg: var(--chip-bg);
+    --bs-btn-disabled-border-color: var(--border-input);
+    --bs-btn-disabled-color: var(--text-secondary);
+}
+
+.btn.lot-select-bar__btn {
+    --bs-btn-padding-x: 14px;
+}
+
+/* --- Desplegables (form-select): fondo claro como los chips y foco verde (sin el azul de Bootstrap). En
+   Chrome/Edge con select personalizable, la lista abierta también: fondo del panel, opciones redondeadas y la
+   barra fina del menú. En los demás navegadores la lista queda nativa. --- */
+.form-select {
+    background-color: var(--chip-bg);
+    border-color: var(--border-input);
+    border-radius: 10px;
+    color: var(--text-primary);
+}
+
+.form-select:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border-input));
+}
+
+.form-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.form-select:disabled {
+    background-color: var(--chip-bg);
+    opacity: 0.6;
+}
+
+@supports (appearance: base-select) {
+    .form-select,
+    .form-select::picker(select) {
+        appearance: base-select;
+    }
+
+    .form-select {
+        display: flex;
+        align-items: center;
+    }
+
+    /* La flecha es la de Bootstrap (fondo); la del select personalizable se oculta para no tener dos. */
+    .form-select::picker-icon {
+        display: none;
+    }
+
+    .form-select::picker(select) {
+        margin-block: 4px;
+        padding: 4px;
+        max-height: min(320px, 50vh);
+        overflow-y: auto;
+        border: 1px solid var(--border-input);
+        border-radius: 12px;
+        background: var(--bg-picker);
+        color: var(--text-primary);
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+        /* Como el menú: barra fina, sin riel, del tono del panel. */
+        scrollbar-width: thin;
+        scrollbar-color: var(--panel-scrollbar) transparent;
+    }
+
+    .form-select option {
+        padding: 7px 12px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+    }
+
+    .form-select option::checkmark {
+        display: none;
+    }
+
+    .form-select option:hover,
+    .form-select option:focus-visible {
+        background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+        outline: none;
+    }
+
+    .form-select option:checked {
+        background: var(--accent-bg-subtle);
+        color: var(--accent);
+        font-weight: 650;
+    }
+}
+
 /* Pestañas (Informes): la activa en verde como las acciones principales; el resto, secundarias visibles. */
 .hp-pills {
     --bs-nav-pills-link-active-bg: var(--bs-success);
@@ -1420,7 +1556,7 @@ button {
     border-color: transparent;
 }
 
-/* Tablas de datos de Bootstrap (Simulación, Optimización, Anomalías): sin el fondo oscuro
+/* Tablas de datos de Bootstrap (Simulación, Anomalías): sin el fondo oscuro
    rectangular, encabezado chico y filas con separadores suaves. hp-table-card las envuelve en una
    tarjeta con borde fino cuando no están dentro de un panel. */
 .hp-table-card {
@@ -2337,6 +2473,13 @@ button {
     width: auto;
     min-width: 240px;
     font-weight: 650;
+    border-radius: 999px;
+}
+
+@supports (appearance: base-select) {
+    .lot-toolbar__select {
+        display: inline-flex;
+    }
 }
 
 /* Cargando otro lote: el contenido anterior queda atenuado y sin clics hasta que llega el nuevo. */
@@ -2354,13 +2497,162 @@ button {
     transition: opacity 0.12s ease;
 }
 
-/* "+ Nuevo lote": misma altura que el selector de lote (se estira a la fila), verde como "Crear lote". */
-.lot-toolbar__new {
+/* "+ Nuevo lote" y comentarios: acciones secundarias en pastilla (regla común de arriba), con la altura del selector
+   de lote (se estiran a la fila). */
+.btn.lot-toolbar__new,
+.btn.lot-toolbar__comments {
     align-self: stretch;
     display: inline-flex;
     align-items: center;
-    font-weight: 650;
+    gap: 6px;
     white-space: nowrap;
+}
+
+.btn.lot-toolbar__comments {
+    margin-left: auto;
+}
+
+.lot-comments__count {
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- Modal de comentarios: campo para comentar arriba, la lista debajo --- */
+.lot-comments__new {
+    display: grid;
+    gap: 8px;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border-panel);
+}
+
+.lot-comments__new textarea {
+    min-height: 76px;
+    resize: vertical;
+}
+
+.lot-comments__new-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.lot-comments__hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.lot-comments__empty {
+    margin: 12px 0 4px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.lot-comments__list {
+    display: grid;
+    gap: 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.lot-comment {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 10px;
+}
+
+.lot-comment__avatar {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent-bg-subtle);
+    color: var(--text-link);
+    font-size: 0.75rem;
+    font-weight: 750;
+}
+
+.lot-comment__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+    flex-wrap: wrap;
+}
+
+.lot-comment__author {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.lot-comment__when {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* El tacho aparece al pasar por el comentario (en pantallas táctiles, siempre). */
+.lot-comment__delete {
+    display: inline-flex;
+    margin-left: auto;
+    padding: 4px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.lot-comment:hover .lot-comment__delete,
+.lot-comment__delete:focus-visible {
+    opacity: 1;
+}
+
+.lot-comment__delete:hover {
+    background: var(--chip-bg);
+    color: var(--bs-danger);
+}
+
+@media (hover: none) {
+    .lot-comment__delete {
+        opacity: 1;
+    }
+}
+
+.lot-comment__confirm {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.lot-comment__link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-weight: 650;
+    color: var(--text-secondary);
+}
+
+.lot-comment__link--danger {
+    color: var(--bs-danger);
+}
+
+.lot-comment__link:hover:not(:disabled) {
+    text-decoration: underline;
+}
+
+.lot-comment__text {
+    margin: 2px 0 0;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .lot-toolbar__date {
@@ -2438,68 +2730,6 @@ button.lot-chip[aria-pressed="true"] {
     flex: none;
 }
 
-.lot-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border-panel);
-    background: var(--chip-bg);
-    color: var(--text-secondary);
-    font-size: 0.82rem;
-    font-weight: 700;
-    white-space: nowrap;
-}
-
-.lot-badge--solid {
-    border-color: transparent;
-    background: var(--accent);
-    color: #ffffff;
-}
-
-.lot-badge--info {
-    background: var(--bs-info-bg-subtle);
-    border-color: var(--bs-info-border-subtle);
-    color: var(--bs-info-text-emphasis);
-}
-
-.lot-badge--warning {
-    background: var(--bs-warning-bg-subtle);
-    border-color: var(--bs-warning-border-subtle);
-    color: var(--bs-warning-text-emphasis);
-}
-
-.lot-badge--danger {
-    background: var(--bs-danger-bg-subtle);
-    border-color: var(--bs-danger-border-subtle);
-    color: var(--bs-danger-text-emphasis);
-}
-
-/* Fase del ciclo: mismos colores que los tramos de la línea de tiempo y el mapa. */
-.lot-badge--dev,
-.lot-badge--bl,
-.lot-badge--conv,
-.lot-badge--over {
-    border-color: transparent;
-    color: #ffffff;
-}
-
-.lot-badge--dev {
-    background: #2e9e4f;
-}
-
-.lot-badge--bl {
-    background: #2d7dd2;
-}
-
-.lot-badge--conv {
-    background: #8a4fd3;
-}
-
-.lot-badge--over {
-    background: #d64545;
-}
-
 .lot-link {
     padding: 0;
     border: 0;
@@ -2544,7 +2774,7 @@ button.lot-chip[aria-pressed="true"] {
     min-width: 0;
 }
 
-/* --- Cards (Ventana actual, Baby Leaf, Rendimiento, Pérdidas) --- */
+/* --- Cards (Ventana actual, Baby Leaf, Plantas activas, Rendimiento) --- */
 
 .lot-card {
     display: flex;
@@ -2566,24 +2796,15 @@ button.lot-chip[aria-pressed="true"] {
     flex-wrap: wrap;
 }
 
+/* El título se achica (y parte el texto) antes que bajar el lápiz a otra línea. */
 .lot-card__title {
+    flex: 1 1 0;
+    min-width: 0;
     margin: 0;
     font-size: 1.15rem;
     font-weight: 750;
     letter-spacing: -0.02em;
     color: var(--text-primary);
-}
-
-/* Dato al lado del título ("Pérdidas 9,1% (2/22 descartadas)"). */
-.lot-card__title-value {
-    margin-left: 4px;
-}
-
-.lot-card__title-note {
-    font-size: 0.82rem;
-    font-weight: 500;
-    letter-spacing: 0;
-    color: var(--text-secondary);
 }
 
 .lot-card__actions {
@@ -2608,30 +2829,6 @@ button.lot-chip[aria-pressed="true"] {
     color: var(--text-secondary);
 }
 
-/* KPI principal: número grande + qué significa. */
-.lot-kpi {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.lot-kpi__text {
-    font-size: 0.95rem;
-    font-weight: 650;
-    line-height: 1.3;
-    color: var(--text-primary);
-}
-
-.lot-kpi__note {
-    font-weight: 500;
-    color: var(--text-secondary);
-}
-
-.lot-kpi__action {
-    margin-left: auto;
-    align-self: flex-start;
-}
-
 /* Leyenda de una barra: cuadradito del color del tramo + cantidad con nombre. */
 .lot-legend {
     display: flex;
@@ -2654,10 +2851,88 @@ button.lot-chip[aria-pressed="true"] {
     flex: none;
 }
 
-/* Rendimiento: dos mitades (actual | potencial), cada una con kg y $ por destino. */
+/* Rendimiento: los gráficos (actual y esperado, o el real) en una sola grilla para que todas las barras
+   compartan ancho y escala: nombre del destino | barra | kg · $ en la punta. */
 .lot-yield {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    align-items: center;
+    gap: 6px 10px;
+}
+
+.lot-yield__head {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+/* El segundo gráfico, separado del primero. */
+.lot-yield__head ~ .lot-yield__head {
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-panel);
+}
+
+.lot-yield__title {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+/* De dónde sale el esperado ("histórico de 7 lotes", "60% histórico · 40% lote"). */
+.lot-yield__basis {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.lot-yield__total {
+    font-size: 0.85rem;
+    font-weight: 700;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.lot-yield__name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+
+/* La línea de base (a la izquierda) es el cero de la escala. */
+.lot-yield__track {
+    display: flex;
+    align-items: center;
+    height: 16px;
+    border-left: 1px solid color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+/* Barra fina, punta redondeada y base recta. */
+.lot-yield__bar {
+    height: 12px;
+    border-radius: 0 4px 4px 0;
+}
+
+.lot-yield__bar--some {
+    min-width: 3px;
+}
+
+.lot-yield__value {
+    font-size: 0.82rem;
+    white-space: nowrap;
+    text-align: right;
+    color: var(--text-secondary);
+}
+
+.lot-yield__value strong {
+    font-weight: 750;
+    color: var(--text-primary);
 }
 
 /* Pie del mapa: ayuda y cosecha masiva. */
@@ -2668,99 +2943,6 @@ button.lot-chip[aria-pressed="true"] {
     gap: 10px;
     flex-wrap: wrap;
     margin-top: 10px;
-}
-
-.lot-map-foot__actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-/* Botón de cosecha convencional: violeta, el color del destino en el mapa. */
-.lot-btn-conv {
-    border-color: #8a4fd3;
-    background: #8a4fd3;
-    color: #ffffff;
-}
-
-.lot-btn-conv:hover:not(:disabled),
-.lot-btn-conv:focus-visible {
-    border-color: #7440b8;
-    background: #7440b8;
-    color: #ffffff;
-}
-
-/* Ciclo cerrado: una sola columna (rendimiento real). */
-.lot-yield--single {
-    grid-template-columns: minmax(0, 1fr);
-}
-
-.lot-yield__total {
-    margin: 8px 0 0;
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-}
-
-.lot-yield__total strong {
-    color: var(--text-primary);
-}
-
-.lot-yield__col {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-    padding-right: 12px;
-}
-
-.lot-yield__col + .lot-yield__col {
-    padding: 0 0 0 12px;
-    border-left: 1px solid var(--border-panel);
-}
-
-/* Baby Leaf | Convencional, uno al lado del otro dentro de cada mitad. */
-.lot-yield__lines {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.lot-yield__line {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-width: 0;
-}
-
-.lot-yield__dest {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.78rem;
-    white-space: nowrap;
-    color: var(--text-secondary);
-}
-
-.lot-yield__kg {
-    font-size: 1.1rem;
-    font-weight: 750;
-    line-height: 1.2;
-    white-space: nowrap;
-    color: var(--text-primary);
-}
-
-.lot-yield__money {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-/* Pie de card con dos datos (Meta del ciclo / Potencial). */
-.lot-stats {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding-top: 12px;
-    border-top: 1px solid var(--border-panel);
 }
 
 .lot-stat {
@@ -2791,34 +2973,12 @@ button.lot-chip[aria-pressed="true"] {
     color: var(--text-primary);
 }
 
-.lot-stat__value small {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-.lot-stat__value--success {
-    color: var(--accent);
-}
-
-.lot-stat__value--warning {
-    color: var(--bs-warning-text-emphasis);
-}
-
-.lot-stat__value--danger {
-    color: var(--bs-danger-text-emphasis);
-}
-
-.lot-stat__value--muted {
-    color: var(--text-secondary);
-}
-
 .lot-stat__hint {
     font-size: 0.8rem;
     color: var(--text-secondary);
 }
 
-/* --- Barras de progreso con marcador (meta / máximo) --- */
+/* --- Barras de progreso con marcador (meta / esperado) --- */
 .lot-progress {
     position: relative;
     height: 10px;
@@ -2843,14 +3003,16 @@ button.lot-chip[aria-pressed="true"] {
     height: 100%;
 }
 
+/* Raya de la meta, con --pos = % de la barra. Queda entera adentro de la barra, también con la meta en
+   0 % o 100 % (centrada en el %, salvo en los bordes). */
 .lot-progress__marker {
     position: absolute;
     top: -5px;
+    left: clamp(0px, calc(var(--pos) * 1% - 1.5px), calc(100% - 3px));
     width: 3px;
     height: calc(100% + 10px);
     border-radius: 2px;
     background: var(--text-primary);
-    transform: translateX(-1px);
 }
 
 .lot-seg--striped {
@@ -2868,7 +3030,7 @@ button.lot-chip[aria-pressed="true"] {
     color: var(--text-secondary);
 }
 
-/* Etiqueta de un marcador (meta / máximo), con --pos = posición en % de la raya.
+/* Etiqueta de un marcador (meta / esperado), con --pos = posición en % de la raya.
    Queda centrada en la raya; si no entra, se corre lo justo para no salirse:
    desplazamiento = clamp(0, pos − mitad de la etiqueta, ancho − etiqueta). */
 .lot-bar-labels__goal {
@@ -2880,6 +3042,12 @@ button.lot-chip[aria-pressed="true"] {
     transform: translateX(clamp(0px, calc(var(--pos) * 1cqw - 50%), calc(100cqw - 100%)));
 }
 
+/* Barra de la meta Baby Leaf: la barra apilada (como la del mapa) con la raya de la meta encima. */
+.lot-goalbar {
+    position: relative;
+    margin: 6px 0 2px;
+}
+
 /* --- Barra apilada de estados (todas las plantas) --- */
 .lot-stack {
     display: flex;
@@ -2887,6 +3055,16 @@ button.lot-chip[aria-pressed="true"] {
     border-radius: 10px;
     overflow: hidden;
     background: var(--chip-bg);
+}
+
+/* Rótulo único sobre varios tramos (todas las plantas activas, en riesgo incluidas). */
+.lot-stack__over {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 26px;
+    color: #fff;
+    pointer-events: none;
 }
 
 /* Cada tramo es un contenedor: el % se oculta solo si no entra en su ancho real. */
@@ -2912,6 +3090,55 @@ button.lot-chip[aria-pressed="true"] {
 @container (max-width: 38px) {
     .lot-stack__pct--long {
         display: none;
+    }
+}
+
+/* Barra Baby Leaf: "% (cantidad)" si entra en el tramo; si no, solo el %; si tampoco, nada. */
+.lot-stack__short {
+    display: none;
+}
+
+@container (max-width: 66px) {
+    .lot-stack__full {
+        display: none;
+    }
+
+    .lot-stack__short {
+        display: inline;
+    }
+}
+
+/* "36,4% (27)" no entra donde sí entra "45% (9)". */
+@container (max-width: 82px) {
+    .lot-stack__full--long {
+        display: none;
+    }
+
+    .lot-stack__full--long + .lot-stack__short {
+        display: inline;
+    }
+}
+
+/* Barra de plantas activas: "93,3% (56 plantas)" pide más lugar que "38,3% (23)". */
+@container (max-width: 130px) {
+    .lot-stack__full--plants {
+        display: none;
+    }
+
+    .lot-stack__full--plants + .lot-stack__short {
+        display: inline;
+    }
+}
+
+@container (max-width: 30px) {
+    .lot-stack__short {
+        display: none !important;
+    }
+}
+
+@container (max-width: 40px) {
+    .lot-stack__short--long {
+        display: none !important;
     }
 }
 
@@ -2995,61 +3222,97 @@ button.lot-chip[aria-pressed="true"] {
     color: var(--text-secondary);
 }
 
-/* Óptimos de corte: rombo sobre el borde inferior de la barra (22px de padding + 26px
-   de barra − 5px), para no pisar el nombre del tramo en barras angostas. */
-.lot-timeline__harvest,
-.lot-timeline__harvest-icon {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    border: 2px solid #13202d;
-    border-radius: 2px;
-    background: #ffffff;
-}
-
-.lot-timeline__harvest {
+/* Cosechas estimadas: línea punteada como la de "Hoy" (22px de padding + 26px de barra: arranca 4px
+   arriba de la barra). Corta: hasta 6px debajo de la barra (si siguiera, pisaría una fecha de ventana);
+   larga: baja hasta su etiqueta, debajo de las fechas. */
+.lot-timeline__cut-line {
     position: absolute;
-    top: 43px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-    transform: translateX(-50%) rotate(45deg);
+    top: 18px;
+    height: 36px;
+    border-left: 2px dashed var(--text-secondary);
+    transform: translateX(-1px);
 }
 
-/* El óptimo que no es el próximo corte (ya pasó, o es del destino siguiente). */
-.lot-timeline__harvest--dim {
-    opacity: 0.45;
-    box-shadow: none;
+.lot-timeline__cut-line--long {
+    height: 66px;
 }
 
-.lot-timeline__harvest-icon {
-    margin: 0 2px;
-    transform: rotate(45deg);
+.lot-timeline__cut-line--long.lot-timeline__cut-line--row2 {
+    height: 100px;
 }
 
-.lot-timeline__legend {
+/* Fila de las etiquetas de cosecha (debajo de las fechas de las ventanas). 1cqw = 1% del ancho. */
+.lot-timeline__cuts {
+    position: relative;
+    container-type: inline-size;
+    height: 40px;
+    margin-top: 2px;
+}
+
+.lot-timeline__cuts--two-rows {
+    height: 74px;
+}
+
+/* Tramo de la línea dentro de la fila de etiquetas, cuando la de arriba se cortó en las fechas. */
+.lot-timeline__cut-stem {
+    position: absolute;
+    top: 0;
+    height: 8px;
+    border-left: 2px dashed var(--text-secondary);
+    transform: translateX(-1px);
+}
+
+.lot-timeline__cut-stem--row2 {
+    height: 42px;
+}
+
+/* Etiqueta centrada en su línea; cerca de un borde se corre lo justo para no salirse. */
+.lot-timeline__cut {
+    position: absolute;
+    top: 9px;
+    left: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 6px;
-    margin-top: 8px;
-    font-size: 0.8rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    transform: translateX(clamp(0px, calc(var(--pos) * 1cqw - 50%), calc(100cqw - 100%)));
+}
+
+.lot-timeline__cut--row2 {
+    top: 43px;
+}
+
+.lot-timeline__cut-what {
+    font-size: 0.72rem;
     color: var(--text-secondary);
 }
 
-.lot-timeline__legend strong {
+.lot-timeline__cut-date {
+    font-size: 0.8rem;
+    font-weight: 700;
     color: var(--text-primary);
 }
 
-.lot-timeline__legend .lot-timeline__cut-now {
+/* El corte que no es el próximo (ya pasó, o es del destino siguiente). */
+.lot-cut--dim {
+    opacity: 0.45;
+}
+
+.lot-timeline__cut.lot-cut--now .lot-timeline__cut-what {
+    font-weight: 700;
     color: var(--bs-success-text-emphasis);
 }
 
-.lot-timeline__legend .lot-timeline__overdue {
+.lot-timeline__cut.lot-cut--overdue .lot-timeline__cut-what {
+    font-weight: 700;
     color: var(--bs-danger-text-emphasis);
 }
 
 .lot-timeline__labels {
     position: relative;
     height: 18px;
-    margin-top: 10px; /* deja lugar a la punta del rombo de cosecha */
+    margin-top: 8px; /* deja lugar al final de la línea de "Hoy" */
     font-size: 0.75rem;
     color: var(--text-secondary);
 }
@@ -3110,6 +3373,24 @@ button.lot-chip[aria-pressed="true"] {
     margin: 4px 0 0;
     font-size: 0.75rem;
     color: var(--text-muted);
+}
+
+/* Campos de las metas: etiqueta, campo y aclaración comparten filas con el campo de al lado (subgrid),
+   así los campos quedan a la misma altura aunque una etiqueta o aclaración ocupe más líneas. */
+.lot-editor__field--aligned {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+    align-content: start;
+}
+
+.lot-editor__field--aligned > label {
+    align-self: end;
+}
+
+.lot-editor__field--aligned > .lot-editor__help {
+    align-self: start;
 }
 
 .lot-editor__actions {
@@ -3584,7 +3865,8 @@ button.lot-chip[aria-pressed="true"] {
     z-index: 2;
 }
 
-.lot-cell--selected {
+.lot-cell--selected,
+.lot-cell--selected:focus:not(:focus-visible) {
     outline: 3px solid var(--accent);
     outline-offset: 1px;
 }
@@ -3599,6 +3881,65 @@ button.lot-chip[aria-pressed="true"] {
 
 .lot-cell--dim {
     opacity: 0.15;
+}
+
+/* Modo selección: la marcada lleva borde y tilde en la esquina; las que no se pueden marcar, atenuadas.
+   El :focus:not(:focus-visible) le gana a Bootstrap, que le saca el outline al botón con foco de mouse
+   (la última celda tocada quedaba sin borde hasta hacer click en otro lado). */
+.lot-cell--picked,
+.lot-cell--picked:focus:not(:focus-visible) {
+    position: relative;
+    outline: 3px solid var(--text-primary);
+    outline-offset: 1px;
+}
+
+.lot-cell--picked::after {
+    content: "✓";
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    color: var(--bg-panel);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.lot-cell--locked {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Filtros del mapa: siempre en su propia línea, debajo del título. */
+.lot-map-filters {
+    margin-bottom: 12px;
+}
+
+/* Barra de selección de plantas (debajo de los filtros, solo mientras se selecciona). */
+.lot-select-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.lot-select-bar__count {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.lot-select-bar__actions {
+    display: inline-flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-left: auto;
 }
 
 .lot-cell__label {
@@ -3772,29 +4113,21 @@ button.lot-chip[aria-pressed="true"] {
     }
 }
 
-@media (max-width: 720px) {
-    .lot-stats {
-        grid-template-columns: 1fr;
-        gap: 10px;
-    }
-
-    .lot-stat + .lot-stat {
-        padding: 10px 0 0;
-        border-left: 0;
-        border-top: 1px solid var(--border-panel);
-    }
-
+/* Celular: la barra de rendimiento quedaría muy corta; los kg y $ bajan debajo de su barra. */
+@media (max-width: 480px) {
     .lot-yield {
-        grid-template-columns: 1fr;
-        gap: 10px;
+        grid-template-columns: max-content minmax(0, 1fr);
+        row-gap: 2px;
     }
 
-    .lot-yield__col + .lot-yield__col {
-        padding: 10px 0 0;
-        border-left: 0;
-        border-top: 1px solid var(--border-panel);
+    .lot-yield__value {
+        grid-column: 1 / -1;
+        margin-bottom: 4px;
+        text-align: left;
     }
+}
 
+@media (max-width: 720px) {
     /* En pantallas chicas el detalle se muestra debajo del mapa, sin flotar. */
     .lot-popover {
         position: static;
@@ -3810,5 +4143,471 @@ button.lot-chip[aria-pressed="true"] {
 
     .lot-toolbar__date {
         margin-left: 0;
+    }
+}
+
+/* ===================================================================
+   Dashboard del invernadero (vista Invernadero, "/")
+   Izquierda: 3 cards de números, los 2 gráficos y 2 listas; derecha: 3 listas.
+   Cada lista tiene su propio scroll para no estirar la pantalla.
+   =================================================================== */
+.gh-dash {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    gap: 16px;
+}
+
+.gh-dash__main {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 16px;
+}
+
+/* Columna derecha: tan alta como la izquierda (contain: size → su contenido no la estira) y partida
+   50/50 entre Próximas cosechas y Últimos accedidos; cada lista llena su card y scrollea adentro. */
+.gh-dash__side {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
+    contain: size;
+}
+
+.gh-dash__side .gh-list-card {
+    min-height: 0;
+}
+
+.gh-dash__side .gh-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+}
+
+.gh-kpi {
+    grid-column: span 2;
+    justify-content: center;
+    gap: 2px;
+    min-height: 128px;
+}
+
+.gh-kpi__value {
+    font-size: 2.4rem;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.gh-kpi__value--accent {
+    color: var(--accent);
+}
+
+.gh-kpi__label {
+    font-size: 0.85rem;
+    font-weight: 650;
+    color: var(--text-secondary);
+}
+
+.gh-kpi__hint {
+    font-size: 0.78rem;
+}
+
+.gh-card__title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 750;
+    color: var(--text-primary);
+}
+
+.gh-chart--bars {
+    grid-column: span 4;
+}
+
+.gh-chart--donut {
+    grid-column: span 2;
+    align-items: center;
+}
+
+.gh-chart--donut .gh-card__title {
+    align-self: stretch;
+}
+
+.gh-list-card--half {
+    grid-column: span 3;
+}
+
+/* --- Barras verticales de plantas por estado ---
+   Fila 1: las barras (misma base para todas); fila 2: los nombres (subgrid, aunque uno ocupe 2 líneas). */
+.gh-bars {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: 150px auto;
+    column-gap: 8px;
+    row-gap: 6px;
+}
+
+.gh-bars__col {
+    display: grid;
+    grid-row: span 2;
+    grid-template-rows: subgrid;
+    justify-items: center;
+    min-width: 0;
+}
+
+.gh-bars__plot {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    width: 100%;
+    height: 150px;
+    border-bottom: 1px solid var(--border-input);
+}
+
+.gh-bars__value {
+    flex: none;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+    font-weight: 750;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* El largo deja lugar fijo para la cantidad (arriba o al costado): la escala es la misma para todas. */
+.gh-bars__bar {
+    flex: none;
+    width: min(36px, 70%);
+    height: calc((100% - 24px) * var(--share));
+    border-radius: 4px 4px 0 0;
+}
+
+/* Una barra con plantas siempre se ve, aunque sean pocas al lado de un estado grande. */
+.gh-bars__bar--some {
+    min-height: 3px;
+}
+
+.gh-bars__label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+/* --- Dona de Baby Leaf esperado --- */
+.gh-donut {
+    position: relative;
+    width: 150px;
+    height: 150px;
+}
+
+.gh-donut__chart {
+    width: 100%;
+    height: 100%;
+}
+
+.gh-donut__track,
+.gh-donut__value {
+    fill: none;
+    stroke-width: 18;
+}
+
+.gh-donut__track {
+    stroke: var(--chip-bg);
+}
+
+.gh-donut__center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.gh-donut__center strong {
+    font-size: 1.7rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text-primary);
+}
+
+.gh-donut__center span {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.gh-donut__caption {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* --- Listas con scroll propio --- */
+.gh-list {
+    max-height: 248px;
+    margin: 0 -8px;
+    padding: 0;
+    list-style: none;
+    overflow-y: auto;
+    /* Como el menú: barra fina, sin riel, del tono del panel; se ve al pasar el mouse (o con foco adentro). */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+.gh-list:hover,
+.gh-list:focus-within {
+    scrollbar-color: var(--panel-scrollbar) transparent;
+}
+
+/* Navegadores sin scrollbar-color (Safari, Chromium viejo). */
+.gh-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.gh-list::-webkit-scrollbar-track,
+.gh-list::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.gh-list::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
+}
+
+.gh-list:hover::-webkit-scrollbar-thumb,
+.gh-list:focus-within::-webkit-scrollbar-thumb {
+    background: var(--panel-scrollbar);
+}
+
+.gh-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 10px;
+    color: inherit;
+    text-decoration: none;
+}
+
+a.gh-row:hover,
+a.gh-row:focus-visible {
+    background: var(--chip-bg);
+    color: inherit;
+}
+
+.gh-row--resolved {
+    opacity: 0.55;
+}
+
+.gh-row__main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.gh-row__title {
+    overflow: hidden;
+    font-size: 0.88rem;
+    font-weight: 650;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text-primary);
+}
+
+.gh-row__sub {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.gh-row__sub--danger {
+    color: var(--bs-danger);
+    font-weight: 650;
+}
+
+.gh-row__when {
+    flex: none;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.gh-row__when--now {
+    font-weight: 750;
+    color: var(--accent);
+}
+
+.btn.gh-row__action {
+    flex: none;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+}
+
+.gh-empty {
+    margin: 4px 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+/* Severidad de la alerta (va con su nombre en el aria-label). */
+.gh-dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.gh-dot--critical { background: var(--bs-danger); }
+.gh-dot--high { background: #f08c2e; }
+.gh-dot--medium { background: #e8c23d; }
+.gh-dot--info { background: #8a94a0; }
+
+.gh-chip {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.gh-chip--danger {
+    background: var(--bs-danger-bg-subtle);
+    color: var(--bs-danger-text-emphasis);
+}
+
+.gh-chip--warning {
+    background: var(--bs-warning-bg-subtle);
+    color: var(--bs-warning-text-emphasis);
+}
+
+/* Fecha de la cosecha: día grande y mes abajo. */
+.gh-date {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--chip-bg);
+    line-height: 1;
+}
+
+.gh-date strong {
+    font-size: 1rem;
+    font-weight: 800;
+    color: var(--text-primary);
+}
+
+.gh-date span {
+    margin-top: 2px;
+    font-size: 0.68rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.gh-date--now {
+    background: var(--accent-bg-subtle);
+}
+
+.gh-date--now strong {
+    color: var(--accent);
+}
+
+@media (max-width: 1200px) {
+    .gh-dash {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* Abajo de todo: las listas vuelven a su alto fijo. */
+    .gh-dash__side {
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-rows: none;
+        contain: none;
+    }
+
+    .gh-dash__side .gh-list {
+        max-height: 248px;
+    }
+}
+
+@media (max-width: 720px) {
+    .gh-dash__main {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .gh-kpi {
+        grid-column: span 1;
+        min-height: 104px;
+    }
+
+    .gh-kpi:first-child {
+        grid-column: span 2;
+    }
+
+    .gh-kpi__value {
+        font-size: 1.9rem;
+    }
+
+    .gh-chart--bars,
+    .gh-chart--donut,
+    .gh-list-card--half {
+        grid-column: 1 / -1;
+    }
+
+    /* Barras horizontales: nombre a la izquierda, barra y cantidad a la derecha. */
+    .gh-bars {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        row-gap: 8px;
+    }
+
+    .gh-bars__col {
+        grid-row: auto;
+        grid-template-rows: none;
+        grid-template-columns: 104px minmax(0, 1fr);
+        grid-template-areas: "label plot";
+        align-items: center;
+        justify-items: stretch;
+        column-gap: 10px;
+    }
+
+    .gh-bars__label {
+        grid-area: label;
+        text-align: left;
+    }
+
+    .gh-bars__plot {
+        grid-area: plot;
+        flex-direction: row-reverse;
+        justify-content: flex-end;
+        height: auto;
+        border-bottom: 0;
+        border-left: 1px solid var(--border-input);
+    }
+
+    .gh-bars__bar {
+        width: calc((100% - 3.5em) * var(--share));
+        height: 12px;
+        border-radius: 0 4px 4px 0;
+    }
+
+    .gh-bars__bar--some {
+        min-width: 3px;
+    }
+
+    .gh-bars__value {
+        margin: 0 0 0 6px;
     }
 }

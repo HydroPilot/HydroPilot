@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
@@ -8,8 +9,9 @@ namespace HydroPilotWeb.Services.Lotes;
 
 /// <summary>
 /// Alta de un lote desde la vista Lotes. Sin m²: en hidroponía cada planta tiene su hueco, así que
-/// el lote se define por su grilla (filas × columnas) y se crea una planta por posición. Las metas
-/// del ciclo son opcionales: null = sin definir.
+/// el lote se define por su grilla (filas × columnas) y se crea una planta por posición. Se planta en un
+/// circuito libre del invernadero (un circuito tiene un solo lote en curso). Las metas del ciclo son
+/// opcionales: null = sin definir.
 /// </summary>
 public sealed record NewLotInput(
     string? Name,
@@ -19,12 +21,23 @@ public sealed record NewLotInput(
     int Rows,
     int Columns,
     decimal? BabyLeafGoalPercent = null,
-    decimal? MaxLossPercent = null);
+    decimal? ExpectedActivePercent = null,
+    int CircuitId = 0);
 
 public sealed record NewLotChoice(int Id, string Name);
 
-/// <summary>Opciones del formulario de alta: cultivos, invernaderos y un nombre sugerido.</summary>
-public sealed record NewLotOptions(IReadOnlyList<NewLotChoice> Crops, IReadOnlyList<NewLotChoice> Greenhouses, string SuggestedName);
+/// <summary>Circuito del alta: libre si no tiene lote en curso (CurrentLot null).</summary>
+public sealed record NewLotCircuitChoice(int Id, int GreenhouseId, string Name, string? CurrentLot)
+{
+    public bool IsFree => CurrentLot is null;
+}
+
+/// <summary>Opciones del formulario de alta: cultivos, invernaderos, circuitos y un nombre sugerido.</summary>
+public sealed record NewLotOptions(
+    IReadOnlyList<NewLotChoice> Crops,
+    IReadOnlyList<NewLotChoice> Greenhouses,
+    string SuggestedName,
+    IReadOnlyList<NewLotCircuitChoice>? Circuits = null);
 
 public sealed record NewLotResult(int? LotId, IReadOnlyList<string> Errors)
 {
@@ -49,6 +62,8 @@ public static class NewLotRules
             errors.Add("Elegí el cultivo.");
         if (input.GreenhouseId <= 0)
             errors.Add("Elegí el invernadero.");
+        if (input.CircuitId <= 0)
+            errors.Add("Elegí el circuito.");
         if (input.SowingDate > today)
             errors.Add("La fecha de siembra no puede ser futura.");
         if (input.Rows is < 1 or > MaxGridSide || input.Columns is < 1 or > MaxGridSide)
@@ -61,7 +76,7 @@ public static class NewLotRules
 
     /// <summary>Metas del ciclo del alta; el umbral de cosecha no se pide (Lotes no lo usa).</summary>
     public static LotObjectives Goals(NewLotInput input) =>
-        LotObjectivesRules.Normalize(new LotObjectives(null, input.BabyLeafGoalPercent, input.MaxLossPercent));
+        LotObjectivesRules.Normalize(new LotObjectives(null, input.BabyLeafGoalPercent, input.ExpectedActivePercent));
 }
 
 public class LotCreationService
@@ -94,6 +109,17 @@ public class LotCreationService
             .Select(g => new NewLotChoice(g.Id, g.Name))
             .ToListAsync(ct);
 
+        var circuits = await context.Circuits
+            .AsNoTracking()
+            .Where(c => c.IsActive)
+            .OrderBy(c => c.Name)
+            .Select(c => new NewLotCircuitChoice(
+                c.Id,
+                c.GreenhouseId,
+                c.Name,
+                c.Assignments.Where(a => a.ValidUntilUtc == null).Select(a => a.Lot!.Name).FirstOrDefault()))
+            .ToListAsync(ct);
+
         // Nombre sugerido: "Lote NN" con el próximo número libre.
         var names = (await context.Lots.AsNoTracking().Select(l => l.Name).ToListAsync(ct))
             .Where(n => n is not null)
@@ -102,7 +128,7 @@ public class LotCreationService
         while (names.Contains($"Lote {number:00}"))
             number++;
 
-        return new NewLotOptions(crops, greenhouses, $"Lote {number:00}");
+        return new NewLotOptions(crops, greenhouses, $"Lote {number:00}", circuits);
     }
 
     public async Task<NewLotResult> CreateAsync(NewLotInput input, ClaimsPrincipal user, CancellationToken ct = default)
@@ -124,6 +150,13 @@ public class LotCreationService
         if (!await context.Greenhouses.AnyAsync(g => g.Id == input.GreenhouseId, ct))
             return new NewLotResult(null, ["El invernadero elegido no existe."]);
 
+        var circuit = await context.Circuits.AsNoTracking().FirstOrDefaultAsync(c => c.Id == input.CircuitId && c.IsActive, ct);
+        if (circuit is null || circuit.GreenhouseId != input.GreenhouseId)
+            return new NewLotResult(null, ["El circuito elegido no existe en ese invernadero."]);
+        if (await context.CircuitAssignments.Where(a => a.CircuitId == circuit.Id && a.ValidUntilUtc == null)
+                .Select(a => a.Lot!.Name).FirstOrDefaultAsync(ct) is { } busyWith)
+            return new NewLotResult(null, [$"{circuit.Name} ya tiene un lote en curso ({busyWith})."]);
+
         var activeStatus = await context.LotStatuses.FirstOrDefaultAsync(s => s.Name == LotStatusNames.Activo, ct);
         if (activeStatus is null)
             return new NewLotResult(null, ["Falta el estado de lote ACTIVO en el catálogo."]);
@@ -137,6 +170,7 @@ public class LotCreationService
         var lot = new Lot
         {
             GreenhouseId = input.GreenhouseId,
+            CircuitId = circuit.Id,
             CropTypeId = input.CropTypeId,
             StatusId = activeStatus.Id,
             Name = name,
@@ -145,7 +179,7 @@ public class LotCreationService
             GridRows = input.Rows,
             GridColumns = input.Columns,
             BabyLeafGoalPercent = goals.BabyLeafGoalPercent,
-            MaxLossPercent = goals.MaxLossPercent,
+            ExpectedActivePercent = goals.ExpectedActivePercent,
             CreatedAt = now
         };
         for (var row = 1; row <= input.Rows; row++)
@@ -164,13 +198,34 @@ public class LotCreationService
             }
         }
 
-        // Un solo SaveChanges: el lote y sus plantas se crean juntos o no se crea nada.
+        // El lote ocupa el circuito desde la siembra (o desde que se liberó, si el anterior se cerró después):
+        // las lecturas de pH y CE del circuito van a este lote desde ahí.
+        var sowingUtc = input.SowingDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var freedAt = await context.CircuitAssignments.Where(a => a.CircuitId == circuit.Id)
+            .MaxAsync(a => a.ValidUntilUtc, ct);
+        context.CircuitAssignments.Add(new CircuitAssignment
+        {
+            CircuitId = circuit.Id,
+            Lot = lot,
+            ValidFromUtc = freedAt is { } freed && freed > sowingUtc ? freed : sowingUtc,
+            Source = TelemetryContract.AssignmentSourceManual,
+            CreatedAt = now,
+        });
+
+        // Un solo SaveChanges: el lote, sus plantas y su lugar en el circuito se crean juntos o no se crea nada.
         context.Lots.Add(lot);
-        await context.SaveChangesAsync(ct);
+        try
+        {
+            await context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
+        {
+            return new NewLotResult(null, [$"{circuit.Name} ya tiene un lote en curso."]);
+        }
 
         _logger.LogInformation(
-            "Lote {LotId} \"{Name}\" creado por {User}: {Rows}×{Columns} plantas, siembra {SowingDate}",
-            lot.Id, name, user.Identity?.Name, input.Rows, input.Columns, input.SowingDate);
+            "Lote {LotId} \"{Name}\" creado por {User} en {Circuit}: {Rows}×{Columns} plantas, siembra {SowingDate}",
+            lot.Id, name, user.Identity?.Name, circuit.Name, input.Rows, input.Columns, input.SowingDate);
 
         return new NewLotResult(lot.Id, []);
     }

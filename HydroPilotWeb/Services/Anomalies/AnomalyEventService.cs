@@ -1,5 +1,6 @@
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Services.SensorFaults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -31,6 +32,9 @@ public sealed record AnomalySweepResult(
 ///   La falta de datos NO cuenta como normalidad (los huecos nunca resuelven).
 /// - Cooldown: tras resolver, no se abre un episodio nuevo de la misma regla dentro del lapso.
 /// - Lotes COSECHADO/DESCARTADO: no se evalúan y sus episodios abiertos se resuelven (ANO-04).
+/// - Errores de sensor (fuera de lo normal o salto, ver SensorFaultRules): la lectura no es confiable, así que no
+///   cuenta para la solución. Con un error abierto, ese sensor no abre, actualiza ni resuelve episodios; resuelto,
+///   las lecturas del lapso del error siguen sin contar.
 /// </summary>
 public sealed class AnomalyEventService
 {
@@ -72,6 +76,7 @@ public sealed class AnomalyEventService
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var now = DateTime.UtcNow;
         var windowStart = now.AddHours(-_options.SweepWindowHours);
+        var untrusted = await SensorFaultRules.UntrustedPeriodsAsync(context, windowStart, ct);
 
         var created = 0; var updated = 0; var upgraded = 0;
         var resolved = 0; var cooldownSkips = 0; var rulesEvaluated = 0;
@@ -120,7 +125,13 @@ public sealed class AnomalyEventService
 
                 foreach (var group in readings.GroupBy(r => r.SensorId))
                 {
+                    // Sensor con un error abierto: sus lecturas no dicen nada de la solución hasta que alguien lo revise.
+                    var periods = untrusted.Where(p => p.SensorId == group.Key).ToList();
+                    if (periods.Any(p => p.IsOpen))
+                        continue;
+
                     var points = group
+                        .Where(g => !periods.Any(p => p.Covers(g.ObservedAtUtc)))
                         .Select(g => new AnomalyReadingPoint(g.SensorId, g.ObservedAtUtc, g.Value))
                         .ToList();
 
@@ -134,7 +145,7 @@ public sealed class AnomalyEventService
                     created += c; updated += u; upgraded += up; cooldownSkips += cs;
 
                     resolved += await ResolveRecoveredAsync(
-                        context, lot, rule, group.Key, eventsForSensor, now, ct);
+                        context, lot, rule, group.Key, eventsForSensor, periods, now, ct);
                 }
             }
         }
@@ -210,6 +221,7 @@ public sealed class AnomalyEventService
                     SensorId = sensorId,
                     Severity = critical ? AnomalyContract.SeverityCritica : AnomalyContract.SeverityAdvertencia,
                     ObservedValue = seg.LastValue,
+                    PeakValue = AnomalyEvaluator.Peak(seg, band),
                     TargetValue = band.Target,
                     OperationalMin = band.OperationalMin,
                     OperationalMax = band.OperationalMax,
@@ -229,10 +241,12 @@ public sealed class AnomalyEventService
             {
                 // Delta determinista: solo lecturas NUEVAS (posteriores a la última
                 // observación conocida) suman al conteo; re-barridos no duplican.
-                var newPoints = points.Count(p =>
-                    p.ObservedAtUtc > existing.LastObservedAtUtc
-                    && AnomalyEvaluator.IsOutOfBand(p.Value, band));
-                existing.ReadingCount += newPoints;
+                var fresh = points
+                    .Where(p => p.ObservedAtUtc > existing.LastObservedAtUtc && AnomalyEvaluator.IsOutOfBand(p.Value, band))
+                    .ToList();
+                existing.ReadingCount += fresh.Count;
+                foreach (var point in fresh)
+                    existing.PeakValue = AnomalyEvaluator.Peak(existing.PeakValue, point.Value, band);
 
                 if (seg.LastObservedAtUtc > existing.LastObservedAtUtc)
                 {
@@ -264,16 +278,23 @@ public sealed class AnomalyEventService
         ResolvedRule rule,
         int sensorId,
         List<AnomalyEvent> openEvents,
+        IReadOnlyList<UntrustedPeriod> untrusted,
         DateTime now,
         CancellationToken ct)
     {
         var resolvedCount = 0;
         foreach (var ev in openEvents)
         {
+            // Las lecturas de un error de sensor no cuentan como recuperación: se mira después de que terminó.
+            var from = ev.LastObservedAtUtc;
+            foreach (var period in untrusted)
+                if (period.ToUtc is { } to && to > from)
+                    from = to;
+
             var normals = await context.SensorReadings
                 .Where(TelemetryQualityPolicy.OperationallyUsableReading)
                 .Where(r => r.LotId == lot.Id && r.SensorId == sensorId
-                    && r.ObservedAtUtc > ev.LastObservedAtUtc
+                    && r.ObservedAtUtc > from
                     && r.Sensor != null && r.Sensor.SensorType != null
                     && r.Sensor.SensorType.Name == rule.SensorTypeName)
                 .OrderBy(r => r.ObservedAtUtc)

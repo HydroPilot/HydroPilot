@@ -3,7 +3,7 @@ namespace HydroPilotWeb.Services.Dashboard;
 /// <summary>
 /// Contrato del dashboard (plan 12, DASH-01). Snapshot inmutable por consulta:
 /// contexto de invernadero/lote, KPIs por tipo de sensor, estado de nodos por
-/// frescura, anomalías y recomendaciones (solo si tienen fuente) y la serie
+/// frescura, anomalías (solo si tienen fuente) y la serie
 /// temporal seleccionada.
 ///
 /// Reglas de ética de datos del contrato:
@@ -11,8 +11,8 @@ namespace HydroPilotWeb.Services.Dashboard;
 /// - La frescura es un estado calculado (reciente / desactualizado / sin datos),
 ///   distinto de la calidad de la lectura (VALID/SUSPECT/STALE/...).
 /// - El delta es un cálculo real contra la lectura anterior del mismo tipo.
-/// - Anomalías y recomendaciones solo se muestran cuando el módulo que las
-///   produce está integrado y devuelve datos; mientras tanto, listas vacías.
+/// - Las anomalías solo se muestran cuando el módulo que las produce está
+///   integrado y devuelve datos; mientras tanto, lista vacía.
 /// </summary>
 public static class DashboardVariableKeys
 {
@@ -213,16 +213,12 @@ public sealed record DashboardSeriesDto(
 /// <summary>Anomalía reciente (fuente: módulo de anomalías; lista vacía mientras no esté integrado).</summary>
 public sealed record DashboardAnomalyDto(string Type, string Severity, string? Detail, DateTime? FirstObservedAtUtc);
 
-/// <summary>Recomendación pendiente (fuente: módulo de optimization; lista vacía mientras no esté integrado).</summary>
-public sealed record DashboardRecommendationDto(string Type, string Priority, string? Summary);
-
 /// <summary>Snapshot completo del dashboard (DASH-01). Inmutable por consulta.</summary>
 public sealed record DashboardSnapshot(
     DashboardContextDto Context,
     IReadOnlyList<DashboardKpiDto> Kpis,
     IReadOnlyList<DashboardNodeDto> Nodes,
     IReadOnlyList<DashboardAnomalyDto> Anomalies,
-    IReadOnlyList<DashboardRecommendationDto> Recommendations,
     DashboardSeriesDto Series,
     DateTime GeneratedAtUtc);
 

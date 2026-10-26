@@ -25,20 +25,17 @@ public class TelemetryController : ControllerBase
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly TelemetryIngestionService _ingestion;
-    private readonly NodeLotAssignmentService _assignments;
     private readonly TelemetryOptions _options;
     private readonly ILogger<TelemetryController> _logger;
 
     public TelemetryController(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         TelemetryIngestionService ingestion,
-        NodeLotAssignmentService assignments,
         IOptions<TelemetryOptions> options,
         ILogger<TelemetryController> logger)
     {
         _dbFactory = dbFactory;
         _ingestion = ingestion;
-        _assignments = assignments;
         _options = options.Value;
         _logger = logger;
     }
@@ -163,7 +160,7 @@ public class TelemetryController : ControllerBase
                 r.LotId,
                 r.Lot != null ? r.Lot.CropType!.Name : null,
                 r.LotId.HasValue ? TelemetryContract.AssignmentStateAsignado : TelemetryContract.AssignmentStateSinAsignacion,
-                r.NodeLotAssignmentId
+                r.CircuitAssignmentId
             ))
             .ToListAsync(ct);
 
@@ -245,37 +242,5 @@ public class TelemetryController : ControllerBase
             .ToList();
 
         return Ok(results);
-    }
-
-    /// <summary>Lista las asignaciones temporales nodo→lote.</summary>
-    [HttpGet("asignaciones")]
-    [TypeFilter(typeof(ApiKeyOrSessionFilter))]
-    public async Task<ActionResult<IReadOnlyList<NodeLotAssignmentDto>>> GetAssignments(
-        [FromQuery] int? nodeId,
-        CancellationToken ct)
-    {
-        var list = await _assignments.ListAsync(nodeId, ct);
-        return Ok(list);
-    }
-
-    /// <summary>Crea una asignación temporal nodo→lote (sin solapamientos).</summary>
-    [HttpPost("asignaciones")]
-    [TypeFilter(typeof(ApiKeyOrSessionFilter))]
-    public async Task<ActionResult<NodeLotAssignmentDto>> CreateAssignment(
-        [FromBody] NodeLotAssignmentCreateRequest request,
-        CancellationToken ct)
-    {
-        var result = await _assignments.CreateAsync(
-            request.NodeId,
-            request.LotId,
-            request.ValidFromUtc,
-            request.ValidUntilUtc,
-            request.Source ?? TelemetryContract.AssignmentSourceManual,
-            ct);
-
-        if (result.Assignment is null)
-            return BadRequest(new TelemetryErrorDto(result.Error ?? "No se pudo crear la asignación."));
-
-        return CreatedAtAction(nameof(GetAssignments), new { nodeId = result.Assignment.NodeId }, result.Assignment);
     }
 }

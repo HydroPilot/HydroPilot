@@ -31,11 +31,6 @@
                 <path d="M11 3.5 12.8 8.2 17.5 10l-4.7 1.8L11 16.5l-1.8-4.7L4.5 10l4.7-1.8Z" />
                 <path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.7-.9-2.7-2.6-.9 2.6-.9Z" />
                 break;
-            case "anomalies":
-                <path d="M10.3 4.2 2.7 17.5A2 2 0 0 0 4.4 20.5h15.2a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
-                <path d="M12 9.5v4" />
-                <path d="M12 17h.01" />
-                break;
             case "settings/profile":
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
@@ -52,6 +47,13 @@
                 <path d="M4 17h3" />
                 <path d="M11 17h9" />
                 <circle cx="9" cy="17" r="2" />
+                break;
+            case "settings/circuitos":
+                <path d="M6 4v5a6 6 0 0 0 12 0V4" />
+                <path d="M4 4h4" />
+                <path d="M16 4h4" />
+                <path d="M12 15v5" />
+                <path d="M8 20h8" />
                 break;
             case "admin/users":
                 <circle cx="9" cy="8" r="3.5" />
@@ -73,6 +75,6 @@
     [Parameter] public string? Class { get; set; }
 
     public static bool HasIcon(string name) => name is "" or "lotes" or "reports" or "simulation" or "optimization"
-        or "anomalies" or "settings/profile" or "settings/notifications" or "notifications" or "settings/parametros"
-        or "admin/users" or "admin/mantenimiento";
+        or "settings/profile" or "settings/notifications" or "notifications" or "settings/parametros"
+        or "settings/circuitos" or "admin/users" or "admin/mantenimiento";
 }

@@ -406,7 +406,7 @@ public class ReportSqlServerTests
         var lot = await CreateLotAsync(context, cropId, ghId, rows: 2, columns: 2);
 
         await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
-        await AddPlantAsync(context, lot, 1, 2, "Baby Leaf apta", score: 88m);
+        await AddPlantAsync(context, lot, 1, 2, "Baby Leaf", score: 88m);
         // Descartada: no participa de la predominancia.
         await AddPlantAsync(context, lot, 2, 1, "Riesgo / fuera de ventana", PlantOperationalState.Descartada);
 
@@ -435,7 +435,7 @@ public class ReportSqlServerTests
         var lot = await CreateLotAsync(context, cropId, ghId, rows: 2, columns: 2);
 
         var p1 = await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
-        var p2 = await AddPlantAsync(context, lot, 2, 1, "Baby Leaf apta",
+        var p2 = await AddPlantAsync(context, lot, 2, 1, "Baby Leaf",
             PlantOperationalState.Cosechada, score: 90m);
 
         // Dos evaluaciones para p1: la última debe ganar.
@@ -510,7 +510,7 @@ public class ReportSqlServerTests
 
         var enDesarrollo = await context.CommercialStages.FirstAsync(s => s.Name == "En desarrollo");
         var candidata = await context.CommercialStages.FirstAsync(s => s.Name == "Candidata Baby Leaf");
-        var apta = await context.CommercialStages.FirstAsync(s => s.Name == "Baby Leaf apta");
+        var apta = await context.CommercialStages.FirstAsync(s => s.Name == "Baby Leaf");
 
         context.PlantStageHistories.AddRange(
             new PlantStageHistory
@@ -541,14 +541,14 @@ public class ReportSqlServerTests
         Assert.Equal(2, all.TotalRows);
         Assert.DoesNotContain(all.Rows, r => r.NewCommercialStage == enDesarrollo.Id.ToString()); // nombres, no ids
         Assert.Contains(all.Rows, r => r.NewCommercialStage == "Candidata Baby Leaf");
-        Assert.Contains(all.Rows, r => r.NewCommercialStage == "Baby Leaf apta");
+        Assert.Contains(all.Rows, r => r.NewCommercialStage == "Baby Leaf");
         Assert.Contains(all.Rows, r => r.Source == "harvest" && r.NewOperationalState == nameof(PlantOperationalState.Cosechada));
 
         var harvestOnly = await service.GetStageChangesAsync(lotId: lot.Id, source: "harvest");
         var row = Assert.Single(harvestOnly.Rows);
         Assert.Equal("harvest", row.Source);
         Assert.Equal("Candidata Baby Leaf", row.PreviousCommercialStage);
-        Assert.Equal("Baby Leaf apta", row.NewCommercialStage);
+        Assert.Equal("Baby Leaf", row.NewCommercialStage);
     }
 
     private sealed class TestDbContextFactory(LotesSqlFixture fixture)

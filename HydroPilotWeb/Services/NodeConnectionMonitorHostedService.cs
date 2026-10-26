@@ -1,5 +1,8 @@
+using System.Globalization;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Notifications;
+using HydroPilotWeb.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -9,6 +12,8 @@ namespace HydroPilotWeb.Services;
 /// Monitor periódico del estado de conexión de los nodos (IOT-06).
 /// Recalcula y persiste ConnectionState para que el dashboard distinga
 /// NEVER_CONNECTED / ONLINE / DEGRADED / OFFLINE sin duplicar la regla.
+/// Un nodo OFFLINE genera una alerta "Nodo X desconectado" (Alta, una por corte) que se resuelve sola
+/// cuando vuelven a llegar lecturas. Un nodo que nunca se conectó no genera alerta.
 /// </summary>
 public sealed class NodeConnectionMonitorHostedService : BackgroundService
 {
@@ -57,12 +62,14 @@ public sealed class NodeConnectionMonitorHostedService : BackgroundService
         var options = _options.CurrentValue;
         var nowUtc = DateTime.UtcNow;
 
-        var nodes = await context.IotNodes.ToListAsync(ct);
+        var nodes = await context.IotNodes.Include(n => n.Greenhouse).ToListAsync(ct);
+        var previous = new Dictionary<int, string>();
         foreach (var node in nodes)
         {
             var computed = NodeConnectionEvaluator.Evaluate(
                 node.LastAcceptedAt, nowUtc, node.ExpectedIntervalSeconds, options.DegradedIntervalFactor);
 
+            previous[node.Id] = node.ConnectionState;
             if (!string.Equals(node.ConnectionState, computed, StringComparison.Ordinal))
             {
                 node.ConnectionState = computed;
@@ -72,5 +79,70 @@ public sealed class NodeConnectionMonitorHostedService : BackgroundService
 
         if (nodes.Count > 0)
             await context.SaveChangesAsync(ct);
+
+        // Sin servicio de notificaciones (pruebas que solo miran el estado) no se generan alertas.
+        if (scope.ServiceProvider.GetService<NotificationService>() is not { } notifications)
+            return;
+        foreach (var node in nodes)
+            await SyncOfflineAlertAsync(context, notifications, node, previous[node.Id], nowUtc, ct);
+    }
+
+    /// <summary>
+    /// OFFLINE: crea la alerta del corte (una por corte: la huella lleva la última lectura aceptada, así
+    /// no se repite en cada vuelta del monitor). Si estaba OFFLINE y volvió: resuelve las alertas del nodo.
+    /// </summary>
+    private async Task SyncOfflineAlertAsync(
+        HydroPilotDbContext context, NotificationService notifications, IotNode node, string previousState, DateTime nowUtc, CancellationToken ct)
+    {
+        try
+        {
+            if (node.ConnectionState == TelemetryContract.ConnectionOffline && node.LastAcceptedAt is { } lastAccepted)
+            {
+                var fingerprint = NodeConnectionAlerts.Fingerprint(node.Id, lastAccepted);
+                if (await context.NotificationAlerts.AnyAsync(a => a.Fingerprint == fingerprint, ct))
+                    return;
+
+                // La Pi maneja todos los circuitos del invernadero: el corte no es de un lote en particular.
+                int? lotId = null;
+                var zone = GddService.ResolveGreenhouseTimeZone(node.Greenhouse?.TimeZoneId, []);
+                var since = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(lastAccepted, DateTimeKind.Utc), zone);
+
+                await notifications.CreateAlertAsync(new CreateAlertDto(
+                    NotificationTypes.NodoDesconectado,
+                    NotificationSeverities.Alta,
+                    $"Nodo {node.Identifier} desconectado",
+                    $"Sin lecturas desde el {since.ToString("dd/MM HH:mm", CultureInfo.InvariantCulture)}. Revisá que la Pi tenga energía y red.",
+                    fingerprint,
+                    lotId), ct);
+            }
+            else if (previousState == TelemetryContract.ConnectionOffline)
+            {
+                await notifications.ResolveByFingerprintPrefixAsync(NodeConnectionAlerts.Prefix(node.Id), ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "No se pudo sincronizar la alerta de conexión del nodo {Identifier}", node.Identifier);
+        }
+    }
+}
+
+/// <summary>Huella de las alertas de nodo desconectado: "node-offline-{nodoId}-{última lectura aceptada}".</summary>
+public static class NodeConnectionAlerts
+{
+    public static string Prefix(int nodeId) => $"node-offline-{nodeId}-";
+
+    public static string Fingerprint(int nodeId, DateTime lastAcceptedUtc) =>
+        Prefix(nodeId) + lastAcceptedUtc.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+
+    /// <summary>Nodo de una huella de nodo desconectado; null si la huella es de otra cosa.</summary>
+    public static int? NodeId(string? fingerprint)
+    {
+        const string start = "node-offline-";
+        if (fingerprint is null || !fingerprint.StartsWith(start, StringComparison.Ordinal))
+            return null;
+        var rest = fingerprint[start.Length..];
+        var dash = rest.IndexOf('-');
+        return dash > 0 && int.TryParse(rest[..dash], NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
     }
 }

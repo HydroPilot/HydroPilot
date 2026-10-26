@@ -39,6 +39,12 @@ public class AnomalyEvent
     /// <summary>Valor observado (última lectura agregada al episodio).</summary>
     public decimal ObservedValue { get; set; }
 
+    /// <summary>
+    /// La lectura del episodio más lejana de la banda (la peor), para mostrar "llegó a …". Null en episodios
+    /// viejos sin lecturas: se usa <see cref="ObservedValue"/>.
+    /// </summary>
+    public decimal? PeakValue { get; set; }
+
     /// <summary>Valor objetivo/target de la banda operativa que produjo el episodio (explicabilidad).</summary>
     public decimal? TargetValue { get; set; }
 

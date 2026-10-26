@@ -25,10 +25,10 @@
 
     private IEnumerable<Filter> Filters =>
     [
-        new(LotCellKeys.Apta, "Aptas", Plants.Apta, Fill(CommercialStageNames.BabyLeafApta), true),
+        new(LotCellKeys.Apta, "Baby Leafs", Plants.Apta, Fill(CommercialStageNames.BabyLeafApta), true),
         new(LotCellKeys.Candidata, "Candidatas", Plants.Candidate, Fill(CommercialStageNames.CandidataBabyLeaf), true),
         new(LotCellKeys.Desarrollo, "En desarrollo", Plants.Developing, Fill(CommercialStageNames.EnDesarrollo), true),
-        new(LotCellKeys.Convencional, "Convencional", Plants.Conventional, Fill(CommercialStageNames.CosechaConvencional), false),
+        new(LotCellKeys.Convencional, "Adultas", Plants.Conventional, Fill(CommercialStageNames.CosechaConvencional), false),
         new(LotCellKeys.Riesgo, "En riesgo", Plants.Risk, Fill(CommercialStageNames.RiesgoFueraDeVentana), false),
         // Cosechadas: el mapa las muestra atenuadas con "✓" sobre su color congelado.
         new(LotCellKeys.Cosechada, "Cosechadas", Plants.Harvested, $"border: 2px solid {Color(CommercialStageNames.BabyLeafApta)};", false),

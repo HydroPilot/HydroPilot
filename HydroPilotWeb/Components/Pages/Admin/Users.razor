@@ -72,8 +72,10 @@
                             else
                             {
                                 <button type="button" class="btn-delete" @onclick="() => _deletingUserId = user.Id"
-                                        title="Eliminar usuario">
-                                    🗑
+                                        title="Eliminar usuario" aria-label="Eliminar usuario">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+                                    </svg>
                                 </button>
                             }
                         }
@@ -206,21 +208,34 @@
         color: var(--text-muted);
     }
 
+    /* Eliminar: tacho blanco sobre fondo rojo. */
     .btn-delete {
-        background: transparent;
-        border: 1px solid var(--border-input);
-        border-radius: 6px;
-        padding: 6px 10px;
+        display: inline-grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: #dc2626;
+        color: #fff;
         cursor: pointer;
-        opacity: 0.4;
-        transition: opacity 0.15s, background 0.15s;
-        font-size: 14px;
+        transition: background 0.15s;
     }
 
-    .btn-delete:hover {
-        opacity: 1;
-        background: rgba(239,68,68,0.12);
-        border-color: rgba(239,68,68,0.4);
+    .btn-delete svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .btn-delete:hover,
+    .btn-delete:focus-visible {
+        background: #b91c1c;
     }
 
     .inline-delete {

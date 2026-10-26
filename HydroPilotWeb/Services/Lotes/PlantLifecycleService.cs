@@ -5,8 +5,25 @@ using HydroPilotWeb.Services.Forecasting;
 
 namespace HydroPilotWeb.Services.Lotes;
 
+/// <summary>Resultado de cosechar o descartar varias plantas: cuántas de cada destino y si el lote se cerró.</summary>
+public sealed record PlantBatchResult(int BabyLeaf, int Adult, int Discarded, string? LotClosedAs)
+{
+    public int Harvested => BabyLeaf + Adult;
+}
+
+/// <summary>Destino de cosecha según el estado comercial de la planta (lógica pura).</summary>
+public static class PlantHarvestRules
+{
+    /// <summary>Baby Leaf o candidata → Baby Leaf; el resto (en desarrollo, adulta, riesgo) → adulta.</summary>
+    public static HarvestDestination DestinationFor(string? commercialStageName) =>
+        commercialStageName is CommercialStageNames.BabyLeafApta or CommercialStageNames.CandidataBabyLeaf
+            ? HarvestDestination.BabyLeaf
+            : HarvestDestination.Convencional;
+}
+
 /// <summary>
-/// Operaciones de ciclo de vida por planta (plan 09): cosecha y descarte.
+/// Operaciones de ciclo de vida por planta (plan 09): cosecha y descarte, de a una (detalle de la planta)
+/// o de varias elegidas en el mapa.
 /// La cosecha/descarte se decide a nivel planta y se registra en el estado
 /// operativo; el estado comercial del momento queda congelado como histórico.
 /// Cuando al lote ya no le quedan plantas activas, el lote se cierra solo (CloseLotIfDoneAsync).
@@ -22,6 +39,7 @@ public class PlantLifecycleService
         _parameters = parameters;
     }
 
+    /// <summary>Cosecha una planta (detalle de la planta): mismo destino por estado que la selección.</summary>
     public async Task<Plant?> HarvestPlantAsync(int plantId, DateOnly? harvestDate = null, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
@@ -35,23 +53,8 @@ public class PlantLifecycleService
         if (plant.OperationalState != PlantOperationalState.Activa)
             return plant; // No se re-cosecha ni se cambia un estado histórico.
 
-        var previous = plant.OperationalState.ToString();
-        plant.OperationalState = PlantOperationalState.Cosechada;
-        plant.HarvestDate = harvestDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
-        plant.DiscardDate = null;
-        plant.DiscardReason = null;
-
-        context.PlantStageHistories.Add(new PlantStageHistory
-        {
-            PlantId = plant.Id,
-            PreviousOperationalState = previous,
-            PreviousCommercialStageId = plant.CommercialStageId,
-            NewOperationalState = PlantOperationalState.Cosechada.ToString(),
-            NewCommercialStageId = plant.CommercialStageId, // congela en qué estado se cosechó
-            Source = "harvest",
-            Reason = $"Cosechada como {plant.CommercialStage?.Name ?? "sin estado comercial"}",
-            ChangedAtUtc = DateTime.UtcNow
-        });
+        var adult = await AdultStageAsync(context, ct);
+        Harvest(context, plant, adult, harvestDate ?? Today, DateTime.UtcNow, "harvest");
 
         await context.SaveChangesAsync(ct);
         await CloseLotIfDoneAsync(context, plant.LotId, ct);
@@ -59,65 +62,32 @@ public class PlantLifecycleService
     }
 
     /// <summary>
-    /// Cosecha masiva del lote (vista Lotes). Baby Leaf: las activas en "Baby Leaf apta", que
-    /// conservan su estado. Convencional: todas las activas que no están en riesgo, que pasan a
-    /// "Cosecha convencional" (sin análisis de imagen, la aptitud convencional la da la ventana por
-    /// GDD del lote; la vista solo lo ofrece desde la ventana convencional). Devuelve cuántas cosechó.
+    /// Cosecha las plantas elegidas en el mapa (solo las activas del lote). El destino sale del estado de
+    /// cada una (<see cref="PlantHarvestRules.DestinationFor"/>): Baby Leaf o candidata se cosecha como Baby
+    /// Leaf y conserva su estado; el resto se cosecha como adulta y su estado pasa a "Adulta".
     /// </summary>
-    public async Task<int> HarvestManyAsync(
-        int lotId, HarvestDestination destination, DateOnly? harvestDate = null, CancellationToken ct = default)
+    public async Task<PlantBatchResult> HarvestPlantsAsync(
+        int lotId, IReadOnlyCollection<int> plantIds, DateOnly? harvestDate = null, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var plants = await ActivePlantsAsync(context, lotId, plantIds, ct);
+        var adult = await AdultStageAsync(context, ct);
 
-        var active = await context.Plants
-            .Include(p => p.CommercialStage)
-            .Where(p => p.LotId == lotId && p.OperationalState == PlantOperationalState.Activa)
-            .ToListAsync(ct);
-
-        CommercialStage? conventional = null;
-        if (destination == HarvestDestination.Convencional)
-        {
-            conventional = await context.CommercialStages.FirstOrDefaultAsync(s => s.Name == CommercialStageNames.CosechaConvencional, ct)
-                ?? throw new InvalidOperationException($"Falta el estado comercial \"{CommercialStageNames.CosechaConvencional}\" en el catálogo.");
-        }
-
-        var selected = destination == HarvestDestination.BabyLeaf
-            ? active.Where(p => p.CommercialStage?.Name == CommercialStageNames.BabyLeafApta).ToList()
-            : active.Where(p => p.CommercialStage?.Name != CommercialStageNames.RiesgoFueraDeVentana).ToList();
-
-        var date = harvestDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var date = harvestDate ?? Today;
         var now = DateTime.UtcNow;
-        foreach (var plant in selected)
+        var babyLeaf = 0;
+        foreach (var plant in plants)
         {
-            var previousStageId = plant.CommercialStageId;
-            plant.OperationalState = PlantOperationalState.Cosechada;
-            plant.HarvestDate = date;
-            plant.DiscardDate = null;
-            plant.DiscardReason = null;
-            if (conventional is not null)
-                plant.CommercialStageId = conventional.Id; // el destino queda registrado en el estado congelado
-
-            context.PlantStageHistories.Add(new PlantStageHistory
-            {
-                PlantId = plant.Id,
-                PreviousOperationalState = PlantOperationalState.Activa.ToString(),
-                PreviousCommercialStageId = previousStageId,
-                NewOperationalState = PlantOperationalState.Cosechada.ToString(),
-                NewCommercialStageId = plant.CommercialStageId,
-                Source = "harvest-bulk",
-                Reason = destination == HarvestDestination.BabyLeaf
-                    ? "Cosecha masiva de aptas Baby Leaf"
-                    : "Cosecha masiva convencional",
-                ChangedAtUtc = now
-            });
+            if (Harvest(context, plant, adult, date, now, "harvest-bulk") == HarvestDestination.BabyLeaf)
+                babyLeaf++;
         }
 
         await context.SaveChangesAsync(ct);
-        if (selected.Count > 0)
-            await CloseLotIfDoneAsync(context, lotId, ct);
-        return selected.Count;
+        var closedAs = plants.Count > 0 ? await CloseLotIfDoneAsync(context, lotId, ct) : null;
+        return new PlantBatchResult(babyLeaf, plants.Count - babyLeaf, 0, closedAs);
     }
 
+    /// <summary>Descarta una planta (detalle de la planta).</summary>
     public async Task<Plant?> DiscardPlantAsync(int plantId, string? reason = null, DateOnly? discardDate = null, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
@@ -131,26 +101,87 @@ public class PlantLifecycleService
         if (plant.OperationalState != PlantOperationalState.Activa)
             return plant; // Un estado histórico no se re-descarta.
 
-        var previous = plant.OperationalState.ToString();
+        Discard(context, plant, reason, discardDate ?? Today, DateTime.UtcNow);
+
+        await context.SaveChangesAsync(ct);
+        await CloseLotIfDoneAsync(context, plant.LotId, ct);
+        return plant;
+    }
+
+    /// <summary>Descarta las plantas elegidas en el mapa (solo las activas del lote), con el mismo motivo.</summary>
+    public async Task<PlantBatchResult> DiscardPlantsAsync(
+        int lotId, IReadOnlyCollection<int> plantIds, string? reason, DateOnly? discardDate = null, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var plants = await ActivePlantsAsync(context, lotId, plantIds, ct);
+
+        var date = discardDate ?? Today;
+        var now = DateTime.UtcNow;
+        foreach (var plant in plants)
+            Discard(context, plant, reason, date, now);
+
+        await context.SaveChangesAsync(ct);
+        var closedAs = plants.Count > 0 ? await CloseLotIfDoneAsync(context, lotId, ct) : null;
+        return new PlantBatchResult(0, 0, plants.Count, closedAs);
+    }
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    private static Task<List<Plant>> ActivePlantsAsync(
+        HydroPilotDbContext context, int lotId, IReadOnlyCollection<int> plantIds, CancellationToken ct) =>
+        context.Plants
+            .Include(p => p.CommercialStage)
+            .Where(p => p.LotId == lotId && plantIds.Contains(p.Id) && p.OperationalState == PlantOperationalState.Activa)
+            .ToListAsync(ct);
+
+    /// <summary>Estado "Adulta" del catálogo; null si falta (la cosecha se registra igual, sin cambiar el estado).</summary>
+    private static Task<CommercialStage?> AdultStageAsync(HydroPilotDbContext context, CancellationToken ct) =>
+        context.CommercialStages.FirstOrDefaultAsync(s => s.Name == CommercialStageNames.CosechaConvencional, ct);
+
+    /// <summary>Cosecha una planta activa con el destino de su estado; el estado comercial queda congelado.</summary>
+    private static HarvestDestination Harvest(
+        HydroPilotDbContext context, Plant plant, CommercialStage? adult, DateOnly date, DateTime now, string source)
+    {
+        var destination = PlantHarvestRules.DestinationFor(plant.CommercialStage?.Name);
+        var previousStageId = plant.CommercialStageId;
+        plant.OperationalState = PlantOperationalState.Cosechada;
+        plant.HarvestDate = date;
+        plant.DiscardDate = null;
+        plant.DiscardReason = null;
+        if (destination == HarvestDestination.Convencional && adult is not null)
+            plant.CommercialStageId = adult.Id; // el destino queda registrado en el estado congelado
+
+        context.PlantStageHistories.Add(new PlantStageHistory
+        {
+            PlantId = plant.Id,
+            PreviousOperationalState = PlantOperationalState.Activa.ToString(),
+            PreviousCommercialStageId = previousStageId,
+            NewOperationalState = PlantOperationalState.Cosechada.ToString(),
+            NewCommercialStageId = plant.CommercialStageId,
+            Source = source,
+            Reason = destination == HarvestDestination.BabyLeaf ? "Cosechada como Baby Leaf" : "Cosechada como adulta",
+            ChangedAtUtc = now
+        });
+        return destination;
+    }
+
+    private static void Discard(HydroPilotDbContext context, Plant plant, string? reason, DateOnly date, DateTime now)
+    {
         plant.OperationalState = PlantOperationalState.Descartada;
-        plant.DiscardDate = discardDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        plant.DiscardDate = date;
         plant.DiscardReason = reason;
 
         context.PlantStageHistories.Add(new PlantStageHistory
         {
             PlantId = plant.Id,
-            PreviousOperationalState = previous,
+            PreviousOperationalState = PlantOperationalState.Activa.ToString(),
             PreviousCommercialStageId = plant.CommercialStageId,
             NewOperationalState = PlantOperationalState.Descartada.ToString(),
             NewCommercialStageId = plant.CommercialStageId, // último estado comercial congelado
             Source = "discard",
             Reason = reason,
-            ChangedAtUtc = DateTime.UtcNow
+            ChangedAtUtc = now
         });
-
-        await context.SaveChangesAsync(ct);
-        await CloseLotIfDoneAsync(context, plant.LotId, ct);
-        return plant;
     }
 
     /// <summary>
@@ -176,6 +207,10 @@ public class PlantLifecycleService
             return null;
 
         lot.StatusId = status.Id;
+        // El circuito queda libre para el próximo lote.
+        var now = DateTime.UtcNow;
+        foreach (var assignment in await context.CircuitAssignments.Where(a => a.LotId == lotId && a.ValidUntilUtc == null).ToListAsync(ct))
+            assignment.ValidUntilUtc = now;
         if (lastHarvest is { } harvestDate)
         {
             lot.ActualHarvestDate = harvestDate;

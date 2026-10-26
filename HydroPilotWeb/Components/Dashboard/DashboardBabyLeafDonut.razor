@@ -1,0 +1,37 @@
+@using HydroPilotWeb.Components.Lotes
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Dashboard
+
+@* % de plantas que se espera cosechar como Baby Leaf en todos los lotes activos (rendimiento esperado de
+   Lotes): el tramo azul es Baby Leaf y el resto gris; el % va en el centro. *@
+<div class="gh-donut" role="img" aria-label="@($"Baby Leaf esperado: {LotFormat.Pct1(Percent)} ({ExpectedPlants} de {LotFormat.Plants(TotalPlants)})")">
+    <svg viewBox="0 0 120 120" class="gh-donut__chart" aria-hidden="true">
+        <circle class="gh-donut__track" cx="60" cy="60" r="@Radius" />
+        @if (Percent > 0m)
+        {
+            <circle class="gh-donut__value" cx="60" cy="60" r="@Radius" stroke="@BabyLeafColor"
+                    stroke-dasharray="@($"{Css(Arc)} {Css(Circumference)}")" transform="rotate(-90 60 60)" />
+        }
+    </svg>
+    <div class="gh-donut__center">
+        <strong>@LotFormat.Pct(Percent)</strong>
+        <span>Baby Leaf</span>
+    </div>
+</div>
+<p class="gh-donut__caption">
+    <span class="lot-legend__dot" style="background: @BabyLeafColor;"></span>@ExpectedPlants de @LotFormat.Plants(TotalPlants)
+</p>
+
+@code {
+    [Parameter] public int ExpectedPlants { get; set; }
+    [Parameter] public int TotalPlants { get; set; }
+
+    private const decimal Radius = 48m;
+    private static readonly decimal Circumference = 2m * 3.14159265m * Radius;
+    private static readonly string BabyLeafColor = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta).Background;
+
+    private decimal Percent => TotalPlants > 0 ? Math.Clamp(ExpectedPlants * 100m / TotalPlants, 0m, 100m) : 0m;
+    private decimal Arc => Circumference * Percent / 100m;
+
+    private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+}

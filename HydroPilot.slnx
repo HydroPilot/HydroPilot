@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="HydroPilotWeb.Tests/HydroPilotWeb.Tests.csproj" />
   <Project Path="HydroPilotWeb/HydroPilotWeb.csproj" />
+  <Project Path="tools/PiSimulator/PiSimulator.csproj" />
 </Solution>

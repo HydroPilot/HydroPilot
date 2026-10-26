@@ -75,7 +75,7 @@
                     <select class="form-control" @bind="_prefs.MinSeverityEmail" disabled="@(!_prefs.EmailEnabled)">
                         <option value="@NotificationSeverities.Critica">Sólo Crítica (Anomalías confirmadas de pH/CE)</option>
                         <option value="@NotificationSeverities.Alta">Alta y Crítica (Anomalías y Cosecha inminente)</option>
-                        <option value="@NotificationSeverities.Media">Media o superior (Incluye recomendaciones estratégicas)</option>
+                        <option value="@NotificationSeverities.Media">Media o superior</option>
                     </select>
                 </div>
 
@@ -121,7 +121,7 @@
             </article>
 
             <div class="actions-row">
-                <button class="btn btn-primary" @onclick="SavePreferencesAsync" disabled="@_isSaving">
+                <button class="btn btn-success" @onclick="SavePreferencesAsync" disabled="@_isSaving">
                     @(_isSaving ? "Guardando..." : "Guardar preferencias")
                 </button>
             </div>
@@ -164,6 +164,12 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+    }
+
+    /* Aire entre el subtítulo de cada sección y su contenido. */
+    .panel > .panel__subtitle,
+    .panel-header-inline {
+        margin-bottom: 20px;
     }
 
     .form-group label {

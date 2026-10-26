@@ -47,7 +47,7 @@ public record ReadingQueryResponse(
     int? LotId,
     string? LotLabel,
     string AssignmentState,
-    int? NodeLotAssignmentId
+    int? CircuitAssignmentId
 );
 
 /// <summary>Lectura rechazada (cuarentena de diagnóstico): TelemetryRejection.</summary>
@@ -82,10 +82,3 @@ public record NodeStatusResponse(
     int RejectionsLast24h
 );
 
-public record NodeLotAssignmentCreateRequest(
-    int NodeId,
-    int LotId,
-    DateTime ValidFromUtc,
-    DateTime? ValidUntilUtc,
-    string? Source
-);

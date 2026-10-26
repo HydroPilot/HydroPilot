@@ -100,7 +100,7 @@
                                @bind="babyLeafGoal" @onfocus="() => strategy = SimulationStrategyKind.BabyLeafGoal" />
                         <span class="small">%</span>
                     </div>
-                    <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.AllConventional)" @onchange="() => strategy = SimulationStrategyKind.AllConventional" /> Todo convencional</label>
+                    <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.AllConventional)" @onchange="() => strategy = SimulationStrategyKind.AllConventional" /> Todo adulta</label>
                 </div>
                 <div class="small text-muted">@StrategyHint</div>
 
@@ -111,7 +111,7 @@
                         <input type="number" step="0.1" min="0" class="form-control" @bind="babyLeafGrams" />
                     </div>
                     <div>
-                        <label class="sim-label">Peso convencional (g/planta)</label>
+                        <label class="sim-label">Peso adulta (g/planta)</label>
                         <input type="number" step="0.1" min="0" class="form-control" @bind="conventionalGrams" />
                     </div>
                 </div>
@@ -121,7 +121,7 @@
                         <input type="number" step="0.01" min="0" class="form-control" @bind="babyLeafPrice" />
                     </div>
                     <div>
-                        <label class="sim-label">Precio convencional ($/kg)</label>
+                        <label class="sim-label">Precio adulta ($/kg)</label>
                         <input type="number" step="0.01" min="0" class="form-control" @bind="conventionalPrice" />
                     </div>
                 </div>
@@ -213,7 +213,7 @@
                             <text>GDD hoy: <strong>@LotFormat.Num(result.Gdd.Accumulated)</strong> (Tbase @LotFormat.Num(result.Gdd.BaseTemperature) °C).</text>
                         }
                         Baby Leaf: ventana @LotFormat.Num(timeline.BabyLeafOpens.Gdd)–@LotFormat.Num(timeline.BabyLeafCloses.Gdd), óptimo @LotFormat.Num(timeline.BabyLeafOptimum.Gdd).
-                        Convencional: óptimo @LotFormat.Num(timeline.ConventionalOptimum.Gdd), sobremadurez @LotFormat.Num(timeline.Overmaturity.Gdd).
+                        Adulta: óptimo @LotFormat.Num(timeline.ConventionalOptimum.Gdd), sobremadurez @LotFormat.Num(timeline.Overmaturity.Gdd).
                     </div>
                 }
                 else
@@ -226,9 +226,9 @@
                     var outlook = result.Outlook;
                     <h4 class="sim-section">Previsión de Baby Leaf y pérdidas</h4>
                     <div class="mini-grid">
-                        <div class="mini-card"><span>Aptas a Baby Leaf en el óptimo</span><strong>@Rate(outlook.AptRate)</strong></div>
+                        <div class="mini-card"><span>Baby Leafs en el óptimo</span><strong>@Rate(outlook.AptRate)</strong></div>
                         <div class="mini-card"><span>Pérdidas hasta el corte Baby Leaf</span><strong>@LossRate(outlook.RemainingEarlyLossRate, outlook.History.EarlyLossRate)</strong></div>
-                        <div class="mini-card"><span>Pérdidas esperando al convencional</span><strong>@LossRate(outlook.RemainingLateLossRate, outlook.History.LateLossRate)</strong></div>
+                        <div class="mini-card"><span>Pérdidas esperando a adulta</span><strong>@LossRate(outlook.RemainingLateLossRate, outlook.History.LateLossRate)</strong></div>
                     </div>
                     <div class="small text-muted my-2">@OutlookText(outlook, result.Lot is not null)</div>
                     @if (outlook.History.Lots.Count > 0)
@@ -241,7 +241,7 @@
                                         <tr>
                                             <th>Lote</th>
                                             <th>Siembra</th>
-                                            <th>Aptas Baby Leaf</th>
+                                            <th>Baby Leafs</th>
                                             <th>Pérdidas tempranas</th>
                                             <th>Pérdidas tardías</th>
                                             <th>GDD/día</th>
@@ -279,7 +279,7 @@
                     }
                     <div class="mini-grid">
                         <div class="mini-card"><span>Corte Baby Leaf</span><strong>@CutText(chosen.BabyLeafCut)</strong></div>
-                        <div class="mini-card"><span>Corte convencional</span><strong>@CutText(chosen.ConventionalCut)</strong></div>
+                        <div class="mini-card"><span>Corte adultas</span><strong>@CutText(chosen.ConventionalCut)</strong></div>
                         <div class="mini-card"><span>Kg</span><strong>@(chosen.TotalKg is { } kg ? LotFormat.KgFine(kg) : "—")</strong></div>
                         <div class="mini-card"><span>Ingresos</span><strong>@Money(chosen.Revenue, result.Reference.Prices.Currency)</strong></div>
                         <div class="mini-card"><span>Gastos del sistema</span><strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong></div>
@@ -287,7 +287,7 @@
                     </div>
                     <div class="small text-muted mt-2">
                         Pesos y precios: Baby Leaf @Grams(result.Reference.Weights.BabyLeafGramsPerPlant) · @PricePerKg(result.Reference.Prices.BabyLeafPerKg) ·
-                        Convencional @Grams(result.Reference.Weights.ConventionalGramsPerPlant) · @PricePerKg(result.Reference.Prices.ConventionalPerKg)
+                        Adulta @Grams(result.Reference.Weights.ConventionalGramsPerPlant) · @PricePerKg(result.Reference.Prices.ConventionalPerKg)
                         (@(result.Reference.HasScenarioOverrides ? "con cambios del escenario" : "de Ajustes > Parámetros")).
                     </div>
 
@@ -333,7 +333,7 @@
                                 <tr>
                                     <th>Estrategia</th>
                                     <th>Corte Baby Leaf</th>
-                                    <th>Corte convencional</th>
+                                    <th>Corte adultas</th>
                                     <th>Días de ciclo</th>
                                     <th>Kg</th>
                                     <th>Margen sobre gastos del sistema</th>
@@ -446,6 +446,10 @@
 @code {
     [Inject] private SimulationService SimulationSvc { get; set; } = null!;
 
+    /// <summary>Lote a simular desde un enlace (/simulation?lote=ID).</summary>
+    [SupplyParameterFromQuery(Name = "lote")]
+    public int? LotFromQuery { get; set; }
+
     private SimulationContextOptions? options;
     private SimulationPreview? preview;
     private SimulationResult? result => preview?.Result;
@@ -486,7 +490,7 @@
 
         if (options.Lots.Count > 0)
         {
-            selectedLotId = options.Lots[0].Id;
+            selectedLotId = options.Lots.Any(l => l.Id == LotFromQuery) ? LotFromQuery : options.Lots[0].Id;
             OnLotChanged();
         }
     }
@@ -560,19 +564,19 @@
 
     private string StrategyHint => strategy switch
     {
-        SimulationStrategyKind.MaxBabyLeaf => "Corta como Baby Leaf todas las que se prevén aptas en el óptimo; el resto sigue hasta el corte convencional.",
-        SimulationStrategyKind.BabyLeafGoal => "Corta como Baby Leaf hasta ese % de las plantas (por más de que haya más Baby Leafs aptas); el resto sigue hasta el corte convencional.",
-        _ => "Todas siguen hasta el corte convencional."
+        SimulationStrategyKind.MaxBabyLeaf => "Corta como Baby Leaf todas las que se prevén Baby Leaf en el óptimo; el resto sigue hasta el corte de adultas.",
+        SimulationStrategyKind.BabyLeafGoal => "Corta como Baby Leaf hasta ese % de las plantas (por más de que haya más Baby Leafs); el resto sigue hasta el corte de adultas.",
+        _ => "Todas siguen hasta el corte de adultas."
     };
 
-    /// <summary>"12 Baby Leaf + 6 convencionales · 1 pérdida prevista".</summary>
+    /// <summary>"12 Baby Leafs + 6 adultas · 1 pérdida prevista".</summary>
     private static string PlantsText(SimulationStrategyOutcome s)
     {
         var destinations = new List<string>();
         if (s.BabyLeaf.Plants > 0)
             destinations.Add($"{s.BabyLeaf.Plants} Baby Leaf");
         if (s.Conventional.Plants > 0)
-            destinations.Add(LotFormat.Count(s.Conventional.Plants, "convencional", "convencionales"));
+            destinations.Add(LotFormat.Count(s.Conventional.Plants, "adulta", "adultas"));
         var text = destinations.Count > 0 ? string.Join(" + ", destinations) : "Ninguna para cosechar";
         return s.LostPlants > 0
             ? $"{text} · {LotFormat.Count(s.LostPlants, "pérdida prevista", "pérdidas previstas")}"
@@ -611,8 +615,8 @@
         if (outlook.CurrentAptRate is { } current && outlook.CurrentWeight > 0)
         {
             return history.AptRate is { } past
-                ? $"Combina el estado actual del lote ({Rate(current)} de las activas aptas o candidatas, pesa {Rate(outlook.CurrentWeight)}) con el histórico de {lots} ({Rate(past)})."
-                : $"Según el estado actual del lote ({Rate(current)} de las activas aptas o candidatas); no hay lotes cerrados con datos.";
+                ? $"Combina el estado actual del lote ({Rate(current)} de las activas Baby Leaf o candidatas, pesa {Rate(outlook.CurrentWeight)}) con el histórico de {lots} ({Rate(past)})."
+                : $"Según el estado actual del lote ({Rate(current)} de las activas Baby Leaf o candidatas); no hay lotes cerrados con datos.";
         }
         if (history.AptRate is not null)
         {
@@ -621,7 +625,7 @@
                 : noEvaluations;
             return $"Según el histórico de {lots}.{notYet} Las pérdidas son las que faltan según la etapa.";
         }
-        return "Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas llegan aptas y sin pérdidas." + noEvaluations;
+        return "Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas llegan a Baby Leaf y sin pérdidas." + noEvaluations;
     }
 
     private string CutText(SimulationCut? cut)

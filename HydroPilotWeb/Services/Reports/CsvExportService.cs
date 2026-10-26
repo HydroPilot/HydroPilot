@@ -199,7 +199,7 @@ public static class CsvExportService
             {
                 rows.Add(new[] { "Readiness Baby Leaf",
                     h.IsReady == true ? "listo" : h.IsReady == false ? "no listo" : "pendiente (objetivo sin definir)",
-                    $"aptas {h.AptaPlantCount}/{h.TotalActivePlants} ({h.AptaPercent.ToString(Inv)}%), objetivo {h.TargetPercent?.ToString(Inv)}%" });
+                    $"Baby Leafs {h.AptaPlantCount}/{h.TotalActivePlants} ({h.AptaPercent.ToString(Inv)}%), objetivo {h.TargetPercent?.ToString(Inv)}%" });
                 foreach (var w in h.Warnings)
                     rows.Add(new[] { "Readiness advertencia", string.Empty, w });
             }

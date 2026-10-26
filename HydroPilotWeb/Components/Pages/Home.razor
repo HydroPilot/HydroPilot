@@ -1,501 +1,296 @@
 @page "/"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
+@using System.Security.Claims
+@using HydroPilotWeb.Components.Dashboard
+@using HydroPilotWeb.Components.Lotes
+@using HydroPilotWeb.Models.Notifications
 @using HydroPilotWeb.Services.Dashboard
-@inject DashboardService Dashboard
+@using HydroPilotWeb.Services.Lotes
+@inject GreenhouseDashboardService Dashboard
+@inject AuthenticationStateProvider AuthState
 
 <PageTitle>Invernadero - HydroPilot</PageTitle>
 
-@if (_error is not null)
+@* Dashboard general del invernadero: todos los lotes activos con la lógica de Lotes (rendimiento,
+   plantas, cosechas), más alertas, chequeos de sensores y últimos accedidos. Las listas tienen su propio scroll. Lógica: notas/ux/logica-vista-invernadero.md *@
+@if (error is not null)
 {
     <div class="alert alert-danger d-flex justify-content-between align-items-center">
-        <span>@_error</span>
-        <button class="btn btn-sm btn-outline-danger" @onclick="RefreshAsync">Reintentar</button>
+        <span>@error</span>
+        <button class="btn btn-sm btn-outline-danger" @onclick="LoadAsync">Reintentar</button>
     </div>
 }
 
-@if (_initialLoading)
+@if (data is null)
 {
-    <div class="d-flex justify-content-center my-5">
-        <div class="spinner-border" role="status">
-            <span class="visually-hidden">Cargando...</span>
+    @if (error is null)
+    {
+        <div class="d-flex justify-content-center my-5">
+            <div class="spinner-border" role="status"><span class="visually-hidden">Cargando…</span></div>
         </div>
-    </div>
-}
-else if (_snapshot is null)
-{
-    <div class="alert alert-info mb-0">
-        No se pudo cargar el dashboard. Verificá la conexión con la base de datos y reintentá.
-    </div>
+    }
 }
 else
 {
-    <div class="dashboard-grid">
+    <div class="gh-dash">
+        <div class="gh-dash__main">
+            <section class="lot-card gh-kpi">
+                <span class="gh-kpi__value gh-kpi__value--accent">@data.ActiveLots</span>
+                <span class="gh-kpi__label">@(data.ActiveLots == 1 ? "Lote activo" : "Lotes activos")</span>
+            </section>
+            @Kpi(data.CurrentRevenue, "Rendimiento actual", "Lo listo para cosechar hoy en los lotes activos")
+            @Kpi(data.ExpectedRevenue, "Rendimiento esperado", "Lo que se espera del ciclo completo de los lotes activos")
 
-        <div class="dashboard-toolbar">
-            <div class="dashboard-toolbar__context">
-                <strong>@_snapshot.Context.GreenhouseName</strong>
-                <span>
-                    @(string.IsNullOrWhiteSpace(_snapshot.Context.ActiveLotCrop)
-                        ? "Sin lote activo"
-                        : _snapshot.Context.ActiveLotCrop)
-                    @(_snapshot.Context.Location is { Length: > 0 } loc ? $" · {loc}" : null)
-                </span>
-            </div>
+            <section class="lot-card gh-chart gh-chart--bars" aria-labelledby="gh-stages-title">
+                <h3 class="gh-card__title" id="gh-stages-title">Plantas por estado</h3>
+                <DashboardStageChart Stages="data.Stages" />
+            </section>
 
-            <div class="dashboard-toolbar__actions">
-                <span class="dashboard-toolbar__updated">Actualizado @LastRefreshText</span>
-                <button class="btn btn-sm hp-btn-secondary" @onclick="RefreshAsync" disabled="@_busy">
-                    @if (_busy)
-                    {
-                        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-                    }
-                    Actualizar
-                </button>
-            </div>
+            <section class="lot-card gh-chart gh-chart--donut" aria-labelledby="gh-bl-title">
+                <h3 class="gh-card__title" id="gh-bl-title">Baby Leaf esperado</h3>
+                <DashboardBabyLeafDonut ExpectedPlants="data.ExpectedBabyLeafPlants" TotalPlants="data.TotalPlants" />
+            </section>
+
+            <section class="lot-card gh-list-card gh-list-card--half" aria-labelledby="gh-alerts-title">
+                <h3 class="gh-card__title" id="gh-alerts-title">Alertas</h3>
+                @if (data.Alerts.Count == 0)
+                {
+                    <p class="gh-empty">Sin alertas.</p>
+                }
+                else
+                {
+                    <ul class="gh-list">
+                        @foreach (var alert in data.Alerts)
+                        {
+                            <li>
+                                <a class="gh-row @(alert.IsResolved ? "gh-row--resolved" : null)" href="@alert.Link" title="@alert.Title">
+                                    <span class="gh-dot gh-dot--@SeverityClass(alert.Severity)" aria-label="@SeverityLabel(alert.Severity)"></span>
+                                    <span class="gh-row__main">
+                                        <span class="gh-row__title">@alert.Title</span>
+                                        @if (alert.IsResolved)
+                                        {
+                                            <span class="gh-row__sub">Resuelta</span>
+                                        }
+                                    </span>
+                                    <span class="gh-row__when">@When(alert.CreatedAtLocal)</span>
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+
+            <section class="lot-card gh-list-card gh-list-card--half" aria-labelledby="gh-checks-title">
+                <h3 class="gh-card__title" id="gh-checks-title">Próximos chequeos de sensores</h3>
+                @if (!data.HasSensorIntervals)
+                {
+                    <p class="gh-empty">Sin chequeos programados. <a class="lot-link" href="settings/parametros">Definir en Parámetros</a></p>
+                }
+                else if (data.SensorChecks.Count == 0)
+                {
+                    <p class="gh-empty">Sin sensores activos.</p>
+                }
+                else
+                {
+                    <ul class="gh-list">
+                        @foreach (var check in data.SensorChecks)
+                        {
+                            var overdue = check.DueDate <= data.Today;
+                            <li class="gh-row gh-row--static" title="@CheckTitle(check)">
+                                <span class="gh-row__main">
+                                    <span class="gh-row__title">@check.SensorType · @check.Place</span>
+                                    <span class="gh-row__sub @(overdue ? "gh-row__sub--danger" : null)">@CheckText(check)</span>
+                                </span>
+                                @if (canCalibrate)
+                                {
+                                    <button type="button" class="btn btn-sm gh-row__action" @onclick="() => RegisterCalibrationAsync(check.SensorId)"
+                                            disabled="@(calibrating == check.SensorId)">
+                                        @(calibrating == check.SensorId ? "Guardando…" : "Calibrado hoy")
+                                    </button>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
         </div>
 
-        <section class="dashboard-kpis">
-            @foreach (var kpi in _snapshot.Kpis)
-            {
-                <article class="kpi-card" title="@KpiTitle(kpi)">
-                    <div class="kpi-card__header">
-                        <div>
-                            <p>@kpi.Label</p>
-                            @if (kpi.Value is not null)
-                            {
-                                <h2>@kpi.Value.Value.ToString("0.0") <span>@kpi.Unit</span></h2>
-                            }
-                            else
-                            {
-                                <h2>—</h2>
-                            }
-                        </div>
-                        <div class="kpi-card__icon">@kpi.Icon</div>
-                    </div>
-
-                    <div class="kpi-card__delta @DeltaClass(kpi)">@DeltaText(kpi)</div>
-
-                    <div class="kpi-card__meta">
-                        @if (kpi.Value is not null)
-                        {
-                            <span class="kpi-card__origin">@kpi.NodeIdentifier · @kpi.SensorName</span>
-                            <span class="kpi-card__age">hace @AgeText(kpi.ObservedAtUtc)</span>
-                        }
-                        <div class="kpi-card__badges">
-                            <span class="kpi-card__fresh @FreshnessClass(kpi.FreshnessState)">@FreshnessText(kpi.FreshnessState)</span>
-                            @if (kpi.Value is not null && kpi.Quality is not null && kpi.Quality != TelemetryContract.QualityValid)
-                            {
-                                <span class="kpi-card__quality" title="@QualityHint(kpi.Quality)">@QualityText(kpi.Quality)</span>
-                            }
-                        </div>
-                    </div>
-                </article>
-            }
-        </section>
-
-        <section class="dashboard-main">
-            <article class="panel panel--chart">
-                <div class="panel__header">
-                    <div>
-                        <h3>@(_snapshot.Series.Label.Length > 0 ? $"{_snapshot.Series.Label} — tendencia" : "Tendencia")</h3>
-                        <p>Promedio por intervalo @(_snapshot.Series.Unit.Length > 0 ? $"· {_snapshot.Series.Unit}" : null)</p>
-                    </div>
-                    <div class="panel__toggles d-flex gap-2">
-                        @if (_snapshot.Kpis.Count > 0)
-                        {
-                            <select class="form-select form-select-sm" style="width: auto;" @bind="_selectedVariable" @bind:after="OnSelectionChanged">
-                                @foreach (var kpi in _snapshot.Kpis)
-                                {
-                                    <option value="@kpi.Key">@kpi.Label</option>
-                                }
-                            </select>
-                        }
-                        <select class="form-select form-select-sm" style="width: auto;" @bind="_selectedRange" @bind:after="OnSelectionChanged">
-                            <option value="@DashboardTimeRange.Hour1">1 hora</option>
-                            <option value="@DashboardTimeRange.Day1">1 día</option>
-                            <option value="@DashboardTimeRange.Days7">7 días</option>
-                            <option value="@DashboardTimeRange.Days30">30 días</option>
-                        </select>
-                    </div>
-                </div>
-
-                @if (_snapshot.Series.Points.Count == 0)
+        <div class="gh-dash__side">
+            <section class="lot-card gh-list-card" aria-labelledby="gh-harvests-title">
+                <h3 class="gh-card__title" id="gh-harvests-title">Próximas cosechas</h3>
+                @if (data.Harvests.Count == 0)
                 {
-                    @if (_snapshot.Kpis.Count == 0)
-                    {
-                        <div class="p-4 text-muted text-center">
-                            <p class="mb-1">Sin sensores configurados en este invernadero.</p>
-                            <p class="small">El dashboard funciona con base vacía; los KPIs y la tendencia aparecerán cuando existan sensores y lecturas.</p>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="p-4 text-muted text-center">
-                            <p class="mb-1">Sin lecturas en el rango seleccionado para @(_snapshot.Series.Label.Length > 0 ? _snapshot.Series.Label : "la variable").</p>
-                            <p class="small">El rango no tiene lecturas operativamente usables. Cambiá el rango o verificá la ingesta de telemetría.</p>
-                        </div>
-                    }
-                }
-                else if (_snapshot.Series.Points.Count == 1)
-                {
-                    var single = _snapshot.Series.Points[0];
-                    <div class="text-center p-4">
-                        <p class="mb-1"><strong>@single.Value.ToString("0.0")</strong> @(_snapshot.Series.Unit)</p>
-                        <p class="text-muted small mb-0">Un único intervalo con @single.ReadingCount lecturas en el rango.</p>
-                    </div>
+                    <p class="gh-empty">Sin cosechas estimadas.</p>
                 }
                 else
                 {
-                    <SimpleLineChart Data="SeriesValues"
-                                     Height="300"
-                                     Fill="true"
-                                     ShowGrid="true"
-                                     YLabels="YLabels"
-                                     XLabels="XLabels"
-                                     XPointCount="SeriesValues.Count"
-                                     RotateXLabels="true"
-                                     PointLabels="PointLabels" />
-                }
-            </article>
-
-            <aside class="panel panel--resources">
-                <h3>Estado del sistema</h3>
-
-                <div class="resource-list">
-                    @if (_snapshot.Nodes.Count == 0)
-                    {
-                        <p class="text-muted">Sin nodos registrados en este invernadero.</p>
-                    }
-                    else
-                    {
-                        @foreach (var node in _snapshot.Nodes)
+                    <ul class="gh-list">
+                        @foreach (var harvest in data.Harvests)
                         {
-                            <div class="resource-row">
-                                <div class="resource-row__meta">
-                                    <span>@node.Identifier @(node.SensorCount > 0 ? $"· {node.SensorCount} sensores" : null)</span>
-                                    <strong><span class="badge @NodeBadgeClass(node.ConnectionState)">@NodeBadgeText(node.ConnectionState)</span></strong>
-                                </div>
-                                <div class="resource-row__meta">
-                                    <span>Última telemetría aceptada</span>
-                                    <strong>@(node.LastAcceptedAt is not null ? node.LastAcceptedAt.Value.ToLocalTime().ToString("dd/MM HH:mm") : "Nunca")</strong>
-                                </div>
-                                @if (node.RejectionsLast24h > 0)
-                                {
-                                    <div class="resource-row__meta">
-                                        <span>Rechazos últimas 24 h</span>
-                                        <strong>@node.RejectionsLast24h</strong>
-                                    </div>
-                                }
-                            </div>
+                            <li>
+                                <a class="gh-row" href="@harvest.Link">
+                                    <span class="gh-date @(harvest.CutNow ? "gh-date--now" : null)">
+                                        <strong>@(harvest.Approximate ? "≈" : null)@harvest.Date.Day</strong>
+                                        <span>@Month(harvest.Date)</span>
+                                    </span>
+                                    <span class="gh-row__main">
+                                        <span class="gh-row__title">@harvest.LotName</span>
+                                        <span class="gh-row__sub">
+                                            <span class="lot-legend__dot" style="background: @DestinationColor(harvest.Destination);"></span>
+                                            @(harvest.Destination == HarvestDestination.BabyLeaf ? "Baby Leaf" : "Adulta")
+                                        </span>
+                                    </span>
+                                    <span class="gh-row__when @(harvest.CutNow ? "gh-row__when--now" : null)">
+                                        @(harvest.CutNow ? "Cortar ahora" : DaysUntil(harvest.Date))
+                                    </span>
+                                </a>
+                            </li>
                         }
-                    }
-                </div>
+                    </ul>
+                }
+            </section>
 
-                <p class="status-hint small">Estado de conexión calculado por frescura de la última telemetría aceptada (monitor de nodos).</p>
-            </aside>
-        </section>
-
-        <section class="dashboard-secondary">
-            <article class="panel">
-                <div class="panel__header panel__header--compact">
-                    <h3>Anomalías recientes</h3>
-                    <a href="/anomalies">Ver todas →</a>
-                </div>
-
-                @if (_snapshot.Anomalies.Count == 0)
+            <section class="lot-card gh-list-card" aria-labelledby="gh-visits-title">
+                <h3 class="gh-card__title" id="gh-visits-title">Últimos accedidos</h3>
+                @if (data.RecentVisits.Count == 0)
                 {
-                    <p class="text-muted mb-0">No hay anomalías recientes.</p>
-                    <p class="text-muted small mt-1 mb-0">El módulo de anomalías todavía no está integrado; cuando genere eventos, aparecerán acá.</p>
+                    <p class="gh-empty">Todavía no abriste ningún lote.</p>
                 }
                 else
                 {
-                    <div class="anomaly-list">
-                        @foreach (var anomaly in _snapshot.Anomalies)
+                    <ul class="gh-list">
+                        @foreach (var visit in data.RecentVisits)
                         {
-                            <div class="anomaly-row">
-                                <span class="anomaly-row__dot"></span>
-                                <div>
-                                    <strong>@anomaly.Type</strong>
-                                    <p>@anomaly.Detail</p>
-                                </div>
-                                <a href="/anomalies">Revisar</a>
-                            </div>
+                            <li>
+                                <a class="gh-row" href="@visit.Link">
+                                    <span class="gh-row__main">
+                                        <span class="gh-row__title">@visit.Title</span>
+                                        <span class="gh-row__sub">@visit.View</span>
+                                    </span>
+                                    <span class="gh-row__when">@When(visit.VisitedAtLocal)</span>
+                                </a>
+                            </li>
                         }
-                    </div>
+                    </ul>
                 }
-            </article>
-
-            <article class="panel">
-                <div class="panel__header panel__header--compact">
-                    <h3>Recomendaciones</h3>
-                    <a href="/optimization">Ver todas →</a>
-                </div>
-
-                @if (_snapshot.Recommendations.Count == 0)
-                {
-                    <p class="text-muted mb-0">No hay recomendaciones disponibles.</p>
-                    <p class="text-muted small mt-1 mb-0">El módulo de optimización todavía no está integrado; cuando genere recomendaciones, aparecerán acá.</p>
-                }
-                else
-                {
-                    <div class="anomaly-list">
-                        @foreach (var recommendation in _snapshot.Recommendations)
-                        {
-                            <div class="anomaly-row">
-                                <span class="anomaly-row__dot"></span>
-                                <div>
-                                    <strong>@recommendation.Type</strong>
-                                    <p>@recommendation.Summary</p>
-                                </div>
-                                <a href="/optimization">Revisar</a>
-                            </div>
-                        }
-                    </div>
-                }
-            </article>
-
-        </section>
+            </section>
+        </div>
     </div>
 }
 
 @code {
-    private DashboardSnapshot? _snapshot;
-    private string _selectedVariable = DashboardVariableKeys.Ph;
-    private DashboardTimeRange _selectedRange = DashboardTimeRange.Day1;
+    private GreenhouseDashboard? data;
+    private string? error;
+    private ClaimsPrincipal user = new();
+    private bool canCalibrate;
+    private int? calibrating;
 
-    private string? _error;
-    private DateTime? _lastRefreshUtc;
-    private bool _initialLoading = true;
-    private bool _busy;
-
-    private readonly SemaphoreSlim _refreshLock = new(1, 1);
-    private readonly CancellationTokenSource _cts = new();
+    private static readonly string BabyLeafColor = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta).Background;
+    private static readonly string ConventionalColor = CommercialStagePalette.ForStage(CommercialStageNames.CosechaConvencional).Background;
 
     protected override async Task OnInitializedAsync()
     {
-        await RefreshAsync();
-        _ = RunPeriodicRefreshAsync();
+        user = (await AuthState.GetAuthenticationStateAsync()).User;
+        canCalibrate = GreenhouseDashboardService.CanRegisterCalibration(user);
+        await LoadAsync();
     }
 
-    public void Dispose()
+    private async Task LoadAsync()
     {
-        _cts.Cancel();
-        _cts.Dispose();
-        _refreshLock.Dispose();
-    }
-
-    // ------------------------------------------------------------------
-    // Refresh (DASH-06): manual + periódico, sin concurrencia, con cancelación
-    // ------------------------------------------------------------------
-
-    private int RefreshIntervalSeconds => Math.Clamp(Dashboard.CurrentOptions.RefreshIntervalSeconds, 30, 60);
-
-    private async Task RunPeriodicRefreshAsync()
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(RefreshIntervalSeconds));
         try
         {
-            while (await timer.WaitForNextTickAsync(_cts.Token))
-            {
-                await RefreshAsync();
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Componente destruido: se libera el timer y se cancela la consulta.
-        }
-    }
-
-    /// <summary>
-    /// Refresca el snapshot completo. Mantiene el último snapshot válido si la
-    /// consulta falla (DASH-05) y evita refrescos concurrentes.
-    /// </summary>
-    private async Task RefreshAsync()
-    {
-        if (!await _refreshLock.WaitAsync(0))
-            return; // ya hay un refresco en curso: se omite el nuevo
-
-        _busy = true;
-        try
-        {
-            var snapshot = await Dashboard.GetSnapshotAsync(_selectedVariable, _selectedRange, _cts.Token);
-            _snapshot = snapshot; // último snapshot válido
-            _error = null;
-            _lastRefreshUtc = DateTime.UtcNow;
-
-            // Si la variable seleccionada dejó de existir, caer a la primera disponible.
-            if (_snapshot.Kpis.Count > 0 && !_snapshot.Kpis.Any(k => k.Key == _selectedVariable))
-                _selectedVariable = _snapshot.Kpis[0].Key;
-        }
-        catch (OperationCanceledException)
-        {
-            // Componente destruido: no se reporta error.
+            data = await Dashboard.GetAsync(user);
+            error = null;
         }
         catch (Exception ex)
         {
-            // Se conserva _snapshot anterior y se muestra el error con reintento.
-            _error = $"No se pudo actualizar el dashboard: {ex.Message}";
+            error = $"No se pudo cargar el dashboard: {ex.Message}";
+        }
+    }
+
+    private async Task RegisterCalibrationAsync(int sensorId)
+    {
+        calibrating = sensorId;
+        try
+        {
+            if (!await Dashboard.RegisterCalibrationAsync(sensorId, user))
+                error = "No se pudo registrar el chequeo del sensor.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo registrar el chequeo del sensor: {ex.Message}";
         }
         finally
         {
-            _busy = false;
-            _initialLoading = false;
-            _refreshLock.Release();
-            await InvokeAsync(StateHasChanged);
+            calibrating = null;
         }
     }
 
-    private async Task OnSelectionChanged()
+    /// <summary>Card de $ redondeado ("$123k"); sin precios o pesos para algún lote, "—" con el link a Parámetros.</summary>
+    private RenderFragment Kpi(DashboardMoney money, string label, string hint) => __builder =>
     {
-        await RefreshAsync();
-    }
-
-    // ------------------------------------------------------------------
-    // Derivados para la vista
-    // ------------------------------------------------------------------
-
-    private string LastRefreshText =>
-        _lastRefreshUtc is not null
-            ? $"{_lastRefreshUtc.Value.ToLocalTime():HH:mm:ss} ({AgeText(_lastRefreshUtc.Value)})"
-            : "—";
-
-    private DashboardSeriesDto? Series => _snapshot?.Series;
-
-    private IReadOnlyList<double> SeriesValues =>
-        (Series?.Points.Select(p => (double)p.Value).ToList()) ?? [];
-
-    private IReadOnlyList<string> PointLabels
-    {
-        get
-        {
-            var series = Series;
-            var unit = series?.Unit ?? string.Empty;
-            return series?.Points
-                .Select(p => $"{p.BucketEndUtc.ToLocalTime():dd/MM HH:mm} · {p.Value.ToString("0.0")} {unit} · {p.ReadingCount} lecturas")
-                .ToList() ?? [];
-        }
-    }
-
-    /// <summary>Etiquetas X parciales (1 de cada N puntos) para no saturar el eje.</summary>
-    private IReadOnlyList<string> XLabels
-    {
-        get
-        {
-            var points = Series?.Points ?? [];
-            if (points.Count == 0)
-                return [];
-
-            var step = Math.Max(1, (int)Math.Ceiling(points.Count / 8.0));
-            return points
-                .Select((p, i) => i % step == 0 ? p.BucketEndUtc.ToLocalTime().ToString("dd/MM HH:mm") : string.Empty)
-                .ToList();
-        }
-    }
-
-    private IReadOnlyList<string> YLabels
-    {
-        get
-        {
-            var values = SeriesValues;
-            var unit = Series?.Unit ?? string.Empty;
-            if (values.Count == 0)
-                return [];
-
-            var min = values.Min();
-            var max = values.Max();
-            var mid = (min + max) / 2;
-            string Fmt(double v) => $"{v.ToString("0.###")}{(unit.Length > 0 ? $" {unit}" : null)}";
-            return [Fmt(max), Fmt(mid), Fmt(min)];
-        }
-    }
-
-    private static string KpiTitle(DashboardKpiDto kpi) =>
-        kpi.ObservedAtUtc is DateTime observed
-            ? $"{kpi.Label}: {kpi.Value?.ToString("0.0") ?? "—"} {kpi.Unit} · observado {observed.ToLocalTime():dd/MM/yyyy HH:mm:ss} · {kpi.NodeIdentifier}/{kpi.SensorName}"
-            : $"{kpi.Label}: sin lecturas";
-
-    /// <summary>Calidad de la última lectura según la validación de telemetría (VALID no se muestra).</summary>
-    private static string QualityText(string quality) => quality switch
-    {
-        TelemetryContract.QualitySuspect => "Lectura dudosa",
-        TelemetryContract.QualityStale => "Lectura vieja",
-        TelemetryContract.QualityInvalid => "Lectura inválida",
-        _ => quality
+        <section class="lot-card gh-kpi" title="@(money.Amount is { } exact ? $"{hint}: {LotFormat.Money(exact, money.Currency)}" : hint)">
+            <span class="gh-kpi__value">@(money.Amount is { } amount ? DashboardFormat.CompactMoney(amount, money.Currency) : "—")</span>
+            <span class="gh-kpi__label">@label</span>
+            @if (money.Amount is null)
+            {
+                <a class="lot-link gh-kpi__hint" href="settings/parametros">Faltan pesos o precios</a>
+            }
+        </section>
     };
 
-    private static string QualityHint(string quality) => quality switch
-    {
-        TelemetryContract.QualitySuspect => "La última lectura quedó fuera de la banda operativa del sensor: puede ser un valor real raro o una falla del sensor.",
-        TelemetryContract.QualityStale => "La última lectura llegó con mucha demora respecto de cuándo se midió.",
-        TelemetryContract.QualityInvalid => "La última lectura está fuera del rango físico posible del sensor.",
-        _ => quality
-    };
+    private string When(DateTime local) => LotFormat.When(local, data!.NowLocal);
 
-    private static string DeltaText(DashboardKpiDto kpi)
+    private string DaysUntil(DateOnly date)
     {
-        if (kpi.DeltaPercent is double pct)
+        var days = date.DayNumber - data!.Today.DayNumber;
+        return days switch
         {
-            var arrow = pct > 0 ? "↑" : pct < 0 ? "↓" : "→";
-            return $"{arrow} {Math.Abs(pct).ToString("0.0")}% vs anterior";
-        }
-
-        if (kpi.PreviousValue is not null && kpi.Value is not null)
-            return $"Δ {(kpi.Value.Value - kpi.PreviousValue.Value).ToString("+0.00;-0.00;0.00")} {kpi.Unit} vs anterior";
-
-        return "Sin comparación";
-    }
-
-    private static string DeltaClass(DashboardKpiDto kpi) => kpi.DeltaPercent switch
-    {
-        > 0 => "kpi-card__delta--up",
-        < 0 => "kpi-card__delta--down",
-        _ => "kpi-card__delta--flat"
-    };
-
-    private static string FreshnessText(string state) => state switch
-    {
-        DashboardFreshness.Reciente => "Reciente",
-        DashboardFreshness.Desactualizado => "Desactualizado",
-        _ => "Sin datos"
-    };
-
-    private static string FreshnessClass(string state) => state switch
-    {
-        DashboardFreshness.Reciente => "freshness--ok",
-        DashboardFreshness.Desactualizado => "freshness--warn",
-        _ => "freshness--muted"
-    };
-
-    private static string AgeText(DateTime? valueUtc)
-    {
-        if (valueUtc is not DateTime value)
-            return "—";
-
-        var age = DateTime.UtcNow - value;
-        return age switch
-        {
-            { TotalMinutes: < 1 } => $"{Math.Max(0, (int)age.TotalSeconds)} s",
-            { TotalHours: < 1 } => $"{Math.Max(0, (int)age.TotalMinutes)} min",
-            { TotalDays: < 1 } => $"{Math.Max(0, (int)age.TotalHours)} h",
-            _ => $"{Math.Max(0, (int)age.TotalDays)} d"
+            0 => "hoy",
+            1 => "mañana",
+            > 1 => $"en {days} días",
+            -1 => "ayer",
+            _ => $"hace {-days} días"
         };
     }
 
-    private static string NodeBadgeText(string connectionState) => connectionState switch
+    private static string Month(DateOnly date) => date.ToString("MMM", LotFormat.Culture).TrimEnd('.');
+
+    private static string DestinationColor(HarvestDestination destination) =>
+        destination == HarvestDestination.BabyLeaf ? BabyLeafColor : ConventionalColor;
+
+    private string CheckText(DashboardSensorCheck check)
     {
-        TelemetryContract.ConnectionOnline => "Online",
-        TelemetryContract.ConnectionDegraded => "Degradado",
-        TelemetryContract.ConnectionOffline => "Offline",
-        _ => "Sin conexión"
+        if (check.LastCalibration is null)
+            return "Sin calibración registrada";
+        var days = check.DueDate.DayNumber - data!.Today.DayNumber;
+        return days switch
+        {
+            < 0 => $"Vencido hace {LotFormat.Days(-days)}",
+            0 => "Vence hoy",
+            _ => $"{LotFormat.Short(check.DueDate)} · en {LotFormat.Days(days)}"
+        };
+    }
+
+    private static string CheckTitle(DashboardSensorCheck check) =>
+        (check.LastCalibration is { } last ? $"Último chequeo: {LotFormat.Short(last)}" : "Sin calibración registrada") +
+        $" · cada {LotFormat.Days(check.IntervalDays)}";
+
+    private static string SeverityClass(string severity) => severity switch
+    {
+        NotificationSeverities.Critica => "critical",
+        NotificationSeverities.Alta => "high",
+        NotificationSeverities.Media => "medium",
+        _ => "info"
     };
 
-    private static string NodeBadgeClass(string connectionState) => connectionState switch
+    private static string SeverityLabel(string severity) => severity switch
     {
-        TelemetryContract.ConnectionOnline => "text-bg-success",
-        TelemetryContract.ConnectionDegraded => "text-bg-warning",
-        TelemetryContract.ConnectionOffline => "text-bg-danger",
-        _ => "text-bg-secondary"
+        NotificationSeverities.Critica => "Crítica",
+        NotificationSeverities.Alta => "Alta",
+        NotificationSeverities.Media => "Media",
+        _ => "Informativa"
     };
-
 }

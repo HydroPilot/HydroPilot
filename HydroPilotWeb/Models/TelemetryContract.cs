@@ -68,4 +68,6 @@ public static class TelemetryContract
     // --- Estado de asignación de una lectura ---
     public const string AssignmentStateAsignado = "ASIGNADO";
     public const string AssignmentStateSinAsignacion = "SIN_ASIGNACION";
+    /// <summary>Lectura del invernadero (temperatura, humedad): no va a un lote, vale para todos los circuitos.</summary>
+    public const string AssignmentStateInvernadero = "INVERNADERO";
 }

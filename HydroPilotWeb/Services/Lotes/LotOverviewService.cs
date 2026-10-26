@@ -1,9 +1,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
-using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 
 namespace HydroPilotWeb.Services.Lotes;
@@ -24,22 +22,6 @@ public sealed record LotPlantBreakdown(
     int HarvestedAsBabyLeaf,
     int Discarded,
     int EmptyPositions);
-
-/// <summary>
-/// pH o CE de la solución: última lectura usable del sensor del lote o, si no hay,
-/// el valor manual guardado en el lote (IsManualValue). La banda sale del cultivo
-/// (pH) o de la etapa aplicada (CE).
-/// </summary>
-public sealed record SolutionReadingDto(
-    string SensorType,
-    decimal? Value,
-    string? Unit,
-    DateTime? ObservedAtUtc,
-    bool IsFresh,
-    bool IsManualValue,
-    decimal? BandMin,
-    decimal? BandMax,
-    bool? InBand);
 
 /// <summary>Resultado de un ciclo cerrado (cosechado o descartado), con lo registrado en el lote.</summary>
 public sealed record ClosedCycleDto(
@@ -63,7 +45,6 @@ public sealed record LotOverviewDto(
     LotGoalsRules.Result Goals,
     LotYieldEstimate Yield,
     LotHarvestYield? HarvestYield,
-    IReadOnlyList<SolutionReadingDto> Solution,
     bool IsClosed,
     ClosedCycleDto? ClosedCycle,
     IReadOnlyList<DataQualityAlert> DataAlerts,
@@ -78,7 +59,7 @@ public sealed record LotObjectivesUpdateResult(bool Succeeded, IReadOnlyList<str
 /// <summary>
 /// Vista de situación del lote: compone el estado del lote (LotAggregateService), el
 /// forecast (ForecastService), la línea de tiempo de ventanas de cosecha, las metas del
-/// ciclo y la solución nutritiva. No recalcula GDD: lo consume. El rendimiento por destino
+/// ciclo. No recalcula GDD: lo consume. El rendimiento por destino
 /// sale de plantas × peso de referencia (LotYieldRules), no del kg/m² del forecast.
 /// </summary>
 public class LotOverviewService
@@ -91,7 +72,6 @@ public class LotOverviewService
     private readonly ForecastService _forecast;
     private readonly GddService _gdd;
     private readonly SystemParametersService _parameters;
-    private readonly IOptions<DashboardOptions> _dashboardOptions;
     private readonly ILogger<LotOverviewService> _logger;
 
     public LotOverviewService(
@@ -100,7 +80,6 @@ public class LotOverviewService
         ForecastService forecast,
         GddService gdd,
         SystemParametersService parameters,
-        IOptions<DashboardOptions> dashboardOptions,
         ILogger<LotOverviewService> logger)
     {
         _dbFactory = dbFactory;
@@ -108,7 +87,6 @@ public class LotOverviewService
         _forecast = forecast;
         _gdd = gdd;
         _parameters = parameters;
-        _dashboardOptions = dashboardOptions;
         _logger = logger;
     }
 
@@ -167,7 +145,6 @@ public class LotOverviewService
         var lot = await context.Lots
             .AsNoTracking()
             .Include(l => l.CropType)
-            .Include(l => l.AppliedPhenologicalStage)
             .FirstAsync(l => l.Id == lotId, ct);
 
         var config = await context.BabyLeafConfigs
@@ -220,19 +197,20 @@ public class LotOverviewService
                     || p.CommercialStage.Name == CommercialStageNames.CandidataBabyLeaf), ct);
 
         var plants = Breakdown(state, harvestedAsBabyLeaf);
-        var objectives = new LotObjectives(lot.BabyLeafHarvestTargetPercent, lot.BabyLeafGoalPercent, lot.MaxLossPercent);
+        var objectives = new LotObjectives(lot.BabyLeafHarvestTargetPercent, lot.BabyLeafGoalPercent, lot.ExpectedActivePercent);
         var goals = LotGoalsRules.Evaluate(new LotGoalsRules.Input(
             plants.TotalPlants, plants.HarvestedAsBabyLeaf, plants.Apta, plants.Candidate,
-            plants.Discarded, plants.Risk, objectives.BabyLeafGoalPercent, objectives.MaxLossPercent));
-
-        // pH y CE solo se muestran en lotes en curso.
-        IReadOnlyList<SolutionReadingDto> solution = isClosed ? [] : await GetSolutionAsync(context, lot, asOfDate, ct);
+            plants.Discarded, objectives.BabyLeafGoalPercent, objectives.ExpectedActivePercent));
 
         // Rendimiento por plantas (cada una tiene su hueco): peso de referencia × plantas de cada destino.
+        // El esperado mezcla el histórico del invernadero con la situación del lote según la fase.
         var yieldEstimate = LotYieldRules.Estimate(
-            new LotYieldRules.Input(plants.Apta, plants.Candidate, plants.Developing, plants.Conventional),
+            new LotYieldRules.Input(plants.Apta, plants.Candidate, plants.Developing, plants.Conventional,
+                plants.Risk, plants.HarvestedAsBabyLeaf, plants.Harvested - plants.HarvestedAsBabyLeaf),
             await _parameters.GetYieldReferenceAsync(ct),
-            await SystemParametersService.ResolveLotPricesAsync(context, lot, asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow), ct));
+            await SystemParametersService.ResolveLotPricesAsync(context, lot, asOfDate ?? DateOnly.FromDateTime(DateTime.UtcNow), ct),
+            isClosed ? null : await YieldHistoryAsync(context, lot, ct),
+            LotYieldRules.LotWeight(timeline));
 
         // Ciclo cerrado: lo cosechado de cada destino, valorizado con los pesos y precios del día de la cosecha.
         LotHarvestYield? harvestYield = null;
@@ -270,7 +248,6 @@ public class LotOverviewService
             goals,
             yieldEstimate,
             harvestYield,
-            solution,
             isClosed,
             closedCycle,
             dataAlerts,
@@ -299,12 +276,12 @@ public class LotOverviewService
         var normalized = LotObjectivesRules.Normalize(input);
         lot.BabyLeafHarvestTargetPercent = normalized.HarvestThresholdPercent;
         lot.BabyLeafGoalPercent = normalized.BabyLeafGoalPercent;
-        lot.MaxLossPercent = normalized.MaxLossPercent;
+        lot.ExpectedActivePercent = normalized.ExpectedActivePercent;
         await context.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "Objetivos del lote {LotId} actualizados por {User}: umbral {Threshold}, meta Baby Leaf {Goal}, pérdidas máximas {MaxLoss}",
-            lotId, user.Identity?.Name, normalized.HarvestThresholdPercent, normalized.BabyLeafGoalPercent, normalized.MaxLossPercent);
+            "Objetivos del lote {LotId} actualizados por {User}: umbral {Threshold}, meta Baby Leaf {Goal}, plantas activas esperadas {ExpectedActive}",
+            lotId, user.Identity?.Name, normalized.HarvestThresholdPercent, normalized.BabyLeafGoalPercent, normalized.ExpectedActivePercent);
 
         return new LotObjectivesUpdateResult(true, []);
     }
@@ -333,6 +310,35 @@ public class LotOverviewService
         return asOfDate is { } viewDate && viewDate < date ? viewDate : date;
     }
 
+    /// <summary>
+    /// Cómo terminaron los lotes cerrados (cosechados o descartados) del mismo invernadero y cultivo:
+    /// plantas sembradas, cosechadas como Baby Leaf (apta o candidata al cosecharse) y como convencional.
+    /// </summary>
+    private static async Task<YieldHistory?> YieldHistoryAsync(HydroPilotDbContext context, Lot lot, CancellationToken ct)
+    {
+        var closed = await context.Lots
+            .AsNoTracking()
+            .Where(l => l.Id != lot.Id
+                && l.GreenhouseId == lot.GreenhouseId
+                && l.CropTypeId == lot.CropTypeId
+                && (l.Status!.Name == LotStatusNames.Cosechado || l.Status.Name == LotStatusNames.Descartado))
+            .Select(l => new
+            {
+                l.SowingDate,
+                Total = context.Plants.Count(p => p.LotId == l.Id),
+                BabyLeaf = context.Plants.Count(p => p.LotId == l.Id
+                    && p.OperationalState == PlantOperationalState.Cosechada
+                    && p.CommercialStage != null
+                    && (p.CommercialStage.Name == CommercialStageNames.BabyLeafApta
+                        || p.CommercialStage.Name == CommercialStageNames.CandidataBabyLeaf)),
+                Harvested = context.Plants.Count(p => p.LotId == l.Id && p.OperationalState == PlantOperationalState.Cosechada)
+            })
+            .ToListAsync(ct);
+
+        return LotYieldHistoryRules.Build(lot.SowingDate,
+            closed.Select(l => new LotYieldHistoryRules.ClosedLot(l.SowingDate, l.Total, l.BabyLeaf, l.Harvested - l.BabyLeaf)));
+    }
+
     private static LotPlantBreakdown Breakdown(LotStateDto state, int harvestedAsBabyLeaf)
     {
         int Count(string stage) => state.CommercialCounts.FirstOrDefault(c => c.StageName == stage)?.Count ?? 0;
@@ -347,52 +353,5 @@ public class LotOverviewService
         return new LotPlantBreakdown(
             state.TotalPlants, state.ActivePlants, apta, candidate, developing, conventional, risk,
             state.HarvestedPlants, harvestedAsBabyLeaf, state.DiscardedPlants, state.EmptyPositions);
-    }
-
-    private async Task<IReadOnlyList<SolutionReadingDto>> GetSolutionAsync(
-        HydroPilotDbContext context, Lot lot, DateOnly? asOfDate, CancellationToken ct)
-    {
-        // Con fecha simulada se toma la última lectura hasta el fin de ese día.
-        var reference = asOfDate is { } date
-            ? date.ToDateTime(new TimeOnly(23, 59, 59), DateTimeKind.Utc)
-            : DateTime.UtcNow;
-        var freshness = TimeSpan.FromMinutes(Math.Max(1, _dashboardOptions.Value.KpiFreshnessMinutes));
-
-        var ecMin = lot.AppliedPhenologicalStage?.EcMin ?? lot.CropType?.OptimalEcMin;
-        var ecMax = lot.AppliedPhenologicalStage?.EcMax ?? lot.CropType?.OptimalEcMax;
-
-        return
-        [
-            await ReadingAsync(AnomalyContract.SensorTypePh, lot.CurrentPh, lot.CropType?.OptimalPhMin, lot.CropType?.OptimalPhMax),
-            await ReadingAsync(AnomalyContract.SensorTypeCe, lot.CurrentEc, ecMin, ecMax),
-        ];
-
-        async Task<SolutionReadingDto> ReadingAsync(string sensorType, decimal? manualValue, decimal? min, decimal? max)
-        {
-            var latest = await context.SensorReadings
-                .AsNoTracking()
-                .Where(TelemetryQualityPolicy.OperationallyUsableReading)
-                .Where(r => r.LotId == lot.Id
-                    && r.ObservedAtUtc <= reference
-                    && r.Sensor != null && r.Sensor.SensorType != null
-                    && r.Sensor.SensorType.Name == sensorType)
-                .OrderByDescending(r => r.ObservedAtUtc)
-                .Select(r => new { r.Value, Unit = r.MeasurementUnit != null ? r.MeasurementUnit.Symbol : null, r.ObservedAtUtc })
-                .FirstOrDefaultAsync(ct);
-
-            var value = latest?.Value ?? manualValue;
-            bool? inBand = value is { } v && min is { } lo && max is { } hi ? v >= lo && v <= hi : null;
-
-            return new SolutionReadingDto(
-                sensorType,
-                value,
-                latest?.Unit,
-                latest?.ObservedAtUtc,
-                IsFresh: latest is not null && reference - latest.ObservedAtUtc <= freshness,
-                IsManualValue: latest is null && manualValue is not null,
-                min,
-                max,
-                inBand);
-        }
     }
 }

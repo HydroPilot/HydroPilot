@@ -196,7 +196,7 @@ public sealed record SimulationCostBreakdown(
 /// </summary>
 public sealed record SimulationStrategyOutcome(
     SimulationStrategyKind Kind,
-    string Name, // "Máximo Baby Leaf" | "Meta Baby Leaf (X %)" | "Todo convencional"
+    string Name, // "Máximo Baby Leaf" | "Meta Baby Leaf (X %)" | "Todo adulta"
     bool Available,
     SimulationCut? BabyLeafCut,
     SimulationCut? ConventionalCut,

@@ -1,41 +1,45 @@
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Baby Leaf: cuánto del lote ya es baby leaf contra la meta del ciclo, y cuánto puede llegar a serlo.
-   Sin título ni badge de ventana: el dato principal ya dice de qué habla y la ventana está en la card de arriba.
-   La meta se edita con el lápiz, que abre el modal de metas del ciclo. *@
-<section class="lot-card" aria-label="Baby Leaf">
-    <div class="lot-kpi">
-        <span class="lot-card__big">@LotFormat.Pct1(Goals.AchievedPercent)</span>
-        <span class="lot-kpi__text">
-            @(Overview.IsClosed ? "del lote se cosechó como Baby Leaf" : "del lote ya es Baby Leaf")
-            <span class="lot-kpi__note">· @Goals.AchievedCount de @LotFormat.Plants(Plants.TotalPlants)</span>
-        </span>
+@* Baby Leaf: en la barra, cuánto del lote ya es (o puede llegar a ser) Baby Leaf: cosechadas como Baby
+   Leaf (rayadas), Baby Leafs y candidatas, con su % y cantidad adentro de cada tramo, como la barra del mapa.
+   La raya marca la meta del ciclo ("meta 70%"). Se edita con el lápiz (modal de metas del lote). *@
+<section class="lot-card" aria-labelledby="lot-bl-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-bl-title">Meta Baby Leaf</h3>
         @if (CanEdit)
         {
-            <button class="lot-icon-btn lot-kpi__action" @onclick="OnEditObjectives" title="Editar metas del ciclo" aria-label="Editar metas del ciclo">✎</button>
+            <div class="lot-card__actions">
+                <button class="lot-icon-btn" @onclick="OnEditObjectives" title="Editar metas del lote" aria-label="Editar metas del lote">✎</button>
+            </div>
         }
-    </div>
+    </header>
 
     <div>
-        <div class="lot-progress lot-progress--lg" role="img" aria-label="@AriaLabel">
-            <div class="lot-progress__fill">
-                <div class="lot-progress__seg lot-seg--striped" style="width: @Css(HarvestedShare)%; background-color: @AptaColor;" title="Cosechadas como baby leaf: @Plants.HarvestedAsBabyLeaf"></div>
-                <div class="lot-progress__seg" style="width: @Css(AptaShare)%; background: @AptaColor;" title="Aptas: @Plants.Apta"></div>
-                <div class="lot-progress__seg" style="width: @Css(CandidateShare)%; background: @CandidateColor;" title="Candidatas: @Plants.Candidate"></div>
+        <div class="lot-goalbar">
+            <div class="lot-stack" role="img" aria-label="@AriaLabel">
+                @foreach (var item in Layout)
+                {
+                    var pct = LotFormat.Pct1(item.Shown);
+                    var full = $"{pct} ({item.Segment.Count})";
+                    @* "% (cantidad)" si entra en el tramo; si no, solo el %; si tampoco, nada (el CSS mide el tramo). *@
+                    <div class="lot-stack__seg @(item.Segment.Striped ? "lot-seg--striped" : null)"
+                         style="width: @Css(item.Width)%; background-color: @item.Segment.Background; color: @item.Segment.Text;"
+                         title="@($"{item.Segment.Label}: {item.Segment.Count} ({pct})")">
+                        <span class="lot-stack__full @(full.Length >= 9 ? "lot-stack__full--long" : null)">@full</span>
+                        <span class="lot-stack__short @(pct.Length >= 5 ? "lot-stack__short--long" : null)">@pct</span>
+                    </div>
+                }
             </div>
-            @if (Goal is { } g)
+            @if (Goal is { } marker)
             {
-                <div class="lot-progress__marker" style="left: @Css(Math.Min(100m, g))%;" title="Meta @LotFormat.Pct1(g)"></div>
+                <div class="lot-progress__marker" style="--pos: @Css(Math.Clamp(marker, 0m, 100m));" title="Meta @LotFormat.Pct1(marker)"></div>
             }
         </div>
-        @if (Goal is { } marker)
+        @if (Goal is { } goal)
         {
             <div class="lot-bar-labels" aria-hidden="true">
-                @* Centrada en la raya de la meta; cerca de un borde se corre lo justo para no salirse (ver CSS). *@
-                <span class="lot-bar-labels__goal" style="--pos: @Css(Math.Min(100m, marker));">
-                    meta @LotFormat.Pct1(marker) · @LotFormat.Count(Goals.GoalPlants ?? 0, "baby leaf", "baby leafs")
-                </span>
+                <span class="lot-bar-labels__goal" style="--pos: @Css(Math.Min(100m, goal));">meta @LotFormat.Pct1(goal)</span>
             </div>
         }
     </div>
@@ -52,7 +56,7 @@
         {
             <span class="lot-legend__item">
                 <span class="lot-legend__dot" style="background: @AptaColor;"></span>
-                @LotFormat.Count(Plants.Apta, "apta", "aptas")
+                @LotFormat.Count(Plants.Apta, "Baby Leaf", "Baby Leafs")
             </span>
             <span class="lot-legend__item">
                 <span class="lot-legend__dot" style="background: @CandidateColor;"></span>
@@ -61,41 +65,10 @@
         }
     </div>
 
-    <div class="lot-stats">
-        <div class="lot-stat">
-            <span class="lot-stat__label">Meta del ciclo</span>
-            @if (Goal is null)
-            {
-                <span class="lot-stat__value lot-stat__value--muted">Sin definir</span>
-            }
-            else
-            {
-                var (value, tone, hint) = GoalStatus();
-                <span class="lot-stat__value lot-stat__value--@tone">@value</span>
-                @if (hint is not null)
-                {
-                    <span class="lot-stat__hint">@hint</span>
-                }
-            }
-        </div>
-        @if (Overview.IsClosed)
-        {
-            <div class="lot-stat">
-                <span class="lot-stat__label">Resto del lote</span>
-                <span class="lot-stat__value">@LotFormat.Plants(Plants.TotalPlants - Plants.HarvestedAsBabyLeaf)</span>
-            </div>
-        }
-        else
-        {
-            <div class="lot-stat">
-                <span class="lot-stat__label">Potencial</span>
-                <span class="lot-stat__value @PotentialTone">
-                    @LotFormat.Pct1(Goals.PotentialPercent)
-                    <small>· @Goals.PotentialCount de @LotFormat.Plants(Plants.TotalPlants)</small>
-                </span>
-            </div>
-        }
-    </div>
+    @if (Goal is null)
+    {
+        <p class="lot-card__sub">Sin meta definida.</p>
+    }
 </section>
 
 @code {
@@ -103,45 +76,46 @@
     [Parameter] public bool CanEdit { get; set; }
     [Parameter] public EventCallback OnEditObjectives { get; set; }
 
-    private static readonly string AptaColor = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta).Background;
-    private static readonly string CandidateColor = CommercialStagePalette.ForStage(CommercialStageNames.CandidataBabyLeaf).Background;
+    private static readonly CommercialStagePalette.CellStyle Apta = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta);
+    private static readonly CommercialStagePalette.CellStyle Candidate = CommercialStagePalette.ForStage(CommercialStageNames.CandidataBabyLeaf);
+    private static readonly string AptaColor = Apta.Background;
+    private static readonly string CandidateColor = Candidate.Background;
+
+    private sealed record Segment(string Label, int Count, string Background, string Text, bool Striped = false);
+
+    /// <summary>Tramo a dibujar: ancho exacto y % mostrado (redondeo acumulado, como la barra del mapa).</summary>
+    private sealed record PlacedSegment(Segment Segment, decimal Width, decimal Shown);
 
     private LotGoalsRules.Result Goals => Overview.Goals;
     private LotPlantBreakdown Plants => Overview.Plants;
     private decimal? Goal => Overview.Objectives.BabyLeafGoalPercent;
 
-    private decimal Share(int count) => Plants.TotalPlants > 0 ? count * 100m / Plants.TotalPlants : 0m;
-    private decimal HarvestedShare => Share(Plants.HarvestedAsBabyLeaf);
-    private decimal AptaShare => Share(Plants.Apta);
-    private decimal CandidateShare => Share(Plants.Candidate);
+    // Mismo orden que la barra del mapa: cosechadas + Baby Leafs es lo logrado; sumando candidatas, el potencial.
+    private IReadOnlyList<PlacedSegment> Layout
+    {
+        get
+        {
+            if (Plants.TotalPlants <= 0)
+                return [];
+
+            Segment[] segments =
+            [
+                new("Cosechadas como Baby Leaf", Plants.HarvestedAsBabyLeaf, Apta.Background, Apta.Color, Striped: true),
+                new("Baby Leafs", Plants.Apta, Apta.Background, Apta.Color),
+                new("Candidatas", Plants.Candidate, Candidate.Background, Candidate.Color),
+            ];
+            var shares = LotGoalsRules.CumulativeShares(segments.Select(s => s.Count).ToList(), Plants.TotalPlants);
+            return segments
+                .Select((segment, i) => new PlacedSegment(segment, segment.Count * 100m / Plants.TotalPlants, shares[i]))
+                .Where(p => p.Segment.Count > 0)
+                .ToList();
+        }
+    }
 
     private string AriaLabel =>
-        $"{Plants.HarvestedAsBabyLeaf} cosechadas, {Plants.Apta} aptas y {Plants.Candidate} candidatas de {Plants.TotalPlants} plantas" +
+        $"Baby Leaf logrado {LotFormat.Pct1(Goals.AchievedPercent)} ({Plants.HarvestedAsBabyLeaf} cosechadas y {Plants.Apta} Baby Leafs), " +
+        $"potencial {LotFormat.Pct1(Goals.PotentialPercent)} con {Plants.Candidate} candidatas, de {LotFormat.Plants(Plants.TotalPlants)}" +
         (Goal is { } g ? $"; meta {LotFormat.Pct1(g)}" : string.Empty);
-
-    // Potencial en verde si alcanza la meta (cumplida o alcanzable con las candidatas), en rojo si no; sin meta, neutro.
-    private string? PotentialTone => Goals.BabyLeafStatus switch
-    {
-        BabyLeafGoalStatus.Cumplida or BabyLeafGoalStatus.Alcanzable => "lot-stat__value--success",
-        BabyLeafGoalStatus.PorDebajo => "lot-stat__value--danger",
-        _ => null
-    };
-
-    // Amarillo: las candidatas alcanzan para la meta; rojo: ni con todas se llega.
-    private (string Value, string Tone, string? Hint) GoalStatus()
-    {
-        var missing = $"Faltan {LotFormat.Plants(Goals.PlantsMissingForGoal)}";
-        return Goals.BabyLeafStatus switch
-        {
-            BabyLeafGoalStatus.Cumplida => ("Cumplida", "success", null),
-            // En un ciclo cerrado ya no hay plantas que puedan sumar: solo cumplida o no.
-            BabyLeafGoalStatus.Alcanzable or BabyLeafGoalStatus.PorDebajo when Overview.IsClosed =>
-                ("No cumplida", "danger", $"faltaron {LotFormat.Plants(Goals.PlantsMissingForGoal)}"),
-            BabyLeafGoalStatus.Alcanzable => (missing, "warning", null),
-            BabyLeafGoalStatus.PorDebajo => (missing, "danger", null),
-            _ => ("Sin plantas en el lote", "muted", null)
-        };
-    }
 
     private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 }

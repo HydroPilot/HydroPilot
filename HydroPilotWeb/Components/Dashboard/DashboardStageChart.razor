@@ -1,0 +1,37 @@
+@using HydroPilotWeb.Components.Lotes
+@using HydroPilotWeb.Services.Dashboard
+@namespace HydroPilotWeb.Components.Dashboard
+
+@* Plantas de todos los lotes activos por estado: una barra vertical por estado, con los colores del mapa
+   de Lotes. Cada barra lleva su cantidad arriba y su nombre abajo (el color no es lo único que la
+   identifica); todas comparten la escala del estado con más plantas. En celular las barras pasan a ser
+   horizontales (los nombres no entran debajo). --share = largo de la barra, de 0 a 1 del máximo. *@
+<div class="gh-bars" role="img" aria-label="@AriaLabel">
+    @foreach (var stage in Stages)
+    {
+        var share = Max > 0 ? (decimal)stage.Plants / Max : 0m;
+        <div class="gh-bars__col" title="@($"{stage.Label}: {LotFormat.Plants(stage.Plants)}")">
+            <div class="gh-bars__plot">
+                <span class="gh-bars__value">@stage.Plants</span>
+                <span class="gh-bars__bar @(stage.Plants > 0 ? "gh-bars__bar--some" : null)"
+                      style="--share: @Css(share); background: @Color(stage);"></span>
+            </div>
+            <span class="gh-bars__label">@stage.Label</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<DashboardStageCount> Stages { get; set; } = [];
+
+    private int Max => Stages.Count == 0 ? 0 : Stages.Max(s => s.Plants);
+
+    // Descartadas: el gris de su filtro en el mapa (sin la trama de la celda, que en una barra no se lee).
+    private static string Color(DashboardStageCount stage) =>
+        stage.Stage is { } name ? CommercialStagePalette.ForStage(name).Background : "#8a94a0";
+
+    private string AriaLabel => "Plantas de los lotes activos por estado: " +
+        string.Join(", ", Stages.Select(s => $"{s.Label} {s.Plants}"));
+
+    private static string Css(decimal value) => value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+}

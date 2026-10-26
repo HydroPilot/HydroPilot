@@ -21,7 +21,11 @@ public static class NotificationTypes
 {
     public const string DesbalanceQuimico = "DesbalanceQuimico";
     public const string CosechaInminente = "CosechaInminente";
-    public const string RecomendacionEstrategica = "RecomendacionEstrategica";
+    public const string FallaDosificacion = "FallaDosificacion";
+    /// <summary>Un nodo dejó de mandar lecturas (OFFLINE); se resuelve sola cuando vuelve.</summary>
+    public const string NodoDesconectado = "NodoDesconectado";
+    /// <summary>Error de un sensor (sin datos, fuera de lo normal o salto): ver SensorFault.</summary>
+    public const string ErrorSensor = "ErrorSensor";
     public const string PruebaSistema = "PruebaSistema";
     public const string Info = "Info";
 }

@@ -5,7 +5,6 @@ using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
-using HydroPilotWeb.Services.Optimization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +30,6 @@ builder.Services.AddScoped<SystemParametersService>();
 builder.Services.AddScoped<ForecastService>();
 builder.Services.AddScoped<TelemetryValidationService>();
 builder.Services.AddScoped<TelemetryIngestionService>();
-builder.Services.AddScoped<NodeLotAssignmentService>();
 builder.Services.AddOptions<TelemetryOptions>().BindConfiguration(TelemetryOptions.SectionName);
 builder.Services.AddHostedService<NodeConnectionMonitorHostedService>();
 builder.Services.AddHttpClient<WeatherService>(client =>
@@ -48,6 +46,9 @@ builder.Services.AddScoped<PlantLifecycleService>();
 builder.Services.AddScoped<LotDailyFlowService>();
 builder.Services.AddScoped<LotOverviewService>();
 builder.Services.AddScoped<LotCreationService>();
+builder.Services.AddScoped<LotCommentService>();
+builder.Services.AddScoped<RecentVisitService>();
+builder.Services.AddScoped<GreenhouseDashboardService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<BabyLeafOutlookService>();
 
@@ -72,14 +73,49 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
 
-// --- Módulo de optimización (plan 16) ---
-// Hook de anomalías abiertas: lo reemplaza el módulo de anomalies cuando exista
-// (último registro gana en DI). Sink de eventos: lo reemplaza notifications.
-builder.Services.AddSingleton<IOpenAnomalyProvider, NoOpenAnomalyProvider>();
-builder.Services.AddScoped<IOptimizationEventSink, HydroPilotWeb.Services.Notifications.OptimizationNotificationSink>();
-builder.Services.AddScoped<OptimizationService>();
-builder.Services.AddOptions<OptimizationOptions>()
-    .BindConfiguration(OptimizationOptions.SectionName);
+// --- Control de pH y CE (dosis manual + motor automático) ---
+// La Pi pide sus comandos por /api/nodos/{nodeId}/comandos y responde el resultado. Al llegar lecturas de pH/CE
+// la ingesta avisa al ControlWorker, que evalúa el tanque si el nodo está en AUTO; el barrido vence lo que nadie
+// tomó, mide el efecto de las dosis y guarda el nivel vigente de cada lote (notas/control/plan-control-ph-ce.md).
+builder.Services.AddOptions<HydroPilotWeb.Services.Control.ControlOptions>()
+    .BindConfiguration(HydroPilotWeb.Services.Control.ControlOptions.SectionName);
+builder.Services.AddSingleton<HydroPilotWeb.Services.Control.ControlTrigger>();
+
+// Transporte con la Pi: HTTP (la Pi consulta sus comandos) o Azure IoT Hub (C2D/D2C), con IotHub:Enabled.
+// Las cadenas del hub van en user-secrets o en la configuración de la Web App (notas/control/azure-iot-hub.md).
+builder.Services.AddOptions<HydroPilotWeb.Services.Control.IotHub.IotHubOptions>()
+    .BindConfiguration(HydroPilotWeb.Services.Control.IotHub.IotHubOptions.SectionName);
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.IotHub.IotHubMessageHandler>();
+var iotHub = builder.Configuration.GetSection(HydroPilotWeb.Services.Control.IotHub.IotHubOptions.SectionName)
+    .Get<HydroPilotWeb.Services.Control.IotHub.IotHubOptions>() ?? new();
+if (iotHub.Enabled)
+{
+    if (string.IsNullOrWhiteSpace(iotHub.ServiceConnectionString) || string.IsNullOrWhiteSpace(iotHub.EventHubConnectionString))
+        throw new InvalidOperationException("IotHub:Enabled=true pero faltan IotHub:ServiceConnectionString o IotHub:EventHubConnectionString.");
+    builder.Services.AddSingleton<HydroPilotWeb.Services.Control.ICommandChannel, HydroPilotWeb.Services.Control.IotHub.IotHubCommandChannel>();
+    builder.Services.AddHostedService<HydroPilotWeb.Services.Control.IotHub.IotHubConsumerHostedService>();
+    builder.Services.AddHostedService<HydroPilotWeb.Services.Control.IotHub.IotHubFeedbackHostedService>();
+}
+else
+{
+    builder.Services.AddSingleton<HydroPilotWeb.Services.Control.ICommandChannel, HydroPilotWeb.Services.Control.HttpPollingCommandChannel>();
+}
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.IControlEventSink, HydroPilotWeb.Services.Notifications.ControlNotificationSink>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.ControlService>();
+// Receta aprendida (fase 5): el histórico de ciclos cerrados es el de Lotes (BabyLeafOutlookService).
+builder.Services.AddScoped<ILotHistorySource>(sp => sp.GetRequiredService<BabyLeafOutlookService>());
+builder.Services.AddScoped<HydroPilotWeb.Services.Control.RecipeService>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.Control.ControlWorker>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.Control.ControlSweepHostedService>();
+// Errores de sensores (sin datos, fuera de lo normal, saltos): alertas y freno del control automático.
+builder.Services.AddScoped<HydroPilotWeb.Services.SensorFaults.SensorFaultService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Circuits.CircuitService>();
+builder.Services.AddHostedService<HydroPilotWeb.Services.SensorFaults.SensorFaultMonitorHostedService>();
+
+// --- Entorno de simulación (apagado por defecto; perfil "simulacion") ---
+builder.Services.Configure<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentOptions>(
+    builder.Configuration.GetSection(HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentOptions.SectionName));
+builder.Services.AddSingleton<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentService>();
 
 // --- Módulo de notificaciones y correo (plan 17) ---
 builder.Services.Configure<HydroPilotWeb.Services.Notifications.EmailOptions>(
@@ -153,6 +189,12 @@ using (var scope = app.Services.CreateScope())
     using var context = factory.CreateDbContext();
     DbInitializer.Initialize(context, builder.Configuration);
 }
+
+// Entorno de simulación (perfil "simulacion"): la primera vez genera el historial de ejemplo, antes de los barridos.
+var simulationEnvironment = app.Services.GetRequiredService<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentService>();
+if (simulationEnvironment.Options.Enabled && !useLocalDb)
+    throw new InvalidOperationException("El entorno de simulación borra y regenera la base: solo corre contra LocalDB.");
+await simulationEnvironment.EnsureSeededAsync();
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 

@@ -8,8 +8,7 @@
 else
 {
     var t = Timeline!;
-    // Ciclo cerrado: no hay próximo corte; la marca de "hoy" es el día del cierre.
-    var cut = ClosedLabel is null ? t.NextCut : null;
+    var marks = CutMarks(t);
     <div class="lot-timeline" role="img" aria-label="@AriaLabel(t)">
         @{
             var todayPos = Pos(t.AsOfDate);
@@ -30,19 +29,16 @@ else
             @if (t.BabyLeafCloses.Date is { } closes)
             {
                 <div class="lot-timeline__seg lot-timeline__seg--conv @Current(CyclePhase.VentanaConvencional)" style="width: @Css(Width(closes, t.Overmaturity.Date))%;"
-                     title="@($"Ventana convencional: {Range(t.BabyLeafCloses, t.Overmaturity)}")">convencional</div>
+                     title="@($"Ventana adulta: {Range(t.BabyLeafCloses, t.Overmaturity)}")">adulta</div>
             }
         </div>
         <div class="lot-timeline__today" style="left: @Css(Pos(t.AsOfDate))%;"></div>
-        @* Un rombo por óptimo de corte; el que no es el próximo corte va atenuado. *@
-        @foreach (var (optimum, destination) in new[] { (t.BabyLeafOptimum, HarvestDestination.BabyLeaf), (t.ConventionalOptimum, HarvestDestination.Convencional) })
+        @* Cosechas óptimas: una línea punteada por óptimo de corte, como la de "Hoy". Baja hasta su etiqueta
+           (debajo de las fechas de las ventanas); si pasaría por encima de una fecha, se corta en esa fila. *@
+        @foreach (var mark in marks)
         {
-            if (optimum.Date is { } date && date >= t.SowingDate && date <= End)
-            {
-                <div class="lot-timeline__harvest @(cut?.Destination == destination ? null : "lot-timeline__harvest--dim")"
-                     style="left: @Css(Pos(date))%;"
-                     title="@($"Corte {Name(destination)} óptimo ({LotFormat.Num(optimum.Gdd)} GDD): {LotFormat.Milestone(optimum)}")"></div>
-            }
+            <div class="lot-timeline__cut-line @mark.State @(mark.CrossesDate ? null : "lot-timeline__cut-line--long") @(mark.Row == 2 ? "lot-timeline__cut-line--row2" : null)"
+                 style="left: @Css(mark.Pos)%;"></div>
         }
         <div class="lot-timeline__labels">
             <span class="lot-timeline__label--start" style="left: 0%;" title="Siembra">@LotFormat.Short(t.SowingDate)</span>
@@ -52,34 +48,24 @@ else
             }
             @if (t.BabyLeafCloses.Date is { } c && t.Overmaturity.Date is not null)
             {
-                <span style="left: @Css(Pos(c))%;" title="@MilestoneTitle("Cierra la ventana Baby Leaf y abre la convencional", t.BabyLeafCloses)">@Label(t.BabyLeafCloses)</span>
+                <span style="left: @Css(Pos(c))%;" title="@MilestoneTitle("Cierra la ventana Baby Leaf y abre la adulta", t.BabyLeafCloses)">@Label(t.BabyLeafCloses)</span>
             }
             <span class="lot-timeline__label--end" style="left: 100%;" title="@EndTitle(t)">@EndLabel(t)</span>
         </div>
-        @* Leyenda en vez de etiqueta posicionada: el corte suele caer cerca de otros hitos y se pisaría. *@
-        @if (cut is not null)
+        @if (marks.Count > 0)
         {
-            <div class="lot-timeline__legend" title="@(IsExtrapolated(cut) ? ExtrapolatedHint : null)">
-                <span class="lot-timeline__harvest-icon" aria-hidden="true"></span>
-                <span>
-                    @if (cut.CutNow)
+            <div class="lot-timeline__cuts @(marks.Any(m => m.Row == 2) ? "lot-timeline__cuts--two-rows" : null)">
+                @foreach (var mark in marks)
+                {
+                    @if (mark.CrossesDate)
                     {
-                        <strong class="lot-timeline__cut-now">Cortar @Name(cut.Destination) ahora</strong>
-                        <text>@($" · {LimitText(t, cut)}{InDays(t, cut.Limit)}")</text>
+                        <div class="lot-timeline__cut-stem @mark.State @(mark.Row == 2 ? "lot-timeline__cut-stem--row2" : null)" style="left: @Css(mark.Pos)%;"></div>
                     }
-                    else
-                    {
-                        <text>@($"Corte {Name(cut.Destination)} óptimo ")</text>
-                        <strong>@LotFormat.Milestone(cut.Optimum)</strong>
-                        <text>@($"{InDays(t, cut.Optimum)} · {ContextText(t, cut)}")</text>
-                    }
-                </span>
-            </div>
-        }
-        else if (ClosedLabel is null && t.Phase == CyclePhase.Sobremadurez)
-        {
-            <div class="lot-timeline__legend">
-                <span><strong class="lot-timeline__overdue">Pasado de cosecha</strong>@(t.Overmaturity.Date is { } over ? $" desde el {LotFormat.Day(over)}" : null)</span>
+                    <div class="lot-timeline__cut @mark.State @(mark.Row == 2 ? "lot-timeline__cut--row2" : null)" style="--pos: @Css(mark.Pos);" title="@mark.Title">
+                        <span class="lot-timeline__cut-what">@mark.What</span>
+                        <span class="lot-timeline__cut-date">@mark.Date</span>
+                    </div>
+                }
             </div>
         }
     </div>
@@ -88,12 +74,24 @@ else
 @code {
     [Parameter] public CycleTimeline? Timeline { get; set; }
 
-    /// <summary>Ciclo cerrado: "Cosecha" o "Descarte" (marca del cierre en vez de "Hoy"); null = en curso.</summary>
+    /// <summary>Ciclo cerrado: "Fin del ciclo" (marca del cierre en vez de "Hoy"); null = en curso.</summary>
     [Parameter] public string? ClosedLabel { get; set; }
 
     private const string ExtrapolatedHint = "≈: más allá de los 7 días de pronóstico, extrapolación con el último GDD diario.";
 
+    /// <summary>Distancia mínima (en % de la barra) entre dos etiquetas de cosecha en la misma fila.</summary>
+    private const decimal MinCutLabelGap = 32m;
+
+    /// <summary>Media etiqueta de fecha de ventana ("≈13/11"), en % de la barra: más cerca, la línea la pisaría.</summary>
+    private const decimal DateLabelHalfWidth = 8m;
+
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+
+    /// <summary>
+    /// Cosecha óptima (óptimo de corte de un destino): posición en la barra, fila de la etiqueta, texto,
+    /// tooltip y estado (clase CSS). CrossesDate = la línea pasaría por encima de una fecha de ventana.
+    /// </summary>
+    private sealed record CutMark(decimal Pos, int Row, bool CrossesDate, string What, string Date, string Title, string? State);
 
     // "Hoy (día N)" es ancho: cerca de los bordes se alinea hacia adentro en vez de centrarse.
     private static string? EdgeClass(decimal pos) =>
@@ -125,32 +123,69 @@ else
 
     private decimal Width(DateOnly from, DateOnly? to) => Math.Max(0m, Pos(to ?? End) - Pos(from));
 
+    /// <summary>
+    /// Una marca por óptimo de corte (Baby Leaf y adulta). El próximo corte va en color pleno; el
+    /// otro (ya pasó, o es del destino siguiente), atenuado. Ya en el óptimo: "Cortar ahora"; en
+    /// sobremadurez: "Pasado de cosecha".
+    /// </summary>
+    private IReadOnlyList<CutMark> CutMarks(CycleTimeline t)
+    {
+        var cut = ClosedLabel is null ? t.NextCut : null;
+        var dates = DatePositions(t);
+        var marks = new List<CutMark>();
+        foreach (var (optimum, destination) in new[] { (t.BabyLeafOptimum, HarvestDestination.BabyLeaf), (t.ConventionalOptimum, HarvestDestination.Convencional) })
+        {
+            if (optimum.Date is not { } date || date < t.SowingDate || date > End)
+                continue;
+
+            var isNext = cut?.Destination == destination;
+            var overdue = ClosedLabel is null && t.Phase == CyclePhase.Sobremadurez && destination == HarvestDestination.Convencional;
+            var (what, state) = isNext && cut!.CutNow ? ("Cortar ahora", "lot-cut--now")
+                : overdue ? ("Pasado de cosecha", "lot-cut--overdue")
+                : ("Cosecha óptima", isNext && optimum.IsEstimate ? null : "lot-cut--dim");
+
+            var pos = Pos(date);
+            var title = $"Corte óptimo de {Name(destination)} ({LotFormat.Num(optimum.Gdd)} GDD): {LotFormat.Milestone(optimum)}{InDays(t, optimum)}"
+                        + (optimum.IsExtrapolated ? $". {ExtrapolatedHint}" : string.Empty);
+            marks.Add(new CutMark(pos, 1, dates.Any(d => CrossesDate(pos, d)), what, Label(optimum), title, state));
+        }
+
+        // Dos etiquetas muy cerca: la segunda baja una fila para no pisarse.
+        marks.Sort((a, b) => a.Pos.CompareTo(b.Pos));
+        for (var i = 1; i < marks.Count; i++)
+        {
+            if (marks[i].Pos - marks[i - 1].Pos < MinCutLabelGap && marks[i - 1].Row == 1)
+                marks[i] = marks[i] with { Row = 2 };
+        }
+        return marks;
+    }
+
+    /// <summary>Posiciones de las fechas de las ventanas que se ven debajo de la barra.</summary>
+    private List<decimal> DatePositions(CycleTimeline t)
+    {
+        var positions = new List<decimal> { 0m, 100m };
+        if (t.BabyLeafOpens.Date is { } opens)
+            positions.Add(Pos(opens));
+        if (t.BabyLeafCloses.Date is { } closes && t.Overmaturity.Date is not null)
+            positions.Add(Pos(closes));
+        return positions;
+    }
+
+    // La primera fecha va alineada a la izquierda y la última a la derecha; las del medio, centradas.
+    private static bool CrossesDate(decimal cutPos, decimal datePos) => datePos switch
+    {
+        0m => cutPos <= DateLabelHalfWidth * 2,
+        100m => cutPos >= 100m - DateLabelHalfWidth * 2,
+        _ => Math.Abs(cutPos - datePos) <= DateLabelHalfWidth
+    };
+
     private static string Name(HarvestDestination destination) =>
-        destination == HarvestDestination.BabyLeaf ? "Baby Leaf" : "convencional";
-
-    /// <summary>Antes del óptimo: cuándo abre la ventana (en desarrollo) o hasta cuándo dura.</summary>
-    private static string ContextText(CycleTimeline t, HarvestCut cut) =>
-        t.Phase == CyclePhase.Desarrollo && t.BabyLeafOpens.Date is not null
-            ? $"la ventana abre {On(t.BabyLeafOpens)}"
-            : LimitText(t, cut);
-
-    private static string LimitText(CycleTimeline t, HarvestCut cut) =>
-        cut.Destination == HarvestDestination.BabyLeaf
-            ? $"la ventana cierra {On(cut.Limit)}"
-            : $"sobremadurez {On(cut.Limit)}";
-
-    /// <summary>"el 25 oct", o "≈ 25 oct" si cae más allá del pronóstico.</summary>
-    private static string On(CycleMilestone milestone) =>
-        milestone.Date is null ? "sin fecha"
-        : milestone.IsExtrapolated ? LotFormat.Milestone(milestone)
-        : $"el {LotFormat.Milestone(milestone)}";
+        destination == HarvestDestination.BabyLeaf ? "Baby Leaf" : "adultas";
 
     private static string InDays(CycleTimeline t, CycleMilestone milestone) =>
         milestone.Date is { } date && date >= t.AsOfDate
             ? date == t.AsOfDate ? " (hoy)" : $" (en {LotFormat.Days(date.DayNumber - t.AsOfDate.DayNumber)})"
             : string.Empty;
-
-    private static bool IsExtrapolated(HarvestCut cut) => cut.Optimum.IsExtrapolated || cut.Limit.IsExtrapolated;
 
     private static string Label(CycleMilestone milestone) =>
         milestone.Date is { } date ? (milestone.IsExtrapolated ? "≈" : string.Empty) + LotFormat.Short(date) : string.Empty;
@@ -165,7 +200,7 @@ else
 
     private static string EndTitle(CycleTimeline t) =>
         t.Overmaturity.Date is not null
-            ? MilestoneTitle("Sobremadurez: fin de la ventana convencional", t.Overmaturity)
+            ? MilestoneTitle("Sobremadurez: fin de la ventana adulta", t.Overmaturity)
             : MilestoneTitle("Cierra la ventana Baby Leaf", t.BabyLeafCloses);
 
     private static string Range(CycleMilestone from, CycleMilestone to) =>
@@ -173,8 +208,8 @@ else
 
     private static string AriaLabel(CycleTimeline t) =>
         $"Siembra {LotFormat.Short(t.SowingDate)}; ventana Baby Leaf {Range(t.BabyLeafOpens, t.BabyLeafCloses)}, " +
-        $"corte óptimo {LotFormat.Milestone(t.BabyLeafOptimum)}; ventana convencional {Range(t.BabyLeafCloses, t.Overmaturity)}, " +
-        $"corte óptimo {LotFormat.Milestone(t.ConventionalOptimum)}; día {t.CycleDay} del ciclo.";
+        $"cosecha estimada {LotFormat.Milestone(t.BabyLeafOptimum)}; ventana adulta {Range(t.BabyLeafCloses, t.Overmaturity)}, " +
+        $"cosecha estimada {LotFormat.Milestone(t.ConventionalOptimum)}; día {t.CycleDay} del ciclo.";
 
     private static string Css(decimal value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 }

@@ -21,7 +21,7 @@ public sealed record BabyLeafOutlookRequest(
 /// El GDD medido de cada lote cerrado (lo más caro: lee todas sus lecturas) se guarda en memoria,
 /// porque un ciclo cerrado ya no cambia.
 /// </summary>
-public class BabyLeafOutlookService
+public class BabyLeafOutlookService : ILotHistorySource
 {
     private static readonly TimeSpan MeasuredCycleCacheTime = TimeSpan.FromHours(6);
 
@@ -84,9 +84,16 @@ public class BabyLeafOutlookService
                 timeline.BabyLeafCloses.Gdd, timeline.ConventionalOptimum.Gdd));
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<LotCycleOutcome>> GetCycleOutcomesAsync(int cropTypeId, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        return await GetCycleOutcomesAsync(context, cropTypeId, ct);
+    }
+
     /// <summary>
     /// Ciclos cerrados del cultivo con plantas. Lo cargado a mano en el lote manda; lo que falta se
-    /// calcula: aptas en el óptimo = cortadas como Baby Leaf + las que estuvieron "Baby Leaf apta" y
+    /// calcula: aptas en el óptimo = cortadas como Baby Leaf + las que estuvieron "Baby Leaf" y
     /// siguieron; pérdidas tempranas/tardías = descartes antes/después de que el GDD medido cruzó el
     /// cierre de la ventana Baby Leaf; clima = GDD diario promedio medido.
     /// </summary>

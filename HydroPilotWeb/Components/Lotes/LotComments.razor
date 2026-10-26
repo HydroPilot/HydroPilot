@@ -1,0 +1,223 @@
+@using System.Security.Claims
+@using HydroPilotWeb.Models
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+@inject LotCommentService Comments
+
+@* Comentarios del lote: botón con ícono y cantidad en la barra de Lotes. Abre un modal con el campo para
+   comentar arriba de todo y la lista debajo, más nuevos primero. Ctrl+Enter también envía. *@
+<button type="button" class="btn lot-toolbar__comments" @onclick="OpenAsync"
+        title="Comentarios del lote" aria-label="@($"Comentarios del lote ({count})")">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+    @if (count > 0)
+    {
+        <span class="lot-comments__count">@count</span>
+    }
+</button>
+
+@if (open)
+{
+    <LotModal Title="@($"Comentarios · {LotName}")" Busy="saving" OnClose="Close">
+        @if (canComment)
+        {
+            <div class="lot-comments__new">
+                <textarea class="form-control" rows="3" maxlength="@LotComment.TextMaxLength" placeholder="Escribí un comentario…"
+                          aria-label="Nuevo comentario" @bind="draft" @bind:event="oninput" @onkeydown="OnDraftKeyDownAsync"></textarea>
+                <div class="lot-comments__new-foot">
+                    <span class="lot-comments__hint">@(Remaining <= 100 ? $"Quedan {Remaining} caracteres" : null)</span>
+                    <button type="button" class="btn btn-success btn-sm" @onclick="AddAsync" title="Comentar (Ctrl+Enter)"
+                            disabled="@(saving || string.IsNullOrWhiteSpace(draft))">
+                        @(saving ? "Guardando…" : "Comentar")
+                    </button>
+                </div>
+            </div>
+        }
+        @if (error is not null)
+        {
+            <div class="alert alert-danger py-2 small">@error</div>
+        }
+
+        @if (list is null)
+        {
+            @if (error is null)
+            {
+                <div class="d-flex justify-content-center my-3">
+                    <div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Cargando…</span></div>
+                </div>
+            }
+        }
+        else if (list.Items.Count == 0)
+        {
+            <p class="lot-comments__empty">Todavía no hay comentarios.</p>
+        }
+        else
+        {
+            <ul class="lot-comments__list">
+                @foreach (var comment in list.Items)
+                {
+                    var id = comment.Id;
+                    <li class="lot-comment" @key="id">
+                        <span class="lot-comment__avatar" aria-hidden="true">@LotCommentRules.Initials(comment.AuthorName)</span>
+                        <div class="lot-comment__body">
+                            <div class="lot-comment__meta">
+                                <strong class="lot-comment__author">@comment.AuthorName</strong>
+                                <time class="lot-comment__when" datetime="@comment.CreatedAtLocal.ToString("s")"
+                                      title="@comment.CreatedAtLocal.ToString("dd/MM/yyyy HH:mm")">@LotFormat.When(comment.CreatedAtLocal, list.NowLocal)</time>
+                                @if (comment.CanDelete)
+                                {
+                                    @if (confirmingDelete == id)
+                                    {
+                                        <span class="lot-comment__confirm">
+                                            ¿Borrar?
+                                            <button type="button" class="lot-comment__link lot-comment__link--danger" @onclick="() => DeleteAsync(id)" disabled="@saving">Borrar</button>
+                                            <button type="button" class="lot-comment__link" @onclick="() => confirmingDelete = null" disabled="@saving">Cancelar</button>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="lot-comment__delete" @onclick="() => confirmingDelete = id"
+                                                title="Borrar comentario" aria-label="Borrar comentario">
+                                            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor"
+                                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                            </svg>
+                                        </button>
+                                    }
+                                }
+                            </div>
+                            <p class="lot-comment__text">@comment.Text</p>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    </LotModal>
+}
+
+@code {
+    [Parameter, EditorRequired] public int LotId { get; set; }
+    [Parameter, EditorRequired] public string LotName { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public ClaimsPrincipal User { get; set; } = new();
+
+    private int? loadedLotId;
+    private int count;
+    private bool open;
+    private bool canComment;
+    private bool saving;
+    private string draft = string.Empty;
+    private string? error;
+    private int? confirmingDelete;
+    private LotCommentList? list;
+
+    private int Remaining => LotComment.TextMaxLength - (draft?.Length ?? 0);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        canComment = LotCommentRules.CanComment(User);
+        if (loadedLotId == LotId)
+            return;
+
+        // Otro lote: se cierra el modal (si estaba abierto) y se cuenta de nuevo.
+        loadedLotId = LotId;
+        open = false;
+        list = null;
+        draft = string.Empty;
+        try
+        {
+            count = await Comments.CountAsync(LotId);
+        }
+        catch (Exception)
+        {
+            count = 0; // sin la cantidad el botón igual abre el modal
+        }
+    }
+
+    private async Task OpenAsync()
+    {
+        open = true;
+        error = null;
+        confirmingDelete = null;
+        await ReloadAsync();
+    }
+
+    private void Close()
+    {
+        open = false;
+        error = null;
+        confirmingDelete = null;
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            list = await Comments.GetAsync(LotId, User);
+            count = list.Items.Count;
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar los comentarios: {ex.Message}";
+        }
+    }
+
+    private async Task OnDraftKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && (e.CtrlKey || e.MetaKey))
+            await AddAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        if (saving || string.IsNullOrWhiteSpace(draft))
+            return;
+
+        saving = true;
+        error = null;
+        try
+        {
+            var result = await Comments.AddAsync(LotId, draft, User);
+            if (result.Succeeded)
+            {
+                draft = string.Empty;
+                await ReloadAsync();
+            }
+            else
+            {
+                error = result.Error;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo guardar el comentario: {ex.Message}";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DeleteAsync(int commentId)
+    {
+        saving = true;
+        error = null;
+        try
+        {
+            var result = await Comments.DeleteAsync(commentId, User);
+            if (!result.Succeeded)
+                error = result.Error;
+            confirmingDelete = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo borrar el comentario: {ex.Message}";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

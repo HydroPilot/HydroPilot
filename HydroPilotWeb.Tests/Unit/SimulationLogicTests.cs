@@ -225,7 +225,7 @@ public class SimulationLogicTests
     {
         var strategies = Strategies();
 
-        Assert.Equal(["Máximo Baby Leaf", "Meta Baby Leaf (60 %)", "Todo convencional"], strategies.Select(s => s.Name));
+        Assert.Equal(["Máximo Baby Leaf", "Meta Baby Leaf (60 %)", "Todo adulta"], strategies.Select(s => s.Name));
         Assert.Equal(
             [SimulationStrategyKind.MaxBabyLeaf, SimulationStrategyKind.BabyLeafGoal, SimulationStrategyKind.AllConventional],
             strategies.Select(s => s.Kind));
@@ -270,7 +270,7 @@ public class SimulationLogicTests
     [Fact]
     public void Sin_Meta_Baby_Leaf_No_Hay_Estrategia_De_Meta()
     {
-        Assert.Equal(["Máximo Baby Leaf", "Todo convencional"], Strategies(goal: null).Select(s => s.Name));
+        Assert.Equal(["Máximo Baby Leaf", "Todo adulta"], Strategies(goal: null).Select(s => s.Name));
     }
 
     [Fact]
@@ -320,7 +320,7 @@ public class SimulationLogicTests
         Assert.Null(babyLeaf.BabyLeafCut!.Date);
         Assert.Null(babyLeaf.Revenue);
         Assert.Contains(babyLeaf.Warnings, w => w.Contains("ventana Baby Leaf ya cerró"));
-        Assert.True(strategies.Single(s => s.Name == "Todo convencional").Available);
+        Assert.True(strategies.Single(s => s.Name == "Todo adulta").Available);
     }
 
     [Fact]

@@ -1,6 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Control;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Circuits;
+using HydroPilotWeb.Services.Lotes;
 
 namespace HydroPilotWeb.Data;
 
@@ -8,6 +11,8 @@ public static class DbInitializer
 {
     public static void Initialize(HydroPilotDbContext context, IConfiguration configuration)
     {
+        // Migraciones que mueven datos (UnifyGreenhousePi pasa las lecturas de una Pi a otra) superan los 30 s por defecto.
+        context.Database.SetCommandTimeout(TimeSpan.FromMinutes(10));
         context.Database.Migrate();
 
         // --- Seed de catálogos de telemetría ---
@@ -67,92 +72,42 @@ public static class DbInitializer
             context.SaveChanges();
         }
 
-        var node = context.IotNodes.First();
+        var node = context.IotNodes.OrderBy(n => n.Id).First();
 
-        if (!context.IotNodes.Any(n => n.Identifier == "rpi-inv-02"))
+        // --- Circuitos: la Pi del invernadero maneja todos (dos para la demo), cada uno con su pH, CE y 4 bombas;
+        // temperatura y humedad son del invernadero ---
+        if (!context.Circuits.Any())
         {
-            // Nodo demo de contraste: nunca conectado (para ver estados de conexión).
-            context.IotNodes.Add(new IotNode
-            {
-                GreenhouseId = greenhouse.Id,
-                Identifier = "rpi-inv-02",
-                Status = "ACTIVO",
-                ExpectedIntervalSeconds = 300,
-                CreatedAt = DateTime.UtcNow
-            });
+            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 1", ControlContract.DefaultReservoirLiters, default)
+                .GetAwaiter().GetResult();
+            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 2", ControlContract.DefaultReservoirLiters, default)
+                .GetAwaiter().GetResult();
         }
+        CircuitSetup.EnsureAmbientSensorsAsync(context, greenhouse.Id, node.Id, default).GetAwaiter().GetResult();
 
-        if (!context.Sensors.Any())
-        {
-            var sensorTypes = context.SensorTypes.ToDictionary(t => t.Name);
-            var units = context.MeasurementUnits.ToDictionary(u => u.Name);
-
-            context.Sensors.AddRange(
-                new Sensor
-                {
-                    NodeId = node.Id,
-                    SensorTypeId = sensorTypes["pH"].Id,
-                    MeasurementUnitId = units["pH"].Id,
-                    Name = "ph-solucion",
-                    TechnicalKey = "ph-solucion",
-                    Model = "PH-4502C",
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Sensor
-                {
-                    NodeId = node.Id,
-                    SensorTypeId = sensorTypes["CE"].Id,
-                    MeasurementUnitId = units["milisiemens por centímetro"].Id,
-                    Name = "ec-solucion",
-                    TechnicalKey = "ec-solucion",
-                    Model = "TDS-EC-Meter",
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Sensor
-                {
-                    NodeId = node.Id,
-                    SensorTypeId = sensorTypes["Temperatura"].Id,
-                    MeasurementUnitId = units["grados Celsius"].Id,
-                    Name = "temp-ambiente",
-                    TechnicalKey = "temp-ambiente",
-                    Model = "DHT22",
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow
-                },
-                new Sensor
-                {
-                    NodeId = node.Id,
-                    SensorTypeId = sensorTypes["Humedad"].Id,
-                    MeasurementUnitId = units["porcentaje"].Id,
-                    Name = "hum-ambiente",
-                    TechnicalKey = "hum-ambiente",
-                    Model = "DHT22",
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow
-                }
-            );
-            context.SaveChanges();
-        }
-
-        // --- Asignación temporal nodo → lote (fixture demo, IOT-05/IOT-10) ---
+        // --- Lote en el circuito (fixture demo, IOT-05/IOT-10) ---
         // El lote se resuelve por fecha de observación. La grilla/posiciones de plantas
         // pertenecen al módulo de lotes y plantas; aquí solo se fija la asignación.
-        if (!context.NodeLotAssignments.Any() && context.Lots.Any())
+        if (!context.CircuitAssignments.Any() && context.Lots.Any())
         {
             var activeLot = context.Lots.OrderBy(l => l.Id).First();
-            context.NodeLotAssignments.Add(new NodeLotAssignment
+            var circuit = context.Circuits.OrderBy(c => c.Id).First();
+            context.CircuitAssignments.Add(new CircuitAssignment
             {
-                NodeId = node.Id,
+                CircuitId = circuit.Id,
                 LotId = activeLot.Id,
                 ValidFromUtc = DateTime.UtcNow.AddDays(-60),
                 ValidUntilUtc = null,
-                Source = "fixture",
+                Source = TelemetryContract.AssignmentSourceFixture,
                 CreatedAt = DateTime.UtcNow
             });
+            activeLot.CircuitId ??= circuit.Id;
             context.SaveChanges();
         }
+
+        // --- Bombas de cada circuito (control de pH y CE) y sondas de los circuitos que no tienen ---
+        SeedActuators(context);
+        CircuitSetup.EnsureProbesAsync(context, default).GetAwaiter().GetResult();
 
         // --- Admin user (existente) ---
         var adminPassword = configuration["Admin:Password"];
@@ -242,9 +197,9 @@ public static class DbInitializer
         {
             context.CommercialStages.AddRange(
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = "En desarrollo", Description = "Todavía no es cosechable." },
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Candidata Baby Leaf", Description = "Score en banda candidata (60-79) o apta sin confirmar obligatorios." },
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Baby Leaf apta", Description = "Score >= 80 y criterios obligatorios aprobados." },
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Cosecha convencional", Description = "Ventana convencional con madurez confirmada." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Candidata Baby Leaf", Description = "Score en banda candidata (60-79) o Baby Leaf sin confirmar obligatorios." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.BabyLeafApta, Description = "Score >= 80 y criterios obligatorios aprobados." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.CosechaConvencional, Description = "Ventana adulta con madurez confirmada." },
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Riesgo / fuera de ventana", Description = "Anomalía, bolting, mal estado visual o sobremadurez." });
         }
 
@@ -254,7 +209,7 @@ public static class DbInitializer
             {
                 CropTypeId = cultivoLote.Id,
                 Name = "Baby Leaf Butterhead v1",
-                Description = "Ventana GDD 250-450; candidata 60, apta 80. Valores de arranque calibrables.",
+                Description = "Ventana GDD 250-450; candidata 60, Baby Leaf 80. Valores de arranque calibrables.",
                 GddMin = 250, GddMax = 450,
                 ScoreMinCandidate = 60, ScoreMinReady = 80,
                 Version = "1.0"
@@ -394,7 +349,48 @@ public static class DbInitializer
     }
 
     /// <summary>
-    /// Siembra el Lote Demo 01 activo con su grilla de 60 plantas y asignación del nodo.
+    /// Las 4 bombas de cada circuito (subir pH, bajar pH, nutrientes, agua) con límites para un tanque de 500 L.
+    /// Solo agrega las que faltan: no pisa límites editados. Las claves técnicas son únicas en la Pi (el primer
+    /// circuito de la Pi usa la clave base y los demás llevan sufijo, como CircuitSetup).
+    /// </summary>
+    public static void SeedActuators(HydroPilotDbContext context)
+    {
+        context.SaveChanges(); // circuitos recién agregados en este arranque necesitan su Id
+
+        var circuits = context.Circuits.OrderBy(c => c.Id).Select(c => new { c.Id, c.NodeId }).ToList();
+        var existing = context.Actuators.Select(a => new { a.CircuitId, a.NodeId, a.Kind, a.TechnicalKey }).ToList();
+        foreach (var circuit in circuits)
+        {
+            var position = circuits.Where(c => c.NodeId == circuit.NodeId).Select(c => c.Id).ToList().IndexOf(circuit.Id) + 1;
+            foreach (var actuator in ControlContract.DefaultActuators)
+            {
+                if (existing.Any(e => e.CircuitId == circuit.Id && e.Kind == actuator.Kind))
+                    continue;
+
+                var key = CircuitSetup.Key(actuator.Kind, position);
+                if (existing.Any(e => e.NodeId == circuit.NodeId && e.TechnicalKey == key))
+                    key = $"{actuator.Kind}-c{circuit.Id}";
+                context.Actuators.Add(new Actuator
+                {
+                    NodeId = circuit.NodeId,
+                    CircuitId = circuit.Id,
+                    Kind = actuator.Kind,
+                    TechnicalKey = key,
+                    Name = actuator.Name,
+                    Unit = actuator.Unit,
+                    MaxPerCommand = actuator.MaxPerCommand,
+                    MaxPerDay = actuator.MaxPerDay,
+                    EffectPerUnit = actuator.Effect,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                });
+            }
+        }
+        context.SaveChanges();
+    }
+
+    /// <summary>
+    /// Siembra el Lote Demo 01 activo con su grilla de 60 plantas, plantado en un circuito libre.
     /// </summary>
     public static void SeedDemoLot(HydroPilotDbContext context)
     {
@@ -435,7 +431,7 @@ public static class DbInitializer
             {
                 CropTypeId = cropType.Id,
                 Name = "Baby Leaf Butterhead v1",
-                Description = "Ventana GDD 250-450; candidata 60, apta 80. Valores de arranque calibrables.",
+                Description = "Ventana GDD 250-450; candidata 60, Baby Leaf 80. Valores de arranque calibrables.",
                 GddMin = 250, GddMax = 450,
                 ScoreMinCandidate = 60, ScoreMinReady = 80,
                 Version = "1.0"
@@ -456,19 +452,24 @@ public static class DbInitializer
             SeedDemoPlants(context, demoLot);
         }
 
-        var node = context.IotNodes.FirstOrDefault(n => n.Identifier == "rpi-inv-01")
-                   ?? context.IotNodes.FirstOrDefault();
-        if (node != null && !context.NodeLotAssignments.Any(a => a.LotId == demoLot.Id && a.NodeId == node.Id))
+        // Circuito libre (sin lote en curso) del invernadero; si no hay, el lote queda sin circuito.
+        var circuit = context.Circuits
+            .Where(c => c.GreenhouseId == greenhouse.Id && c.IsActive
+                        && !context.CircuitAssignments.Any(a => a.CircuitId == c.Id && a.ValidUntilUtc == null))
+            .OrderBy(c => c.Id)
+            .FirstOrDefault();
+        if (circuit != null && !context.CircuitAssignments.Any(a => a.LotId == demoLot.Id))
         {
-            context.NodeLotAssignments.Add(new NodeLotAssignment
+            context.CircuitAssignments.Add(new CircuitAssignment
             {
-                NodeId = node.Id,
+                CircuitId = circuit.Id,
                 LotId = demoLot.Id,
                 ValidFromUtc = DateTime.UtcNow.AddDays(-60),
                 ValidUntilUtc = null,
-                Source = "fixture",
+                Source = TelemetryContract.AssignmentSourceFixture,
                 CreatedAt = DateTime.UtcNow
             });
+            demoLot.CircuitId = circuit.Id;
             context.SaveChanges();
         }
     }
@@ -545,9 +546,9 @@ public static class DbInitializer
         {
             var (stage, score) = col switch
             {
-                1 => ("Baby Leaf apta", 88m),
-                2 => ("Baby Leaf apta", 91m),
-                3 => ("Baby Leaf apta", 85m),
+                1 => (CommercialStageNames.BabyLeafApta, 88m),
+                2 => (CommercialStageNames.BabyLeafApta, 91m),
+                3 => (CommercialStageNames.BabyLeafApta, 85m),
                 4 => ("Candidata Baby Leaf", 72m),
                 5 => ("Candidata Baby Leaf", 66m),
                 _ => ("En desarrollo", 45m)
@@ -556,8 +557,8 @@ public static class DbInitializer
         }
 
         // Fila 2: aptas y candidatas.
-        AddPlant(2, 1, "Baby Leaf apta", 89m, 0.92m, true);
-        AddPlant(2, 2, "Baby Leaf apta", 84m, 0.9m, true);
+        AddPlant(2, 1, CommercialStageNames.BabyLeafApta, 89m, 0.92m, true);
+        AddPlant(2, 2, CommercialStageNames.BabyLeafApta, 84m, 0.9m, true);
         AddPlant(2, 3, "Candidata Baby Leaf", 78m, 0.88m, true);
         AddPlant(2, 4, "Candidata Baby Leaf", 63m, 0.85m, true);
         AddPlant(2, 5, "En desarrollo", 52m, 0.8m, true);
@@ -565,18 +566,18 @@ public static class DbInitializer
 
         // Fila 3: apta sin confirmar obligatorios → candidata (caso documentado).
         AddPlant(3, 1, "Candidata Baby Leaf", 86m, 0.6m, false);
-        AddPlant(3, 2, "Baby Leaf apta", 90m, 0.93m, true);
+        AddPlant(3, 2, CommercialStageNames.BabyLeafApta, 90m, 0.93m, true);
         AddPlant(3, 3, "Candidata Baby Leaf", 70m, 0.87m, true);
         AddPlant(3, 4, "En desarrollo", 58m, 0.82m, true);
 
         // Fila 4: cosechada (congelada) y descartada (histórico).
-        AddPlant(4, 1, "Baby Leaf apta", 87m, 0.91m, true, harvested: true);
+        AddPlant(4, 1, CommercialStageNames.BabyLeafApta, 87m, 0.91m, true, harvested: true);
         AddPlant(4, 2, "Riesgo / fuera de ventana", 25m, 0.65m, false, "Demo: fuera de ventana por sobremadurez");
         AddPlant(4, 3, "En desarrollo", 41m, 0.78m, true);
 
         // Fila 5: en desarrollo y una apta.
         AddPlant(5, 1, "En desarrollo", 48m, 0.79m, true);
-        AddPlant(5, 2, "Baby Leaf apta", 83m, 0.89m, true);
+        AddPlant(5, 2, CommercialStageNames.BabyLeafApta, 83m, 0.89m, true);
 
         // Fila 6: una planta.
         AddPlant(6, 1, "En desarrollo", 39m, 0.75m, true);

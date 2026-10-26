@@ -10,8 +10,8 @@ public static class CommercialStageNames
 {
     public const string EnDesarrollo = "En desarrollo";
     public const string CandidataBabyLeaf = "Candidata Baby Leaf";
-    public const string BabyLeafApta = "Baby Leaf apta";
-    public const string CosechaConvencional = "Cosecha convencional";
+    public const string BabyLeafApta = "Baby Leaf";
+    public const string CosechaConvencional = "Adulta";
     public const string RiesgoFueraDeVentana = "Riesgo / fuera de ventana";
 
     /// <summary>Se muestra como estado predominante del lote ante empate de conteos.</summary>
@@ -57,7 +57,6 @@ public sealed record PlantDetailDto(
     decimal? BabyLeafScore,
     decimal? GrowthRate,
     string? LastEvaluationResult,
-    decimal? Confidence,
     DateTime? LastEvaluationAtUtc,
     bool HasImage,
     string? LastImagePath,
@@ -67,7 +66,7 @@ public sealed record PlantDetailDto(
 
 /// <summary>
 /// Regla híbrida de cosecha del lote: entrada en la ventana GDD Baby Leaf
-/// MÁS porcentaje configurable de plantas "Baby Leaf apta". Si el porcentaje no
+/// MÁS porcentaje configurable de plantas "Baby Leaf". Si el porcentaje no
 /// está definido, IsReady = null (decisión pendiente) y se expone la advertencia;
 /// nunca se reemplaza por una constante oculta.
 /// </summary>

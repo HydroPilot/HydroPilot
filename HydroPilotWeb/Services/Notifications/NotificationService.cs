@@ -170,6 +170,12 @@ public class NotificationService
     }
 
     /// <summary>
+    /// Se dispara al marcar notificaciones como leídas. El servicio es por circuito (una pestaña), así que la
+    /// campanita del encabezado se entera al instante de lo que se marca en la bandeja.
+    /// </summary>
+    public event Action? UnreadChanged;
+
+    /// <summary>
     /// Marca una notificación interna como leída.
     /// </summary>
     public async Task MarkAsReadAsync(int deliveryId, int userId, CancellationToken ct = default)
@@ -183,6 +189,7 @@ public class NotificationService
             delivery.IsRead = true;
             delivery.ReadAtUtc = DateTime.UtcNow;
             await context.SaveChangesAsync(ct);
+            UnreadChanged?.Invoke();
         }
     }
 
@@ -204,6 +211,8 @@ public class NotificationService
         }
 
         await context.SaveChangesAsync(ct);
+        if (unread.Count > 0)
+            UnreadChanged?.Invoke();
     }
 
     /// <summary>
@@ -376,6 +385,30 @@ public class NotificationService
                 await context.SaveChangesAsync(ct);
             }
         }
+    }
+
+    /// <summary>Marca resueltas las alertas activas cuya huella empieza así (por ejemplo, al reanudar un control pausado).</summary>
+    public async Task ResolveByFingerprintPrefixAsync(string prefix, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var now = DateTime.UtcNow;
+        await context.NotificationAlerts
+            .Where(a => a.Fingerprint.StartsWith(prefix) && !a.IsResolved)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.IsResolved, true)
+                .SetProperty(a => a.ResolvedAtUtc, now), ct);
+    }
+
+    /// <summary>Marca resuelta la alerta activa con esta huella (por ejemplo, un error de sensor resuelto).</summary>
+    public async Task ResolveByFingerprintAsync(string fingerprint, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var now = DateTime.UtcNow;
+        await context.NotificationAlerts
+            .Where(a => a.Fingerprint == fingerprint && !a.IsResolved)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.IsResolved, true)
+                .SetProperty(a => a.ResolvedAtUtc, now), ct);
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @using HydroPilotWeb.Services.Dashboard
 @using HydroPilotWeb.Services.Notifications
 @inject NavigationManager Navigation
@@ -20,8 +21,7 @@
             </h1>
 
             <div class="shell-topbar__actions">
-                <div class="status-pill @_statusCss" title="Estado global derivado de los nodos del invernadero (frescura de la última telemetría aceptada)."><span></span> @_statusText</div>
-
+                @* Sin píldora de estado de nodos: un nodo desconectado genera una alerta (campanita y dashboard). *@
                 <NavLink class="topbar-action topbar-action--relative" href="notifications" aria-label="Notificaciones">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-4-5.7V4a2 2 0 0 0-4 0v1.3A6 6 0 0 0 6 11v3.2c0 .5-.2 1-.6 1.4L4 17h5" />
@@ -71,9 +71,11 @@
 
 @code {
     private string _subtitle = "Cargando contexto...";
-    private string _statusText = "Consultando estado...";
-    private string _statusCss = "status-pill--muted";
     private int _unreadCount = 0;
+
+    /// <summary>Cada cuánto se vuelve a contar las no leídas (alertas nuevas que llegan de los procesos de fondo).</summary>
+    private static readonly TimeSpan UnreadRefreshEvery = TimeSpan.FromSeconds(30);
+    private CancellationTokenSource? _refreshCts;
 
     // Título específico de cada página (el contexto de invernadero/cultivo se
     // resuelve desde datos, ya no es un texto fijo "Invernadero Alpha-01").
@@ -82,12 +84,50 @@
     protected override async Task OnInitializedAsync()
     {
         Dashboard.DataChanged += OnDashboardChanged;
+        NotificationService.UnreadChanged += OnUnreadChanged;
         await RefreshHeaderAsync();
+
+        _refreshCts = new CancellationTokenSource();
+        _ = RefreshUnreadLoopAsync(_refreshCts.Token);
     }
 
     public void Dispose()
     {
         Dashboard.DataChanged -= OnDashboardChanged;
+        NotificationService.UnreadChanged -= OnUnreadChanged;
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
+    }
+
+    // Se marcaron notificaciones como leídas en la bandeja: la campanita se actualiza al instante.
+    private void OnUnreadChanged() => _ = InvokeAsync(RefreshUnreadAsync);
+
+    private async Task RefreshUnreadLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(UnreadRefreshEvery);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+                await InvokeAsync(RefreshUnreadAsync);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task RefreshUnreadAsync()
+    {
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (int.TryParse(authState.User.FindFirst("user_id")?.Value, out var uid))
+                _unreadCount = await NotificationService.GetUnreadCountAsync(uid);
+        }
+        catch (Exception)
+        {
+            // Sin conteo la campanita queda con el último valor.
+        }
+        StateHasChanged();
     }
 
     private async Task RefreshHeaderAsync()
@@ -96,14 +136,10 @@
         {
             var status = await Dashboard.GetHeaderStatusAsync();
             _subtitle = status.Subtitle;
-            _statusText = status.StatusText;
-            _statusCss = status.StatusCss;
         }
         catch (Exception)
         {
             _subtitle = "Contexto no disponible";
-            _statusText = "Sin estado";
-            _statusCss = "status-pill--muted";
         }
 
         try
@@ -136,16 +172,16 @@
 
         var header = path switch
         {
-            "" => new PageHeader("Invernadero", "Resumen operativo del invernadero"),
-            "lotes" => new PageHeader("Lotes", "Situación actual, metas del ciclo y mapa de plantas de cada lote."),
+            "" => new PageHeader("Invernadero", "Resumen de todos los lotes activos: rendimiento, plantas, alertas y próximas tareas."),
+            "lotes" => new PageHeader("Lotes", "Situación actual, metas y mapa de plantas de cada lote."),
             "reports" => new PageHeader("Informes", "Histórico de producción, consumo y reportes exportables."),
             "simulation" => new PageHeader("Módulo de Simulación", "Probá escenarios what-if y observá el impacto estimado en la cosecha."),
-            "optimization" => new PageHeader("Módulo de Optimización", "Recomendaciones basadas en IA para mejorar rendimiento y reducir costos."),
-            "anomalies" => new PageHeader("Módulo de Anomalías", "Detección automática de eventos fuera de rango y desvíos de comportamiento."),
+            "optimization" => new PageHeader("Módulo de Optimización", "pH y CE del tanque de cada circuito: corrección automática y dosis de sus bombas."),
             "notifications" => new PageHeader("Bandeja de Notificaciones", "Alertas y avisos operativos del sistema."),
             "settings/profile" => new PageHeader("Configuración de usuario", "Datos personales, idioma y seguridad de tu cuenta."),
             "settings/notifications" => new PageHeader("Configuración de notificaciones", "Definí cómo y cuándo querés recibir avisos del sistema."),
             "settings/parametros" => new PageHeader("Parámetros del sistema", "Valores de referencia globales que usan todos los lotes."),
+            "settings/circuitos" => new PageHeader("Circuitos", "Tanques del invernadero: sus sensores, bombas y el lote de cada uno."),
             "admin/users" => new PageHeader("Usuarios", "Usuarios y roles del sistema."),
             "admin/mantenimiento" => new PageHeader("Mantenimiento", "Datos, clima y herramientas de administración."),
             "db-test" => new PageHeader("Prueba de conexión a la base de datos", "Herramienta interna de diagnóstico."),

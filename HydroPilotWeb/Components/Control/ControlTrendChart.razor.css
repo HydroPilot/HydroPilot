@@ -1,0 +1,97 @@
+.ctl-trend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 14px 16px 10px;
+    border: 1px solid var(--border-panel);
+    border-radius: 18px;
+    background: var(--bg-panel);
+    box-shadow: var(--shadow-panel);
+    min-width: 0;
+}
+
+.ctl-trend__head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.ctl-trend__label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.ctl-trend__value {
+    font-size: 1.15rem;
+    font-weight: 750;
+    color: var(--text-primary);
+}
+
+.ctl-trend__doses {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.ctl-trend__empty {
+    padding: 28px 0;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.ctl-trend__svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.ctl-trend__band {
+    fill: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ctl-trend__action {
+    stroke: var(--text-muted);
+    stroke-width: 1;
+    stroke-dasharray: 3 4;
+    opacity: 0.7;
+}
+
+.ctl-trend__target {
+    stroke: var(--accent);
+    stroke-width: 1.2;
+    stroke-dasharray: 8 5;
+}
+
+.ctl-trend__line {
+    fill: none;
+    stroke: var(--text-primary);
+    stroke-width: 1.8;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.ctl-trend__dose path {
+    fill: var(--dose);
+}
+
+.ctl-trend__dose-line {
+    stroke: var(--dose);
+    stroke-width: 1;
+    opacity: 0.35;
+}
+
+.ctl-trend__dose--missed path {
+    fill: none;
+    stroke: var(--dose);
+    stroke-width: 1.4;
+}
+
+.ctl-trend__axis {
+    font-size: 10px;
+    fill: var(--text-muted);
+}

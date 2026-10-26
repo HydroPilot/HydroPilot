@@ -1,4 +1,4 @@
-.components-reconnect-first-attempt-visible,
+﻿.components-reconnect-first-attempt-visible,
 .components-reconnect-repeated-attempt-visible,
 .components-reconnect-failed-visible,
 .components-pause-visible,
@@ -20,14 +20,16 @@
 }
 
 
+/* Colores del tema (claro u oscuro): fondo opaco del panel y texto principal. */
 #components-reconnect-modal {
-    background-color: white;
+    background-color: var(--bg-picker, #ffffff);
+    color: var(--text-primary, #1a2f2a);
     width: 20rem;
     margin: 20vh auto;
     padding: 2rem;
-    border: 0;
-    border-radius: 0.5rem;
-    box-shadow: 0 3px 6px 2px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-input, rgba(18, 48, 43, 0.15));
+    border-radius: 18px;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
     opacity: 0;
     transition: display 0.5s allow-discrete, overlay 0.5s allow-discrete;
     animation: components-reconnect-modal-fadeOutOpacity 0.5s both;
@@ -86,22 +88,27 @@
 #components-reconnect-modal p {
     margin: 0;
     text-align: center;
+    font-weight: 600;
+    line-height: 1.4;
 }
 
+/* Botón como las acciones principales de la app (verde, en pastilla). */
 #components-reconnect-modal button {
     border: 0;
-    background-color: #6b9ed2;
-    color: white;
-    padding: 4px 24px;
-    border-radius: 4px;
+    background-color: var(--accent, #16a34a);
+    color: #fff;
+    font-weight: 650;
+    padding: 6px 22px;
+    border-radius: 999px;
+    cursor: pointer;
 }
 
     #components-reconnect-modal button:hover {
-        background-color: #3b6ea2;
+        background-color: var(--accent-dark, #0f7b55);
     }
 
     #components-reconnect-modal button:active {
-        background-color: #6b9ed2;
+        background-color: var(--accent, #16a34a);
     }
 
 .components-rejoining-animation {
@@ -112,7 +119,7 @@
 
     .components-rejoining-animation div {
         position: absolute;
-        border: 3px solid #0087ff;
+        border: 3px solid var(--accent, #16a34a);
         opacity: 1;
         border-radius: 50%;
         animation: components-rejoining-animation 1.5s cubic-bezier(0, 0.2, 0.8, 1) infinite;

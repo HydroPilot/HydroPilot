@@ -213,7 +213,7 @@ public static class ForecastTestData
     /// <summary>Limpia asignaciones nodo→lote (el fixture seed asigna el nodo al lote demo).</summary>
     public static async Task ClearNodeAssignmentsAsync(HydroPilotDbContext context)
     {
-        context.NodeLotAssignments.RemoveRange(context.NodeLotAssignments);
+        context.CircuitAssignments.RemoveRange(context.CircuitAssignments);
         await context.SaveChangesAsync();
     }
 
@@ -224,7 +224,7 @@ public static class ForecastTestData
     /// </summary>
     public static async Task ResetLotsAndPredictionsAsync(HydroPilotDbContext context)
     {
-        context.NodeLotAssignments.RemoveRange(context.NodeLotAssignments);
+        context.CircuitAssignments.RemoveRange(context.CircuitAssignments);
         context.Predictions.RemoveRange(context.Predictions);
         context.Lots.RemoveRange(context.Lots);
         await context.SaveChangesAsync();

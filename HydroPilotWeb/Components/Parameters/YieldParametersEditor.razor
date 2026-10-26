@@ -12,10 +12,10 @@
         <p class="lot-editor__help">Peso promedio de una planta cosechada como baby leaf.</p>
     </div>
     <div class="lot-editor__field">
-        <label class="form-label mb-1" for="param-conventional-grams">Peso lechuga convencional (gramos)</label>
+        <label class="form-label mb-1" for="param-conventional-grams">Peso lechuga adulta (gramos)</label>
         <input id="param-conventional-grams" type="number" class="form-control" min="1" max="@YieldReferenceRules.MaxGramsPerPlant" step="1"
                @bind="conventionalGrams" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
-        <p class="lot-editor__help">Peso promedio de una planta cosechada como lechuga convencional.</p>
+        <p class="lot-editor__help">Peso promedio de una planta cosechada como lechuga adulta.</p>
     </div>
     <div class="lot-editor__field">
         <label class="form-label mb-1" for="param-babyleaf-price">Precio Baby Leaf ($ por kg)</label>
@@ -23,7 +23,7 @@
                @bind="babyLeafPrice" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
     </div>
     <div class="lot-editor__field">
-        <label class="form-label mb-1" for="param-conventional-price">Precio convencional ($ por kg)</label>
+        <label class="form-label mb-1" for="param-conventional-price">Precio adulta ($ por kg)</label>
         <input id="param-conventional-price" type="number" class="form-control" min="1" step="1"
                @bind="conventionalPrice" @bind:event="oninput" disabled="@ReadOnly" placeholder="Sin definir" />
     </div>

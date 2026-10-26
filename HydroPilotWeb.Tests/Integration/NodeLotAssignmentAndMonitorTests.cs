@@ -1,6 +1,8 @@
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Notifications;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Notifications;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -17,39 +19,6 @@ public class NodeLotAssignmentAndMonitorTests
     public NodeLotAssignmentAndMonitorTests(SqlServerTestFixture fixture)
     {
         _fixture = fixture;
-    }
-
-    private NodeLotAssignmentService CreateAssignmentService() => new(_fixture.Factory);
-
-    [Fact]
-    public async Task Asignacion_solapada_se_rechaza()
-    {
-        await using var reset = _fixture.Factory.CreateDbContext();
-        await IntegrationTestHelpers.ResetTelemetryAsync(reset);
-        reset.NodeLotAssignments.RemoveRange(reset.NodeLotAssignments);
-        await reset.SaveChangesAsync();
-
-        var nodeId = await IntegrationTestHelpers.NodeIdAsync(reset);
-        var lot = await reset.Lots.OrderBy(l => l.Id).FirstAsync();
-        var service = CreateAssignmentService();
-
-        var first = await service.CreateAsync(nodeId, lot.Id,
-            IntegrationTestHelpers.NowUtc.AddDays(-10), null, "manual", default);
-        Assert.Null(first.Error);
-
-        var overlapping = await service.CreateAsync(nodeId, lot.Id,
-            IntegrationTestHelpers.NowUtc.AddDays(-5), null, "manual", default);
-        Assert.NotNull(overlapping.Error);
-        Assert.Contains("solapa", overlapping.Error);
-
-        // Ventana cerrada ANTERIOR a la vigente: no solapa y debe aceptarse.
-        var historical = await service.CreateAsync(nodeId, lot.Id,
-            IntegrationTestHelpers.NowUtc.AddDays(-40), IntegrationTestHelpers.NowUtc.AddDays(-30), "auto", default);
-        Assert.Null(historical.Error);
-
-        var list = await service.ListAsync(nodeId, default);
-        Assert.Equal(2, list.Count);
-        Assert.Equal("auto", list.First(a => a.Source == "auto").Source);
     }
 
     [Fact]
@@ -97,10 +66,82 @@ public class NodeLotAssignmentAndMonitorTests
     }
 
     [Fact]
+    public async Task Nodo_desconectado_genera_una_alerta_que_se_resuelve_al_volver()
+    {
+        await using var reset = _fixture.Factory.CreateDbContext();
+        await IntegrationTestHelpers.ResetTelemetryAsync(reset);
+        await IntegrationTestHelpers.EnsureNeverConnectedNodeAsync(reset);
+        var node = await reset.IotNodes.FirstAsync(n => n.Identifier == "rpi-inv-01");
+        var prefix = NodeConnectionAlerts.Prefix(node.Id);
+        reset.NotificationAlerts.RemoveRange(reset.NotificationAlerts.Where(a => a.Fingerprint.StartsWith(prefix)));
+        node.LastAcceptedAt = DateTime.UtcNow.AddMinutes(-20);
+        node.ConnectionState = TelemetryContract.ConnectionOnline;
+        await reset.SaveChangesAsync();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<HydroPilotDbContext>(o => o.UseSqlServer(_fixture.ConnectionString));
+        services.AddSingleton(_fixture.Factory);
+        services.AddScoped<NotificationService>();
+        services.AddOptions<TelemetryOptions>().Configure(o =>
+        {
+            o.MonitorIntervalSeconds = 10;
+            o.DegradedIntervalFactor = 2;
+        });
+        var provider = services.BuildServiceProvider();
+        var monitor = new NodeConnectionMonitorHostedService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IOptionsMonitor<TelemetryOptions>>(),
+            provider.GetRequiredService<ILogger<NodeConnectionMonitorHostedService>>());
+
+        try
+        {
+            // Pasa a OFFLINE: una alerta Alta "Nodo rpi-inv-01 desconectado"; la vuelta siguiente no la repite.
+            await monitor.RunOnceAsync(default);
+            await monitor.RunOnceAsync(default);
+            await using (var check = _fixture.Factory.CreateDbContext())
+            {
+                var alert = await check.NotificationAlerts.SingleAsync(a => a.Fingerprint.StartsWith(prefix));
+                Assert.Equal(NotificationTypes.NodoDesconectado, alert.Type);
+                Assert.Equal(NotificationSeverities.Alta, alert.Severity);
+                Assert.Equal("Nodo rpi-inv-01 desconectado", alert.Title);
+                Assert.False(alert.IsResolved);
+            }
+
+            // Vuelven las lecturas: la alerta se resuelve sola.
+            await using (var back = _fixture.Factory.CreateDbContext())
+            {
+                var updated = await back.IotNodes.FirstAsync(n => n.Id == node.Id);
+                updated.LastAcceptedAt = DateTime.UtcNow.AddSeconds(-30);
+                await back.SaveChangesAsync();
+            }
+            await monitor.RunOnceAsync(default);
+            await using (var check = _fixture.Factory.CreateDbContext())
+                Assert.True((await check.NotificationAlerts.SingleAsync(a => a.Fingerprint.StartsWith(prefix))).IsResolved);
+
+            // Un nodo que nunca se conectó no genera alerta.
+            await using (var check = _fixture.Factory.CreateDbContext())
+            {
+                var never = await check.IotNodes.FirstAsync(n => n.Identifier == "rpi-inv-02");
+                Assert.False(await check.NotificationAlerts.AnyAsync(a => a.Fingerprint.StartsWith(NodeConnectionAlerts.Prefix(never.Id))));
+            }
+        }
+        finally
+        {
+            await using var cleanup = _fixture.Factory.CreateDbContext();
+            var alerts = cleanup.NotificationAlerts.Where(a => a.Fingerprint.StartsWith(prefix));
+            cleanup.NotificationDeliveries.RemoveRange(cleanup.NotificationDeliveries.Where(d => alerts.Any(a => a.Id == d.AlertId)));
+            cleanup.NotificationAlerts.RemoveRange(alerts);
+            await cleanup.SaveChangesAsync();
+        }
+    }
+
+    [Fact]
     public async Task Nodo_nunca_conectado_queda_NEVER_CONNECTED_tras_monitoreo()
     {
         await using var reset = _fixture.Factory.CreateDbContext();
         await IntegrationTestHelpers.ResetTelemetryAsync(reset);
+        await IntegrationTestHelpers.EnsureNeverConnectedNodeAsync(reset);
 
         var services = new ServiceCollection();
         services.AddLogging();
@@ -115,7 +156,7 @@ public class NodeLotAssignmentAndMonitorTests
         await monitor.RunOnceAsync(default);
 
         await using var verify = _fixture.Factory.CreateDbContext();
-        // rpi-inv-02 (seed) nunca envió telemetría.
+        // rpi-inv-02 nunca envió telemetría.
         var never = await verify.IotNodes.FirstAsync(n => n.Identifier == "rpi-inv-02");
         Assert.Equal(TelemetryContract.ConnectionNeverConnected, never.ConnectionState);
     }

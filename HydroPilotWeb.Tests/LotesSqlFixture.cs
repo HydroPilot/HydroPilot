@@ -69,8 +69,8 @@ public sealed class LotesSqlFixture : IAsyncLifetime
         context.CommercialStages.AddRange(
             new CommercialStage { CropTypeId = crop.Id, Name = "En desarrollo" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Candidata Baby Leaf" },
-            new CommercialStage { CropTypeId = crop.Id, Name = "Baby Leaf apta" },
-            new CommercialStage { CropTypeId = crop.Id, Name = "Cosecha convencional" },
+            new CommercialStage { CropTypeId = crop.Id, Name = "Baby Leaf" },
+            new CommercialStage { CropTypeId = crop.Id, Name = "Adulta" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Riesgo / fuera de ventana" });
 
         var config = new BabyLeafConfig
