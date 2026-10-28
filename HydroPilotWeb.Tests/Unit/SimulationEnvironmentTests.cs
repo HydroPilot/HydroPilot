@@ -264,7 +264,7 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
             hot.Step(3600, LettuceUptake.For(200, 300, 3600, hour, 31, 50, hot.Ec, hot.Liters));
             cold.Step(3600, LettuceUptake.For(200, 300, 3600, hour, 13, 80, cold.Ec, cold.Liters));
         }
-        Assert.True(hot.Liters < 480 && hot.Ec > 1.5, $"calor: {hot.Liters:0} L, CE {hot.Ec:0.000}");
+        Assert.True(hot.Liters < 490 && hot.Ec > 1.5, $"calor: {hot.Liters:0} L, CE {hot.Ec:0.000}");
         Assert.True(cold.Ec < 1.5, $"frío: CE {cold.Ec:0.000}");
         Assert.InRange(cold.Ph - 6, 0.05, 0.4); // el nitrato sube el pH
     }
@@ -276,9 +276,9 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
         Assert.Equal((double)Services.Simulation.NutrientConsumptionRules.WaterDuringBabyLeaf, LettuceUptake.WaterDuringBabyLeaf);
         Assert.Equal((double)Services.Simulation.NutrientConsumptionRules.WaterConventional, LettuceUptake.WaterConventional);
 
-        // 200 plantas (una mesada densa) en la ventana, día normal: 15 L en el día (casi todo de día).
+        // 200 plantas (una mesada densa) en la ventana, día normal: 200 × 0,055 = 11 L en el día (casi todo de día).
         var day = Enumerable.Range(0, 24).Sum(h => LettuceUptake.For(200, 300, 3600, h + 0.5, 20, 65, 1.5, 500).WaterLiters);
-        Assert.Equal(15, day, 0);
+        Assert.Equal(11, day, 0);
     }
 
     [Fact]

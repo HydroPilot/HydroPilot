@@ -24,8 +24,8 @@ public sealed class SimulationEnvironmentService
 {
     public const string SeededAtKey = "SimulationEnvironment:SeededAtUtc";
     /// <summary>Una planta Baby Leaf (a 6,5 cm) y una adulta (a 22,5 cm, trasplantada).</summary>
-    public const decimal BabyLeafGramsPerPlant = 30m;
-    public const decimal ConventionalGramsPerPlant = 280m;
+    public const decimal BabyLeafGramsPerPlant = ParameterDefaults.BabyLeafGramsPerPlant;
+    public const decimal ConventionalGramsPerPlant = ParameterDefaults.ConventionalGramsPerPlant;
 
     /// <summary>Mesadas de la demo: 2 densas de 10 × 20 (donde se siembra) y 5 de Adultas de 4 × 5 (100 huecos).</summary>
     public const int DenseBenches = 2;

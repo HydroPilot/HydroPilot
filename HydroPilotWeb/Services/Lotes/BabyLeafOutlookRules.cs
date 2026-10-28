@@ -14,9 +14,10 @@ public sealed record LotCycleOutcome(
     int Discarded,
     int? AptAtOptimum,      // aptas a Baby Leaf en el óptimo (capacidad del lote, no lo que se decidió cortar)
     int? EarlyLosses,       // descartadas hasta que cerró la ventana Baby Leaf
-    int? LateLosses,        // descartadas después, esperando al convencional
+    int? LateLosses,        // descartadas después, esperando al convencional (con trasplante: las adultas descartadas)
     decimal? AverageDailyGdd,
-    bool IsManual)
+    bool IsManual,
+    int? LateLossBase = null) // con trasplante: las trasplantadas; null = las que siguieron a convencional (sin trasplante)
 {
     /// <summary>Parte de las plantas vivas en el óptimo que estaban aptas a Baby Leaf (0..1).</summary>
     public decimal? AptRate
@@ -34,14 +35,18 @@ public sealed record LotCycleOutcome(
     public decimal? EarlyLossRate =>
         EarlyLosses is { } early && TotalPlants > 0 ? Math.Min(1m, (decimal)early / TotalPlants) : null;
 
-    /// <summary>Parte de las que siguieron a convencional que se perdió esperando (0..1).</summary>
+    /// <summary>
+    /// Parte de las que siguieron a Adulta que se perdió esperando (0..1). Con trasplante, sobre las trasplantadas (las
+    /// del denso que no entraron en Adultas no siguieron: no son pérdidas tardías). Sin trasplante (lotes de antes o
+    /// cargados a mano), sobre las que no se cortaron como Baby Leaf ni se perdieron temprano.
+    /// </summary>
     public decimal? LateLossRate
     {
         get
         {
             if (LateLosses is not { } late || EarlyLosses is not { } early)
                 return null;
-            var continued = TotalPlants - early - HarvestedBabyLeaf;
+            var continued = LateLossBase ?? TotalPlants - early - HarvestedBabyLeaf;
             return continued > 0 ? Math.Min(1m, (decimal)late / continued) : null;
         }
     }
@@ -160,12 +165,17 @@ public static class BabyLeafOutlookRules
             Mean(o => o.AptRate), Mean(o => o.EarlyLossRate), Mean(o => o.LateLossRate), used, usedAll);
     }
 
-    /// <summary>Peso del estado actual del lote: 0 hasta el fin del establecimiento, 1 desde el óptimo Baby Leaf.</summary>
-    public static decimal CurrentStateWeight(decimal accumulatedGdd, decimal establishmentEndGdd, decimal babyLeafOptimumGdd)
+    /// <summary>
+    /// Peso del estado actual del lote: 0 mientras está en desarrollo (antes de que abra la ventana Baby Leaf ninguna
+    /// planta puede ser Baby Leaf, así que su estado no dice nada); desde la apertura crece hasta 1 en el óptimo.
+    /// </summary>
+    public static decimal CurrentStateWeight(decimal accumulatedGdd, decimal babyLeafOpensGdd, decimal babyLeafOptimumGdd)
     {
-        if (babyLeafOptimumGdd <= establishmentEndGdd)
-            return accumulatedGdd >= babyLeafOptimumGdd ? 1m : 0m;
-        return Math.Round(Math.Clamp((accumulatedGdd - establishmentEndGdd) / (babyLeafOptimumGdd - establishmentEndGdd), 0m, 1m), 2);
+        if (accumulatedGdd < babyLeafOpensGdd)
+            return 0m;
+        if (babyLeafOptimumGdd <= babyLeafOpensGdd)
+            return 1m;
+        return Math.Round(Math.Clamp((accumulatedGdd - babyLeafOpensGdd) / (babyLeafOptimumGdd - babyLeafOpensGdd), 0m, 1m), 2);
     }
 
     /// <summary>Combina el histórico con el estado actual según el peso del estado actual.</summary>

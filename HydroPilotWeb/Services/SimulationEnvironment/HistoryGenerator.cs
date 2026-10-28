@@ -31,6 +31,8 @@ public sealed partial class HistoryGenerator
     private static readonly System.Globalization.CultureInfo Es = System.Globalization.CultureInfo.GetCultureInfo("es-AR");
     private const int ExpectedIntervalSeconds = 300;
     private const string Firmware = "pi-1.4.2";
+    /// <summary>Separación de la siembra densa (5–8 cm del proceso): para la superficie de la mesada.</summary>
+    private const decimal DenseSpacingCm = 6.5m;
 
     private readonly SimWorld _w;
     private readonly SimulationEnvironmentOptions _o;
@@ -210,7 +212,7 @@ public sealed partial class HistoryGenerator
             Name = LotName(bench, plan),
             SowingDate = plan.Sowing,
             // Superficie de la mesada densa (huecos × separación²): la usa el rendimiento por m² del pronóstico.
-            PlantedAreaM2 = Math.Round(bench.Bench.Holes * (_w.TransplantOrDefault.BabyLeafSpacingCm / 100m) * (_w.TransplantOrDefault.BabyLeafSpacingCm / 100m), 2),
+            PlantedAreaM2 = Math.Round(bench.Bench.Holes * (DenseSpacingCm / 100m) * (DenseSpacingCm / 100m), 2),
             GridRows = bench.Bench.GridRows,
             GridColumns = bench.Bench.GridColumns,
             BabyLeafHarvestTargetPercent = 70m,

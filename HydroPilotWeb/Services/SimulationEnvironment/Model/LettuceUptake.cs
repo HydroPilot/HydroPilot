@@ -18,9 +18,9 @@ public readonly record struct Uptake(double WaterLiters, double Salts, double Ph
 /// </summary>
 public static class LettuceUptake
 {
-    public const double WaterBeforeBabyLeaf = 0.04;
-    public const double WaterDuringBabyLeaf = 0.075;
-    public const double WaterConventional = 0.25;
+    public const double WaterBeforeBabyLeaf = 0.015;
+    public const double WaterDuringBabyLeaf = 0.055;
+    public const double WaterConventional = 0.2;
     public const double BabyLeafOpensGdd = 250;
     public const double BabyLeafClosesGdd = 450;
 

@@ -15,7 +15,7 @@ public class SimulationLogicTests
     private static readonly DateOnly TestToday = new(2026, 1, 15);
 
     // Semilla $2,5 · nutrientes $5/L.
-    private static SimulationCostsInput FullCosts() => new(2.5m, 5m);
+    private static SimulationCostsInput FullCosts() => new(2.5m, 5m, 5m);
 
     private static SimulationRequest ValidRequest() => new(
         LotId: null,
@@ -32,11 +32,12 @@ public class SimulationLogicTests
     [Fact]
     public void Costos_Siguen_Las_Formulas_Del_Plan()
     {
-        var breakdown = CostCalculator.Calculate(FullCosts(), seeds: 600, new NutrientUsage(100m, 0.5m), cycleDays: 10, "ARS");
+        var breakdown = CostCalculator.Calculate(FullCosts(), seeds: 600, new NutrientUsage(100m, 0.3m, 0.2m), cycleDays: 10, "ARS");
 
-        Assert.Equal(["Semillas", "Nutrientes"], breakdown.Components.Select(c => c.Name)); // solo gastos del sistema
+        Assert.Equal(["Semillas", "Solución A", "Solución B"], breakdown.Components.Select(c => c.Name)); // solo gastos del sistema
         Assert.Equal(1500m, breakdown.Components.Single(c => c.Name == "Semillas").Amount);  // 2,5 × 600 plantas
-        Assert.Equal(2.5m, breakdown.Components.Single(c => c.Name == "Nutrientes").Amount); // 0,5 L × $5
+        Assert.Equal(1.5m, breakdown.Components.Single(c => c.Name == "Solución A").Amount); // 0,3 L × $5
+        Assert.Equal(1m, breakdown.Components.Single(c => c.Name == "Solución B").Amount);   // 0,2 L × $5
         Assert.Equal(1502.5m, breakdown.Total);
         Assert.Equal(10, breakdown.CycleDays);
         Assert.Equal(600, breakdown.Seeds);
@@ -47,7 +48,7 @@ public class SimulationLogicTests
     public void Costos_Sin_Precios_Muestran_No_Calculable_Sin_Inventar()
     {
         var breakdown = CostCalculator.Calculate(
-            FullCosts() with { PricePerSeed = null }, seeds: 600, new NutrientUsage(10m, 0.05m), cycleDays: 7, "ARS");
+            FullCosts() with { PricePerSeed = null }, seeds: 600, new NutrientUsage(10m, 0.03m, 0.02m), cycleDays: 7, "ARS");
 
         var seeds = breakdown.Components.Single(c => c.Name == "Semillas");
         Assert.Null(seeds.Amount);
@@ -76,11 +77,11 @@ public class SimulationLogicTests
             new NutrientConsumptionRules.PlantSpan(1, new DateOnly(2026, 1, 6)),  // 1 descartada el 6/1: 5 días
         ]);
 
-        // Por planta: 10 × 0,04 + 10 × 0,075 + 10 × 0,25 = 3,65 L de agua; (1,15 L × 5 ml) + (2,5 L × 10 ml) = 0,03075 L de
-        // nutrientes. La descartada: 5 × 0,04 = 0,2 L de agua y 0,001 L de nutrientes.
-        Assert.Equal(7.5m, usage.WaterLiters);
-        Assert.Equal(0.0625m, usage.NutrientLiters);
-        Assert.Equal(new NutrientUsage(0m, 0m), NutrientConsumptionRules.Calculate(sowing, null, null, []));
+        // Por planta: 10 × 0,015 + 10 × 0,055 + 10 × 0,2 = 2,7 L de agua. Solución A: 0,15 L × 1,75 + 0,55 L × 2,75 + 2 L ×
+        // 4,5 = 10,775 ml; B: 0,15 × 0,65 + 0,55 × 1,1 + 2 × 1,75 = 4,2025 ml. La descartada: 5 × 0,015 = 0,075 L de agua,
+        // 0,13125 ml de A y 0,04875 ml de B.
+        Assert.Equal(new NutrientUsage(5.475m, 0.02168125m, 0.00845375m), usage);
+        Assert.Equal(new NutrientUsage(0m, 0m, 0m), NutrientConsumptionRules.Calculate(sowing, null, null, []));
     }
 
     // --- SIM-05: validación en servidor ---
@@ -239,11 +240,11 @@ public class SimulationLogicTests
         Assert.Equal(0.3m, babyLeaf.TotalKg);
         Assert.Equal(900m, babyLeaf.Revenue);
         Assert.Equal(17, babyLeaf.Costs.CycleDays);
-        // Agua: 10 plantas × (15 días antes de Baby Leaf × 0,04 L + 2 días en Baby Leaf × 0,075 L) = 7,5 L;
-        // nutrientes 7,5 × 5 ml = 0,0375 L × $5 = $0,19. Gastos del sistema = 1500 + 0,19.
-        Assert.Equal(new NutrientUsage(7.5m, 0.0375m), babyLeaf.Costs.Usage);
-        Assert.Equal(1500.19m, babyLeaf.Costs.Total);
-        Assert.Equal(-600.19m, babyLeaf.Margin);
+        // Agua: 10 plantas × (15 días antes de Baby Leaf × 0,015 L + 2 días en Baby Leaf × 0,055 L) = 3,35 L; Solución A
+        // 10 × (0,225 × 1,75 + 0,11 × 2,75) ml = 0,0069625 L ($0,03) y B 0,0026725 L ($0,01). Gastos = 1500 + 0,04.
+        Assert.Equal(new NutrientUsage(3.35m, 0.0069625m, 0.0026725m), babyLeaf.Costs.Usage);
+        Assert.Equal(1500.04m, babyLeaf.Costs.Total);
+        Assert.Equal(-600.04m, babyLeaf.Margin);
 
         // Meta 60 %: 6 Baby Leaf (0,18 kg · $540) + 4 convencionales (0,8 kg · $1600); termina con el corte convencional.
         var mixed = strategies[1];
@@ -253,18 +254,18 @@ public class SimulationLogicTests
         Assert.True(mixed.ConventionalCut!.IsExtrapolated); // más allá de los 7 días de proyección
         Assert.Equal(37, mixed.Costs.CycleDays);
         Assert.Equal(2140m, mixed.Revenue);
-        // 6 Baby Leaf hasta el 18/1 (4,5 L de agua) + 4 adultas hasta el 7/2: 15 días × 0,04 L + 11 en Baby Leaf ×
-        // 0,075 L + 11 de adulta × 0,25 L = 4,175 L cada una (16,7 L).
-        Assert.Equal(new NutrientUsage(21.2m, 0.161m), mixed.Costs.Usage);
-        Assert.Equal(1500.80m, mixed.Costs.Total);   // 1500 + 0,161 L × $5
+        // 6 Baby Leaf hasta el 18/1 (0,335 L de agua cada una) + 4 adultas hasta el 7/2: 15 días × 0,015 L + 11 en Baby
+        // Leaf × 0,055 L + 11 de adulta × 0,2 L = 3,03 L cada una (11,9575 ml de A y 4,66175 ml de B).
+        Assert.Equal(new NutrientUsage(14.13m, 0.0520075m, 0.0202505m), mixed.Costs.Usage);
+        Assert.Equal(1500.36m, mixed.Costs.Total);   // 1500 + A $0,26 + B $0,10
 
         // Todo convencional: 10 × 200 g = 2 kg × $2000 = $4000.
         var conventional = strategies[2];
         Assert.Equal(2m, conventional.TotalKg);
         Assert.Equal(4000m, conventional.Revenue);
-        Assert.Equal(new NutrientUsage(41.75m, 0.34625m), conventional.Costs.Usage); // 10 × 4,175 L; 10 ml/L de adulta
-        Assert.Equal(2498.27m, conventional.Margin);  // 4000 − (1500 + 1,73)
-        Assert.Equal(750.86m, conventional.CostPerKg); // 1501,73 / 2
+        Assert.Equal(new NutrientUsage(30.3m, 0.119575m, 0.0466175m), conventional.Costs.Usage); // 10 × 3,03 L
+        Assert.Equal(2499.17m, conventional.Margin);  // 4000 − (1500 + A $0,60 + B $0,23)
+        Assert.Equal(750.42m, conventional.CostPerKg); // 1500,83 / 2
     }
 
     [Fact]

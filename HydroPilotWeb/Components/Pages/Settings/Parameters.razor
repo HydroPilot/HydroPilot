@@ -53,8 +53,8 @@
                     <span class="settings-eyebrow">Gastos del sistema</span>
                     <h3>Precio de nutrientes</h3>
                     <p class="panel__subtitle">
-                        Con este precio Simulación calcula el gasto en nutrientes: litros que se consumen
-                        según las plantas vivas y la etapa × precio por litro.
+                        Con estos precios Simulación calcula el gasto en nutrientes: litros de cada solución que se
+                        consumen según las plantas vivas y la etapa × precio por litro.
                     </p>
                 </div>
                 @if (!canEdit)
@@ -67,9 +67,14 @@
             {
                 <div class="lot-editor">
                     <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="param-nutrient-price">Precio nutrientes (@current.Currency por litro)</label>
-                        <input id="param-nutrient-price" type="number" class="form-control" min="0" step="0.01"
-                               @bind="nutrientPrice" @bind:event="oninput" disabled="@(!canEdit)" placeholder="Sin definir" />
+                        <label class="form-label mb-1" for="param-solution-a-price">Solución A, macro (@current.Currency por litro)</label>
+                        <input id="param-solution-a-price" type="number" class="form-control" min="0" step="0.01"
+                               @bind="solutionAPrice" @bind:event="oninput" disabled="@(!canEdit)" placeholder="Sin definir" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-solution-b-price">Solución B, micro (@current.Currency por litro)</label>
+                        <input id="param-solution-b-price" type="number" class="form-control" min="0" step="0.01"
+                               @bind="solutionBPrice" @bind:event="oninput" disabled="@(!canEdit)" placeholder="Sin definir" />
                     </div>
                 </div>
 
@@ -119,14 +124,6 @@
             @if (transplant is not null)
             {
                 <div class="lot-editor">
-                    <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="param-bl-spacing">Separación Baby Leaf (cm)</label>
-                        <input id="param-bl-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.BabyLeafSpacingCm" disabled="@(!canEdit)" />
-                    </div>
-                    <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="param-adult-spacing">Separación Adulta (cm)</label>
-                        <input id="param-adult-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.AdultSpacingCm" disabled="@(!canEdit)" />
-                    </div>
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="param-decision-gdd">GDD de decisión</label>
                         <input id="param-decision-gdd" type="number" class="form-control" min="0" step="5" @bind="transplant.DecisionGdd" disabled="@(!canEdit)" />
@@ -389,7 +386,8 @@
     private string? savedMessage;
     private string? error;
 
-    private decimal? nutrientPrice;
+    private decimal? solutionAPrice;
+    private decimal? solutionBPrice;
     private bool savingNutrient;
     private IReadOnlyList<string> nutrientErrors = [];
     private string? nutrientSavedMessage;
@@ -399,8 +397,6 @@
     // Trasplante a Adultas (editable en el formulario; se valida al guardar).
     private sealed class TransplantRow
     {
-        public decimal BabyLeafSpacingCm { get; set; }
-        public decimal AdultSpacingCm { get; set; }
         public decimal DecisionGdd { get; set; }
         public int PlantsPerHour { get; set; }
         public decimal LaborCostPerHour { get; set; }
@@ -409,13 +405,13 @@
 
         public static TransplantRow From(TransplantParameters p) => new()
         {
-            BabyLeafSpacingCm = p.BabyLeafSpacingCm, AdultSpacingCm = p.AdultSpacingCm, DecisionGdd = p.DecisionGdd,
+            DecisionGdd = p.DecisionGdd,
             PlantsPerHour = p.PlantsPerHour, LaborCostPerHour = p.LaborCostPerHour, StressDays = p.StressDays,
             MaxSizeFactor = p.MaxSizeFactor,
         };
 
         public static TransplantParameters ToParameters(TransplantRow r) => new(
-            r.BabyLeafSpacingCm, r.AdultSpacingCm, r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor);
+            r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor);
     }
 
     private TransplantRow? transplant;
@@ -450,7 +446,7 @@
             user = (await AuthState.GetAuthenticationStateAsync()).User;
             canEdit = SystemParametersService.CanEdit(user);
             current = await ParametersService.GetYieldParametersAsync();
-            nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
+            await LoadNutrientPricesAsync();
             transplant = TransplantRow.From(await ParametersService.GetTransplantParametersAsync());
             await LoadCheckIntervalsAsync();
             await LoadFaultLimitsAsync();
@@ -571,18 +567,24 @@
         }
     }
 
+    private async Task LoadNutrientPricesAsync()
+    {
+        var prices = await ParametersService.GetNutrientPricesAsync();
+        (solutionAPrice, solutionBPrice) = (Trim(prices.SolutionAPerLiter), Trim(prices.SolutionBPerLiter));
+    }
+
     private async Task SaveNutrientPriceAsync()
     {
         savingNutrient = true;
         nutrientSavedMessage = null;
         try
         {
-            var result = await ParametersService.UpdateNutrientPricePerLiterAsync(nutrientPrice, user);
+            var result = await ParametersService.UpdateNutrientPricesAsync(new NutrientPrices(solutionAPrice, solutionBPrice), user);
             nutrientErrors = result.Errors;
             if (result.Succeeded)
             {
-                nutrientPrice = Trim(await ParametersService.GetNutrientPricePerLiterAsync());
-                nutrientSavedMessage = "Precio guardado.";
+                await LoadNutrientPricesAsync();
+                nutrientSavedMessage = "Precios guardados.";
             }
         }
         catch (Exception ex)

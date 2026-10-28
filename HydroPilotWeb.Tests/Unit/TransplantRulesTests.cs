@@ -44,7 +44,7 @@ public class TransplantRulesTests
         Assert.True(TransplantRules.IsDue(250m, 250m, 450m));
         Assert.False(TransplantRules.IsDue(450m, 250m, 450m));
         Assert.Equal(new[] { (1, 2), (2, 1), (2, 2) }, TransplantRules.FreeHoles(2, 2, new HashSet<(int, int)> { (1, 1) }));
-        Assert.Equal(11.88m, TransplantParameters.Defaults.CostPerPlant); // $9.500 ÷ 800 plantas por hora
+        Assert.Equal(10m, TransplantParameters.Defaults.CostPerPlant); // $8.000 ÷ 800 plantas por hora
     }
 
     [Fact]
@@ -83,17 +83,5 @@ public class TransplantRulesTests
 
         Assert.Equal(330m, BabyLeafOptimumRules.HistoricalPeak(lots, sowing, null));
         Assert.Null(BabyLeafOptimumRules.HistoricalPeak([], sowing, null));
-    }
-
-    [Fact]
-    public void Una_Adulta_Ocupa_El_Lugar_De_Unas_Diez_Baby_Leafs()
-    {
-        // 6,5 y 22,5 cm; Baby Leaf 30 días contra Adulta 12 + 25: 1.268 contra 13.163 cm²·día.
-        var equivalence = SpaceCostRules.Equivalence(6.5m, 22.5m, babyLeafDays: 30, daysToTransplant: 12, adultDays: 25);
-
-        Assert.Equal(10.39m, equivalence);
-        Assert.Equal(4 * 9.39m * 400m, SpaceCostRules.Total(4, 10.39m, 400m)); // 4 adultas × 9,39 × $400
-        Assert.Equal(0m, SpaceCostRules.Total(4, 10.39m, -50m));              // un margen negativo no se cobra
-        Assert.Null(SpaceCostRules.Equivalence(6.5m, 22.5m, 0, 12, 25));
     }
 }

@@ -255,9 +255,6 @@ public sealed partial class HistoryGenerator
     // Precios y parámetros
     // ------------------------------------------------------------------
 
-    /// <summary>Precio de nutrientes por litro de concentrado A+B (kit Acquagarden 1 L A + 1 L B ≈ $30.870, 2026).</summary>
-    private const decimal NutrientPricePerLiter = 15_000m;
-
     /// <summary>
     /// Precio por kg de cada destino a una fecha (pesos nominales, supuesto a partir de CEPA y góndolas):
     /// Baby Leaf al productor ~45 % de la bolsa en góndola ($26.600–29.300/kg en 2026) con ~2,2 % de suba por mes;
@@ -272,10 +269,22 @@ public sealed partial class HistoryGenerator
         return (Math.Round(babyLeaf / 50m) * 50m, Math.Round(conventional / 50m) * 50m);
     }
 
+    /// <summary>
+    /// El modelo llevado a los precios de fábrica: el trimestre actual queda en <see cref="ParameterDefaults"/> y los
+    /// anteriores con la misma suba del modelo.
+    /// </summary>
+    private (decimal BabyLeaf, decimal Conventional) CalibratedPrices(DateOnly date)
+    {
+        var current = PriceModel(new DateOnly(_today.Year, (_today.Month - 1) / 3 * 3 + 1, 1).AddMonths(1));
+        var (bl, conv) = PriceModel(date);
+        return (Math.Round(bl * ParameterDefaults.BabyLeafPricePerKg / current.BabyLeaf / 50m) * 50m,
+            Math.Round(conv * ParameterDefaults.ConventionalPricePerKg / current.Conventional / 50m) * 50m);
+    }
+
     private (decimal BabyLeaf, decimal Conventional) PricesOn(DateOnly date)
     {
         var row = _priceQuarters.LastOrDefault(q => q.From <= date);
-        return row == default ? PriceModel(date) : (row.BabyLeaf, row.Conventional);
+        return row == default ? CalibratedPrices(date) : (row.BabyLeaf, row.Conventional);
     }
 
     private readonly List<(DateOnly From, decimal BabyLeaf, decimal Conventional)> _priceQuarters = [];
@@ -286,7 +295,7 @@ public sealed partial class HistoryGenerator
         var start = new DateOnly(historyStart.Year, (historyStart.Month - 1) / 3 * 3 + 1, 1);
         for (var from = start; from <= _today; from = from.AddMonths(3))
         {
-            var (bl, conv) = PriceModel(from.AddMonths(1));
+            var (bl, conv) = CalibratedPrices(from.AddMonths(1));
             _priceQuarters.Add((from, bl, conv));
             var until = from.AddMonths(3) > _today ? (DateOnly?)null : from.AddMonths(3).AddDays(-1);
             foreach (var (destination, value) in new[] { (OptimizationContractDestination.BabyLeaf, bl), (OptimizationContractDestination.Conventional, conv) })
@@ -308,7 +317,8 @@ public sealed partial class HistoryGenerator
 
         _data.Settings[SystemParametersService.BabyLeafGramsKey] = _w.BabyLeafGramsPerPlant.ToString(System.Globalization.CultureInfo.InvariantCulture);
         _data.Settings[SystemParametersService.ConventionalGramsKey] = _w.ConventionalGramsPerPlant.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        _data.Settings[SystemParametersService.NutrientPricePerLiterKey] = NutrientPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _data.Settings[SystemParametersService.SolutionAPricePerLiterKey] = ParameterDefaults.SolutionAPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _data.Settings[SystemParametersService.SolutionBPricePerLiterKey] = ParameterDefaults.SolutionBPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     // ------------------------------------------------------------------

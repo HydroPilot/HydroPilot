@@ -334,18 +334,29 @@ public static class DbInitializer
             }
 
             // Destino Baby Leaf (ciclo corto, mayor densidad, sin trasplante individual).
-            AddPriceCost("baby_leaf", "price_per_kg", 2600m);
+            AddPriceCost("baby_leaf", "price_per_kg", HydroPilotWeb.Services.ParameterDefaults.BabyLeafPricePerKg);
             AddPriceCost("baby_leaf", "seed_cost_m2", 900m);
             AddPriceCost("baby_leaf", "nutrient_cost_m2", 320m);
             AddPriceCost("baby_leaf", "energy_cost_m2", 260m);
             AddPriceCost("baby_leaf", "transplant_cost_m2", 0m);
 
             // Destino convencional (ciclo más largo, trasplante y mayor consumo de energía).
-            AddPriceCost("conventional", "price_per_kg", 1800m);
+            AddPriceCost("conventional", "price_per_kg", HydroPilotWeb.Services.ParameterDefaults.ConventionalPricePerKg);
             AddPriceCost("conventional", "seed_cost_m2", 250m);
             AddPriceCost("conventional", "nutrient_cost_m2", 420m);
             AddPriceCost("conventional", "energy_cost_m2", 520m);
             AddPriceCost("conventional", "transplant_cost_m2", 480m);
+        }
+
+        // --- Parámetros de fábrica (pesos, precios de nutrientes, chequeos de sensores): solo los que faltan ---
+        foreach (var (key, value) in HydroPilotWeb.Services.ParameterDefaults.Settings())
+        {
+            if (context.AppSettings.Find(key) is null)
+                context.AppSettings.Add(new AppSetting
+                {
+                    Key = key,
+                    Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
         }
 
         context.SaveChanges();

@@ -62,14 +62,8 @@ public class BabyLeafOutlookService : ILotHistorySource
                     && (p.CommercialStage.Name == CommercialStageNames.BabyLeafApta
                         || p.CommercialStage.Name == CommercialStageNames.CandidataBabyLeaf), ct);
                 current = Math.Round((decimal)babyLeafReady / activeCount, 4);
-
-                var establishmentEnd = await context.PhenologicalStages.AsNoTracking()
-                    .Where(s => s.CropTypeId == request.CropTypeId && s.IsActive)
-                    .OrderBy(s => s.Order)
-                    .Select(s => (decimal?)s.GddMax)
-                    .FirstOrDefaultAsync(ct) ?? 150m;
                 weight = BabyLeafOutlookRules.CurrentStateWeight(
-                    timeline.AccumulatedGdd, establishmentEnd, timeline.BabyLeafOptimum.Gdd);
+                    timeline.AccumulatedGdd, timeline.BabyLeafOpens.Gdd, timeline.BabyLeafOptimum.Gdd);
             }
         }
 
@@ -94,8 +88,11 @@ public class BabyLeafOutlookService : ILotHistorySource
     /// <summary>
     /// Ciclos cerrados del cultivo con plantas. Lo cargado a mano en el lote manda; lo que falta se
     /// calcula: aptas en el óptimo = cortadas como Baby Leaf + las que estuvieron "Baby Leaf" y
-    /// siguieron; pérdidas tempranas/tardías = descartes antes/después de que el GDD medido cruzó el
-    /// cierre de la ventana Baby Leaf; clima = GDD diario promedio medido.
+    /// siguieron; clima = GDD diario promedio medido. Pérdidas:
+    /// - con trasplante (las adultas son las trasplantadas): tempranas = descartes del denso antes de que el GDD medido
+    ///   cruce el cierre de la ventana Baby Leaf; tardías = trasplantadas descartadas, sobre las trasplantadas. Las del
+    ///   denso descartadas al cerrar la ventana no entraron en Adultas ("sin lugar", lo modela el reparto): no cuentan;
+    /// - sin trasplante (lotes de antes, con adultas cosechadas del denso): descartes antes/después del cierre.
     /// </summary>
     private async Task<IReadOnlyList<LotCycleOutcome>> GetCycleOutcomesAsync(
         HydroPilotDbContext context, int cropTypeId, CancellationToken ct)
@@ -125,6 +122,7 @@ public class BabyLeafOutlookService : ILotHistorySource
                 CutAsBabyLeaf = p.OperationalState == PlantOperationalState.Cosechada && p.CommercialStage != null
                     && (p.CommercialStage.Name == CommercialStageNames.BabyLeafApta
                         || p.CommercialStage.Name == CommercialStageNames.CandidataBabyLeaf),
+                Transplanted = p.TransplantedOn != null,
                 WasApt = aptId != null && p.History.Any(h => h.NewCommercialStageId == aptId),
             })
             .ToListAsync(ct);
@@ -158,16 +156,32 @@ public class BabyLeafOutlookService : ILotHistorySource
 
             var apt = lot.BabyLeafAptAtOptimum ?? cutAsBabyLeaf + own.Count(p => !p.CutAsBabyLeaf && p.WasApt);
             var (early, late, averageGdd) = (lot.EarlyLossPlants, lot.LateLossPlants, lot.CycleAverageDailyGdd);
+            // Con trasplante no hay adultas cosechadas del denso: las adultas son las trasplantadas.
+            var withTransplant = !own.Any(p => p.OperationalState == PlantOperationalState.Cosechada && !p.CutAsBabyLeaf && !p.Transplanted);
+            int? lateLossBase = null;
 
             if (measuredByLot.TryGetValue(lot.Id, out var measured) && measured.HasReadings)
             {
                 averageGdd ??= measured.AverageDailyGdd;
                 if (early is null || late is null)
                 {
-                    var earlyCount = discarded.Count(p =>
-                        measured.WindowClosedOn is null || p.DiscardDate is null || p.DiscardDate <= measured.WindowClosedOn);
-                    early ??= earlyCount;
-                    late ??= discarded.Count - earlyCount;
+                    if (withTransplant)
+                    {
+                        early ??= discarded.Count(p => !p.Transplanted
+                            && (measured.WindowClosedOn is null || p.DiscardDate is null || p.DiscardDate < measured.WindowClosedOn));
+                        if (late is null)
+                        {
+                            late = discarded.Count(p => p.Transplanted);
+                            lateLossBase = own.Count(p => p.Transplanted);
+                        }
+                    }
+                    else
+                    {
+                        var earlyCount = discarded.Count(p =>
+                            measured.WindowClosedOn is null || p.DiscardDate is null || p.DiscardDate <= measured.WindowClosedOn);
+                        early ??= earlyCount;
+                        late ??= discarded.Count - earlyCount;
+                    }
                 }
             }
 
@@ -184,7 +198,8 @@ public class BabyLeafOutlookService : ILotHistorySource
                 late,
                 averageGdd,
                 lot.BabyLeafAptAtOptimum is not null || lot.EarlyLossPlants is not null
-                    || lot.LateLossPlants is not null || lot.CycleAverageDailyGdd is not null));
+                    || lot.LateLossPlants is not null || lot.CycleAverageDailyGdd is not null,
+                lateLossBase));
         }
 
         return outcomes;

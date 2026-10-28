@@ -4,8 +4,8 @@ namespace HydroPilotWeb.Services.Simulation;
 /// Gastos del sistema de una estrategia (SIM-05): solo lo que el sistema sabe calcular, con
 /// fórmulas transparentes en cada componente:
 ///   semillas   = precioSemilla × plantas del lote (todas) o del escenario
-///   nutrientes = precioLitro × litros de nutrientes del ciclo (<see cref="NutrientConsumptionRules"/>:
-///                plantas vivas cada día × agua de la etapa × ml de nutrientes por litro)
+///   solución A = precio por litro de A × litros de A del ciclo (<see cref="NutrientConsumptionRules"/>:
+///                plantas vivas cada día × agua de la etapa × ml de A por litro); solución B, igual
 ///   trasplante = plantas trasplantadas a Adultas × costo por planta (costo de la hora ÷ plantas por hora)
 ///   total      = suma de componentes
 ///   costoPorKg = total / kg cosechados  (solo si total y kg &gt; 0)
@@ -35,17 +35,9 @@ public static class CostCalculator
             ? new SimulationCostComponent("Semillas", "precio por semilla × semillas", Math.Round(seedPrice * seeds, 2), null, "semilla")
             : new SimulationCostComponent("Semillas", "precio por semilla × semillas", null, "Falta el precio por semilla.", "semilla"));
 
-        // Nutrientes: precio/L × litros de nutrientes que consume el ciclo.
-        decimal? nutrientsAmount = null;
-        string? nutrientsReason = null;
-        if (costs.NutrientPricePerLiter is not { } nutrientPrice)
-            nutrientsReason = "Falta el precio de nutrientes por litro (Ajustes > Parámetros).";
-        else if (usage is null)
-            nutrientsReason = "Sin fecha de corte: no se puede calcular el consumo del ciclo.";
-        else
-            nutrientsAmount = Math.Round(nutrientPrice * usage.NutrientLiters, 2);
-        components.Add(new SimulationCostComponent(
-            "Nutrientes", "litros de nutrientes del ciclo × precio por litro", nutrientsAmount, nutrientsReason, "L"));
+        // Nutrientes: cada solución, precio/L × los litros que consume el ciclo.
+        components.Add(Solution(SolutionA, costs.SolutionAPricePerLiter, usage?.SolutionALiters, usage is null));
+        components.Add(Solution(SolutionB, costs.SolutionBPricePerLiter, usage?.SolutionBLiters, usage is null));
 
         // Trasplante: la mano de obra de las que pasan a Adultas.
         if (transplanted > 0)
@@ -70,6 +62,19 @@ public static class CostCalculator
         }
 
         return new SimulationCostBreakdown(currencyCode, components, total, totalReason, cycleDays, seeds, usage, warnings, transplanted);
+    }
+
+    public const string SolutionA = "Solución A";
+    public const string SolutionB = "Solución B";
+
+    private static SimulationCostComponent Solution(string name, decimal? pricePerLiter, decimal? liters, bool withoutCut)
+    {
+        const string formula = "litros del ciclo × precio por litro";
+        if (pricePerLiter is not { } price)
+            return new SimulationCostComponent(name, formula, null, $"Falta el precio por litro de la {name} (Ajustes > Parámetros).", "L");
+        if (withoutCut || liters is not { } used)
+            return new SimulationCostComponent(name, formula, null, "Sin fecha de corte: no se puede calcular el consumo del ciclo.", "L");
+        return new SimulationCostComponent(name, formula, Math.Round(price * used, 2), null, "L");
     }
 
     /// <summary>Costo por kg: total / kg, solo si ambos son válidos (&gt; 0).</summary>

@@ -204,11 +204,11 @@
                     </div>
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="circuit-rows">Huecos (filas × columnas)</label>
-                        <span class="circuits-table__grid">
+                        <div class="circuits-new__grid">
                             <input id="circuit-rows" type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control" aria-label="Filas" @bind="newRows" />
-                            ×
+                            <span aria-hidden="true">×</span>
                             <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control" aria-label="Columnas" @bind="newColumns" />
-                        </span>
+                        </div>
                     </div>
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="circuit-liters">Tanque (litros)</label>
@@ -290,6 +290,18 @@
     .circuits-table__actions {
         display: inline-flex;
         gap: 6px;
+    }
+
+    /* Alta: filas × columnas debajo de su label y a todo el ancho del campo, como los demás inputs. */
+    .circuits-new__grid {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .circuits-new__grid input {
+        flex: 1 1 0;
+        min-width: 0;
     }
 
     .circuits-new__title {

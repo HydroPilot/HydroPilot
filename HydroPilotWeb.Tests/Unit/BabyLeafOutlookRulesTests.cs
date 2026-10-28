@@ -103,11 +103,27 @@ public class BabyLeafOutlookRulesTests
     }
 
     [Fact]
+    public void Con_Trasplante_La_Perdida_Tardia_Es_Sobre_Las_Trasplantadas()
+    {
+        // 200 plantas: 120 Baby Leaf, 40 trasplantadas (2 descartadas después), el resto del denso se descartó al
+        // cerrar la ventana (sin lugar en Adultas): no son pérdidas tardías.
+        var cycle = new LotCycleOutcome(1, "Lote", new DateOnly(2026, 5, 1), 200, 120, 38, 42, 130, 10, 2, null,
+            IsManual: false, LateLossBase: 40);
+
+        Assert.Equal(0.05m, cycle.LateLossRate);                       // 2 de 40, no 2 de 70
+        Assert.Null((cycle with { LateLossBase = 0 }).LateLossRate);    // sin trasplantadas no hay dato
+    }
+
+    [Fact]
     public void Estado_Actual_Pesa_Segun_Cuanto_Falta_Para_El_Optimo()
     {
-        Assert.Equal(0m, BabyLeafOutlookRules.CurrentStateWeight(120m, 150m, 300m));
-        Assert.Equal(0.87m, BabyLeafOutlookRules.CurrentStateWeight(280m, 150m, 300m));
-        Assert.Equal(1m, BabyLeafOutlookRules.CurrentStateWeight(320m, 150m, 300m));
+        // En desarrollo no pesa (como A26 en 245 GDD, con todas "En desarrollo"): solo el histórico.
+        Assert.Equal(0m, BabyLeafOutlookRules.CurrentStateWeight(120m, 250m, 300m));
+        Assert.Equal(0m, BabyLeafOutlookRules.CurrentStateWeight(245m, 250m, 317m));
+        // Desde que abre la ventana crece hasta el óptimo.
+        Assert.Equal(0m, BabyLeafOutlookRules.CurrentStateWeight(250m, 250m, 300m));
+        Assert.Equal(0.6m, BabyLeafOutlookRules.CurrentStateWeight(280m, 250m, 300m));
+        Assert.Equal(1m, BabyLeafOutlookRules.CurrentStateWeight(320m, 250m, 300m));
 
         // 87 % estado actual (63 %) + 13 % histórico (71 %) ≈ 64 %.
         Assert.Equal(0.6404m, BabyLeafOutlookRules.Blend(0.71m, 0.63m, 0.87m));

@@ -86,7 +86,7 @@ public class SimulationService
             .ToListAsync(ct);
 
         return new SimulationContextOptions(
-            lots, crops, await _parameters.GetYieldParametersAsync(ct), await _parameters.GetNutrientPricePerLiterAsync(ct));
+            lots, crops, await _parameters.GetYieldParametersAsync(ct), await _parameters.GetNutrientPricesAsync(ct));
     }
 
     /// <summary>
@@ -243,12 +243,15 @@ public class SimulationService
         }
 
         // Precio de nutrientes: el del escenario o, vacío, el de Ajustes > Parámetros.
-        var costs = request.Costs.NutrientPricePerLiter is null
-            ? request.Costs with { NutrientPricePerLiter = await _parameters.GetNutrientPricePerLiterAsync(ct) }
-            : request.Costs;
+        var nutrientPrices = await _parameters.GetNutrientPricesAsync(ct);
+        var costs = request.Costs with
+        {
+            SolutionAPricePerLiter = request.Costs.SolutionAPricePerLiter ?? nutrientPrices.SolutionAPerLiter,
+            SolutionBPricePerLiter = request.Costs.SolutionBPricePerLiter ?? nutrientPrices.SolutionBPerLiter,
+        };
 
         // Trasplante: las que van a Adulta ocupan huecos de Adultas (los libres para el lote; para planificar sin lote,
-        // todos), cuestan la mano de obra y pagan el lugar que ocupan. Las ya trasplantadas son adultas siempre.
+        // todos) y cuestan la mano de obra. Las ya trasplantadas son adultas siempre.
         var fixedAdults = lot is null ? 0 : await context.Plants.CountAsync(p => p.LotId == lot.Id
             && p.OperationalState == PlantOperationalState.Activa && p.TransplantedOn != null, ct);
         var adultCapacity = lot is not null
@@ -256,8 +259,7 @@ public class SimulationService
             : await PlantTransplantService.TotalAdultHolesAsync(context, ct);
         if (adultCapacity == 0 && fixedAdults == 0)
             warnings.Add("No hay huecos libres en circuitos de Adultas: las que no llegan a Baby Leaf se pierden.");
-        var transplantScenario = new SimulationStrategies.TransplantScenario(
-            transplant.BabyLeafSpacingCm, transplant.AdultSpacingCm, transplant.CostPerPlant, adultCapacity, fixedAdults);
+        var transplantScenario = new SimulationStrategies.TransplantScenario(transplant.CostPerPlant, adultCapacity, fixedAdults);
 
         // --- 7. Estrategias: máximo Baby Leaf / meta Baby Leaf / todo adulta ---
         IReadOnlyList<SimulationStrategyOutcome> strategies = timeline is null

@@ -56,12 +56,13 @@ public sealed record SimulationClimateInput(
 /// Gastos del sistema del escenario (SIM-05): solo lo que el sistema sabe calcular (semillas =
 /// plantas del lote o del escenario; litros de nutrientes según plantas vivas y etapa). Los demás
 /// costos (mano de obra, energía, etc.) los arma el contador, fuera del sistema. Se cargan solo los
-/// precios, en la moneda de Ajustes &gt; Parámetros. NutrientPricePerLiter null = el de Ajustes &gt;
+/// precios, en la moneda de Ajustes &gt; Parámetros. Precio por litro de la Solución A o B null = el de Ajustes &gt;
 /// Parámetros. Si falta un precio, el componente es "No calculable".
 /// </summary>
 public sealed record SimulationCostsInput(
     decimal? PricePerSeed,
-    decimal? NutrientPricePerLiter);
+    decimal? SolutionAPricePerLiter,
+    decimal? SolutionBPricePerLiter);
 
 /// <summary>Estrategia de cosecha que se elige para el escenario.</summary>
 public enum SimulationStrategyKind
@@ -208,10 +209,9 @@ public sealed record SimulationStrategyOutcome(
     decimal? TotalKg,
     decimal? Revenue,
     SimulationCostBreakdown Costs,
-    decimal? Margin,       // ingresos − gastos del sistema − lugar ocupado por las Adultas
+    decimal? Margin,       // ingresos − gastos del sistema
     decimal? CostPerKg,
-    IReadOnlyList<string> Warnings,
-    SimulationSpaceCost? Space = null); // lugar ocupado por las Adultas (con trasplante)
+    IReadOnlyList<string> Warnings);
 
 /// <summary>Resultado completo de una simulación preview (SIM-02: un único resultado por corrida).</summary>
 public sealed record SimulationResult(
@@ -253,7 +253,7 @@ public sealed record SimulationContextOptions(
     IReadOnlyList<SimulationLotOption> Lots,
     IReadOnlyList<SimulationCropOption> Crops,
     YieldParameters Parameters,
-    decimal? NutrientPricePerLiter); // de Ajustes > Parámetros; null = sin definir
+    NutrientPrices NutrientPrices); // de Ajustes > Parámetros; null = sin definir
 
 /// <summary>Problema de validación devuelto por la API (SIM-05: negativos y rangos validados en servidor).</summary>
 public sealed record SimulationValidationProblem(IReadOnlyList<string> Errors);

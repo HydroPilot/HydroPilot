@@ -1,5 +1,6 @@
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Services;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Simulation;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +31,7 @@ public class SimulationSqlServerTests
 
     private HydroPilotDbContext NewContext() => _fixture.Factory.CreateDbContext();
 
-    private static SimulationCostsInput FullCosts() => new(PricePerSeed: 2.5m, NutrientPricePerLiter: 5m);
+    private static SimulationCostsInput FullCosts() => new(PricePerSeed: 2.5m, SolutionAPricePerLiter: 5m, SolutionBPricePerLiter: 5m);
 
     /// <summary>Pesos y precios propios del escenario (no dependen de los parámetros del sistema).</summary>
     private static SimulationYieldInput ScenarioYield() => new(30m, 200m, 3000m, 2000m);
@@ -138,10 +139,10 @@ public class SimulationSqlServerTests
         var babyLeaf = result.Strategies[0];
         Assert.Equal(Today.AddDays(6), babyLeaf.BabyLeafCut!.Date);
         Assert.Equal(16, babyLeaf.Costs.CycleDays);             // siembra (hoy-10) → corte (hoy+6)
-        // 10 plantas: 14 días antes de Baby Leaf (abre hoy+3) × 0,04 L + 2 días en Baby Leaf × 0,075 L = 7,1 L.
+        // 10 plantas: 14 días antes de Baby Leaf (abre hoy+3) × 0,015 L + 2 días en Baby Leaf × 0,055 L = 3,2 L.
         Assert.Equal(10, babyLeaf.Costs.Seeds);                 // las plantas del lote
-        Assert.Equal(7.1m, babyLeaf.Costs.Usage!.WaterLiters);
-        Assert.Equal(25.18m, babyLeaf.Costs.Total);             // 10 × 2,5 + 0,0355 L × $5
+        Assert.Equal(3.2m, babyLeaf.Costs.Usage!.WaterLiters);
+        Assert.Equal(25.04m, babyLeaf.Costs.Total);             // 10 × 2,5 + A 0,0067 L × $5 + B 0,002575 L × $5
         Assert.Equal(new DestinationYield(10, 0.3m, 900m), babyLeaf.BabyLeaf); // 10 × 30 g × $3000/kg
 
         // Curva: medido hasta hoy + proyección del escenario.
@@ -438,28 +439,30 @@ public class SimulationSqlServerTests
         static System.Security.Claims.ClaimsPrincipal User(string role) => new(new System.Security.Claims.ClaimsIdentity(
             [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, role)], "test"));
 
-        Assert.False((await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(80m, User("Operador"))).Succeeded);
-        Assert.False((await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(0m, User("Administrador"))).Succeeded);
-        Assert.True((await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(80m, User("Administrador"))).Succeeded);
+        Assert.False((await _fixture.Parameters.UpdateNutrientPricesAsync(new NutrientPrices(80m, 40m), User("Operador"))).Succeeded);
+        Assert.False((await _fixture.Parameters.UpdateNutrientPricesAsync(new NutrientPrices(0m, 40m), User("Administrador"))).Succeeded);
+        Assert.True((await _fixture.Parameters.UpdateNutrientPricesAsync(new NutrientPrices(80m, 40m), User("Administrador"))).Succeeded);
         try
         {
             await using var context = NewContext();
             var crop = await context.CropTypes.FirstAsync();
             var request = FreeRequest(crop.Id, Today, SimulationClimateMode.Manual) with
             {
-                Costs = FullCosts() with { NutrientPricePerLiter = null } // vacío: el de Ajustes > Parámetros
+                Costs = FullCosts() with { SolutionAPricePerLiter = null, SolutionBPricePerLiter = null } // vacío: los de Ajustes > Parámetros
             };
 
             var preview = await _fixture.Simulation.PreviewAsync(request);
 
-            Assert.Equal(80m, (await _fixture.Simulation.GetContextOptionsAsync()).NutrientPricePerLiter);
+            Assert.Equal(new NutrientPrices(80m, 40m), (await _fixture.Simulation.GetContextOptionsAsync()).NutrientPrices);
             var max = preview.Result!.Strategies[0];
-            Assert.Equal(Math.Round(80m * max.Costs.Usage!.NutrientLiters, 2),
-                max.Costs.Components.Single(c => c.Name == "Nutrientes").Amount);
+            Assert.Equal(Math.Round(80m * max.Costs.Usage!.SolutionALiters, 2),
+                max.Costs.Components.Single(c => c.Name == "Solución A").Amount);
+            Assert.Equal(Math.Round(40m * max.Costs.Usage!.SolutionBLiters, 2),
+                max.Costs.Components.Single(c => c.Name == "Solución B").Amount);
         }
         finally
         {
-            await _fixture.Parameters.UpdateNutrientPricePerLiterAsync(null, User("Administrador"));
+            await _fixture.Parameters.UpdateNutrientPricesAsync(new NutrientPrices(null, null), User("Administrador"));
         }
     }
 

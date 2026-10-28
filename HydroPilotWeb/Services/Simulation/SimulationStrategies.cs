@@ -14,8 +14,8 @@ namespace HydroPilotWeb.Services.Simulation;
 /// <item>Gastos del sistema = semillas + nutrientes (según plantas vivas y etapa, <see cref="NutrientConsumptionRules"/>),
 /// de la siembra al último corte, + el trasplante de las que van a Adulta.</item>
 /// <item>Con trasplante (<see cref="TransplantScenario"/>): las que van a Adulta se trasplantan a los huecos libres de
-/// Adultas (las que no entran se cortan como Baby Leaf si llegan, si no se pierden) y pagan el lugar que ocupan
-/// (<see cref="SpaceCostRules"/>). Margen = ingresos − gastos del sistema − lugar ocupado.</item>
+/// Adultas (las que no entran se cortan como Baby Leaf si llegan, si no se pierden). El lugar entra como ese límite, no
+/// como plata. Margen = ingresos − gastos del sistema.</item>
 /// </list>
 /// Estrategias: "Máximo Baby Leaf", "Meta Baby Leaf (X %)" (si hay meta) y "Todo adulta".
 /// Lógica pura, testeable sin I/O.
@@ -39,12 +39,10 @@ public static class SimulationStrategies
         TransplantScenario? Transplant = null);
 
     /// <summary>
-    /// Trasplante del escenario: separaciones (lugar de cada planta), costo por planta trasplantada, huecos libres de
-    /// Adultas (null = sin límite) y las ya trasplantadas (activas), que son Adultas en todas las estrategias.
+    /// Trasplante del escenario: costo por planta trasplantada, huecos libres de Adultas (null = sin límite) y las ya
+    /// trasplantadas (activas), que son Adultas en todas las estrategias.
     /// </summary>
     public sealed record TransplantScenario(
-        decimal BabyLeafSpacingCm,
-        decimal AdultSpacingCm,
         decimal CostPerPlant,
         int? AdultCapacity,
         int FixedAdults);
@@ -207,11 +205,9 @@ public static class SimulationStrategies
         if (!available)
             costs = costs with { Total = null, TotalNotCalculableReason = "Sin fecha de corte: no se puede presupuestar el ciclo." };
 
-        var space = transplant is null ? null : SpaceCost(input, transplant, allocation.Transplanted + fixedAdults, babyLeafCut, conventionalCut);
-
         // Costos e ingresos están en la misma moneda (la de los precios).
-        decimal? margin = revenue is { } income && costs.Total is { } total && (space is null || space.Total is not null)
-            ? Math.Round(income - total - (space?.Total ?? 0m), 2)
+        decimal? margin = revenue is { } income && costs.Total is { } total
+            ? Math.Round(income - total, 2)
             : null;
 
         return new SimulationStrategyOutcome(
@@ -229,40 +225,7 @@ public static class SimulationStrategies
             costs,
             margin,
             available ? CostCalculator.CostPerKg(costs.Total, totalKg) : null,
-            warnings,
-            space);
-    }
-
-    /// <summary>
-    /// Lugar ocupado por las Adultas: equivalencia (lugar × días de una Adulta ÷ los de una Baby Leaf) − 1, por el margen
-    /// de una Baby Leaf de este escenario (ingreso − semilla − sus nutrientes hasta el corte).
-    /// </summary>
-    private static SimulationSpaceCost SpaceCost(
-        Input input, TransplantScenario transplant, int adults, SimulationCut babyLeafCut, SimulationCut conventionalCut)
-    {
-        if (adults == 0)
-            return new SimulationSpaceCost(0, null, null, 0m, null);
-
-        var timeline = input.Timeline;
-        var babyLeafDate = babyLeafCut.Date ?? timeline.BabyLeafOptimum.Date;
-        if (babyLeafDate is not { } blCut || timeline.Transplant?.Date is not { } decision || conventionalCut.Date is not { } adultCut)
-            return new SimulationSpaceCost(adults, null, null, null, "Sin fechas de corte o de trasplante: no se puede medir el lugar ocupado.");
-
-        var equivalence = SpaceCostRules.Equivalence(transplant.BabyLeafSpacingCm, transplant.AdultSpacingCm,
-            blCut.DayNumber - input.SowingDate.DayNumber, decision.DayNumber - input.SowingDate.DayNumber,
-            adultCut.DayNumber - decision.DayNumber);
-        if (equivalence is not { } eq)
-            return new SimulationSpaceCost(adults, null, null, null, "Sin días de Baby Leaf: no se puede medir el lugar ocupado.");
-
-        if (input.Weights.BabyLeafGramsPerPlant is not { } grams || input.Prices.BabyLeafPerKg is not { } price)
-            return new SimulationSpaceCost(adults, eq, null, null, "Falta el peso o el precio de Baby Leaf para valorizar el lugar.");
-        if (input.Costs.PricePerSeed is not { } seed || input.Costs.NutrientPricePerLiter is not { } nutrientPrice)
-            return new SimulationSpaceCost(adults, eq, null, null, "Faltan el precio por semilla o el de nutrientes para valorizar el lugar.");
-
-        var nutrients = NutrientConsumptionRules.Calculate(input.SowingDate, timeline.BabyLeafOpens.Date, timeline.BabyLeafCloses.Date,
-            [new NutrientConsumptionRules.PlantSpan(1, blCut)]);
-        var margin = Math.Round(grams / 1000m * price - seed - nutrients.NutrientLiters * nutrientPrice, 2);
-        return new SimulationSpaceCost(adults, eq, margin, SpaceCostRules.Total(adults, eq, margin), null);
+            warnings);
     }
 
     /// <summary>Kg totales; null si a un destino con plantas le falta el peso.</summary>

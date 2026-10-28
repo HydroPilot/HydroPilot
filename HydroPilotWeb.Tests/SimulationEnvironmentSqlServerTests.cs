@@ -180,6 +180,11 @@ public class SimulationEnvironmentSqlServerTests
         Assert.Equal(closed, outcomes.Count);
         Assert.All(outcomes.Where(o => o.HarvestedBabyLeaf > 0), o => Assert.InRange(o.AptRate!.Value, 0.05m, 1m));
         Assert.All(outcomes, o => Assert.InRange(o.AverageDailyGdd!.Value, 8m, 25m));
+        // Pérdida tardía = adultas descartadas ÷ trasplantadas (no los descartes del denso al cerrar la ventana).
+        var transplanted = outcomes.Where(o => o.LateLossBase is > 0).ToList();
+        Assert.NotEmpty(transplanted);
+        Assert.True(transplanted.Average(o => o.LateLossRate!.Value) < 0.25m,
+            string.Join(", ", transplanted.Select(o => $"{o.Name}: {o.LateLosses}/{o.LateLossBase}")));
 
         // La receta del lote en curso, recalculada por RecipeService con la base, da lo mismo que dejó el historial.
         var active = await context.Lots.Where(l => l.Status!.Name == LotStatusNames.Activo).OrderBy(l => l.SowingDate).FirstAsync();

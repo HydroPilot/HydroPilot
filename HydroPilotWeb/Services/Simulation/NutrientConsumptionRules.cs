@@ -1,7 +1,10 @@
 namespace HydroPilotWeb.Services.Simulation;
 
-/// <summary>Agua y nutrientes que consume el ciclo (litros).</summary>
-public sealed record NutrientUsage(decimal WaterLiters, decimal NutrientLiters);
+/// <summary>Agua y nutrientes que consume el ciclo (litros): Solución A (macro) y Solución B (micro).</summary>
+public sealed record NutrientUsage(decimal WaterLiters, decimal SolutionALiters, decimal SolutionBLiters)
+{
+    public decimal NutrientLiters => SolutionALiters + SolutionBLiters;
+}
 
 /// <summary>
 /// Consumo de agua y nutrientes del ciclo, por planta viva y por día según la etapa. Los nutrientes
@@ -9,20 +12,26 @@ public sealed record NutrientUsage(decimal WaterLiters, decimal NutrientLiters);
 /// de agua y a cuántas plantas hay vivas cada día. Valores fijos por ahora (después pueden ir a
 /// Ajustes &gt; Parámetros):
 /// <list type="bullet">
-/// <item>Antes de la ventana Baby Leaf: 0,04 L de agua por planta y día, con 5 ml de nutrientes por litro.</item>
-/// <item>Ventana Baby Leaf: 0,075 L por planta y día, con 5 ml/L.</item>
-/// <item>Después (la adulta): 0,25 L por planta y día, con 10 ml/L.</item>
+/// <item>Crecimiento (antes de la ventana Baby Leaf, 0–250 GDD): 0,015 L de agua por planta y día; A 1,75 y B 0,65 ml/L.</item>
+/// <item>Ventana Baby Leaf (250–450 GDD): 0,055 L; A 2,75 y B 1,1 ml/L.</item>
+/// <item>Adultas (después de la ventana): 0,2 L; A 4,5 y B 1,75 ml/L.</item>
 /// </list>
+/// Las dosis son el valor medio de cada rango de la tabla del cultivo (A 1,5–2,0 / 2,5–3,0 / 4,0–5,0 ml/L; B 0,5–0,8 /
+/// 1,0–1,2 / 1,5–2,0 ml/L, para CE 0,8–1,2 / 1,2–1,6 / 1,6–2,0).
 /// Por planta individual (un hueco, desde 2026-10-26): una Baby Leaf de 30 g y una adulta de 280 g.
 /// Lógica pura, testeable sin I/O.
 /// </summary>
 public static class NutrientConsumptionRules
 {
-    public const decimal WaterBeforeBabyLeaf = 0.04m;
-    public const decimal WaterDuringBabyLeaf = 0.075m;
-    public const decimal WaterConventional = 0.25m;
-    public const decimal NutrientMlPerLiterUntilBabyLeafEnd = 5m;
-    public const decimal NutrientMlPerLiterConventional = 10m;
+    public const decimal WaterBeforeBabyLeaf = 0.015m;
+    public const decimal WaterDuringBabyLeaf = 0.055m;
+    public const decimal WaterConventional = 0.2m;
+    public const decimal SolutionAMlPerLiterGrowth = 1.75m;
+    public const decimal SolutionBMlPerLiterGrowth = 0.65m;
+    public const decimal SolutionAMlPerLiterBabyLeaf = 2.75m;
+    public const decimal SolutionBMlPerLiterBabyLeaf = 1.1m;
+    public const decimal SolutionAMlPerLiterAdult = 4.5m;
+    public const decimal SolutionBMlPerLiterAdult = 1.75m;
 
     /// <summary>Plantas que consumen desde la siembra hasta el día anterior a <paramref name="Until"/> (corte, descarte o pérdida).</summary>
     public sealed record PlantSpan(int Plants, DateOnly Until);
@@ -41,23 +50,24 @@ public static class NutrientConsumptionRules
     {
         var alive = spans.Where(s => s.Plants > 0 && s.Until > sowingDate).ToList();
         if (alive.Count == 0)
-            return new NutrientUsage(0m, 0m);
+            return new NutrientUsage(0m, 0m, 0m);
 
-        decimal water = 0m, nutrients = 0m;
+        decimal water = 0m, solutionA = 0m, solutionB = 0m;
         var end = alive.Max(s => s.Until);
         for (var day = sowingDate; day < end; day = day.AddDays(1))
         {
             var plants = alive.Where(s => day < s.Until).Sum(s => s.Plants);
-            var (liters, mlPerLiter) = Stage(day, babyLeafOpens, babyLeafCloses);
+            var (liters, a, b) = Stage(day, babyLeafOpens, babyLeafCloses);
             water += plants * liters;
-            nutrients += plants * liters * mlPerLiter / 1000m;
+            solutionA += plants * liters * a / 1000m;
+            solutionB += plants * liters * b / 1000m;
         }
 
-        return new NutrientUsage(water, nutrients);
+        return new NutrientUsage(water, solutionA, solutionB);
     }
 
-    private static (decimal Liters, decimal MlPerLiter) Stage(DateOnly day, DateOnly? opens, DateOnly? closes) =>
-        opens is null || day <= opens ? (WaterBeforeBabyLeaf, NutrientMlPerLiterUntilBabyLeafEnd)
-        : closes is null || day <= closes ? (WaterDuringBabyLeaf, NutrientMlPerLiterUntilBabyLeafEnd)
-        : (WaterConventional, NutrientMlPerLiterConventional);
+    private static (decimal Liters, decimal SolutionAMlPerLiter, decimal SolutionBMlPerLiter) Stage(DateOnly day, DateOnly? opens, DateOnly? closes) =>
+        opens is null || day <= opens ? (WaterBeforeBabyLeaf, SolutionAMlPerLiterGrowth, SolutionBMlPerLiterGrowth)
+        : closes is null || day <= closes ? (WaterDuringBabyLeaf, SolutionAMlPerLiterBabyLeaf, SolutionBMlPerLiterBabyLeaf)
+        : (WaterConventional, SolutionAMlPerLiterAdult, SolutionBMlPerLiterAdult);
 }

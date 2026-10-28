@@ -26,7 +26,6 @@ public sealed record SensorCheckInterval(string SensorType, int? Days);
 /// Trasplante a Adultas y tamaño de Baby Leaf (Ajustes &gt; Parámetros). Siempre tienen valor: los de fábrica hasta
 /// que se editan.
 /// <list type="bullet">
-/// <item>Separación de las plantas en el circuito denso (Baby Leaf) y en el de Adultas: el lugar que ocupa cada una.</item>
 /// <item>GDD de decisión: desde ahí se proponen las que pasan a Adulta (dentro de la ventana Baby Leaf).</item>
 /// <item>Rendimiento laboral (plantas por hora por operario) y costo de la hora: costo por planta trasplantada.</item>
 /// <item>Días de estrés: la Adulta frena después del trasplante y su corte se corre esos días.</item>
@@ -34,8 +33,6 @@ public sealed record SensorCheckInterval(string SensorType, int? Days);
 /// </list>
 /// </summary>
 public sealed record TransplantParameters(
-    decimal BabyLeafSpacingCm,
-    decimal AdultSpacingCm,
     decimal DecisionGdd,
     int PlantsPerHour,
     decimal LaborCostPerHour,
@@ -43,14 +40,51 @@ public sealed record TransplantParameters(
     decimal MaxSizeFactor)
 {
     /// <summary>
-    /// De fábrica: 6,5 y 22,5 cm (5–8 y 20–25 cm del proceso), decisión al abrir la ventana Baby Leaf (250 GDD), 800
-    /// plantas por hora, $9.500 la hora (jornal CNTA de peón general de octubre de 2026 ÷ 8 h, más ~40 % de cargas), 3
-    /// días de estrés y 1,3 veces el tamaño ideal (provisorio hasta definirlo).
+    /// De fábrica (los de Ajustes &gt; Parámetros del 2026-10-28): decisión al abrir la ventana Baby Leaf (250 GDD), 800
+    /// plantas por hora, $8.000 la hora, 3 días de estrés y 1,3 veces el tamaño ideal (provisorio hasta definirlo).
     /// </summary>
-    public static readonly TransplantParameters Defaults = new(6.5m, 22.5m, 250m, 800, 9_500m, 3, 1.3m);
+    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m);
 
     /// <summary>Costo de mano de obra por planta trasplantada: costo de la hora ÷ plantas por hora.</summary>
     public decimal CostPerPlant => PlantsPerHour > 0 ? Math.Round(LaborCostPerHour / PlantsPerHour, 2) : 0m;
+}
+
+/// <summary>Precio por litro de cada solución nutritiva: A (macro) y B (micro); null = sin definir.</summary>
+public sealed record NutrientPrices(decimal? SolutionAPerLiter, decimal? SolutionBPerLiter);
+
+/// <summary>
+/// Parámetros de fábrica: los de Ajustes &gt; Parámetros del 2026-10-28. La app los carga al arrancar donde falten
+/// (DbInitializer: no pisa lo que ya se cambió) y el entorno de simulación los deja al regenerar el historial (los
+/// precios por kg del trimestre actual y los de nutrientes; los trimestres anteriores siguen la misma suba).
+/// </summary>
+public static class ParameterDefaults
+{
+    public const decimal BabyLeafGramsPerPlant = 30m;
+    public const decimal ConventionalGramsPerPlant = 280m;
+    public const decimal BabyLeafPricePerKg = 25_000m;
+    public const decimal ConventionalPricePerKg = 15_000m;
+    public const decimal SolutionAPricePerLiter = 25_000m;
+    public const decimal SolutionBPricePerLiter = 25_000m;
+
+    /// <summary>Días entre chequeos de cada tipo de sensor.</summary>
+    public static readonly IReadOnlyDictionary<string, int> SensorCheckDays = new Dictionary<string, int>
+    {
+        ["pH"] = 14,
+        ["CE"] = 30,
+        ["Temperatura"] = 90,
+        ["Humedad"] = 90,
+    };
+
+    /// <summary>Lo que va en AppSettings (clave → valor), para cargarlo donde falte.</summary>
+    public static IEnumerable<(string Key, decimal Value)> Settings()
+    {
+        yield return (SystemParametersService.BabyLeafGramsKey, BabyLeafGramsPerPlant);
+        yield return (SystemParametersService.ConventionalGramsKey, ConventionalGramsPerPlant);
+        yield return (SystemParametersService.SolutionAPricePerLiterKey, SolutionAPricePerLiter);
+        yield return (SystemParametersService.SolutionBPricePerLiterKey, SolutionBPricePerLiter);
+        foreach (var (type, days) in SensorCheckDays)
+            yield return (SystemParametersService.SensorCheckDaysKeyPrefix + type, days);
+    }
 }
 
 /// <summary>
@@ -72,15 +106,14 @@ public class SystemParametersService
 
     public const string BabyLeafGramsKey = "YieldBabyLeafGramsPerPlant";
     public const string ConventionalGramsKey = "YieldConventionalGramsPerPlant";
-    public const string NutrientPricePerLiterKey = "NutrientPricePerLiter";
+    public const string SolutionAPricePerLiterKey = "NutrientSolutionAPricePerLiter";
+    public const string SolutionBPricePerLiterKey = "NutrientSolutionBPricePerLiter";
     public const decimal MaxNutrientPricePerLiter = 10_000_000m;
 
     /// <summary>Días entre chequeos de un tipo de sensor: AppSettings "SensorCheckDays:{tipo}" (ej. "SensorCheckDays:pH").</summary>
     public const string SensorCheckDaysKeyPrefix = "SensorCheckDays:";
     public const int MaxSensorCheckDays = 365;
 
-    public const string BabyLeafSpacingKey = "Transplant:BabyLeafSpacingCm";
-    public const string AdultSpacingKey = "Transplant:AdultSpacingCm";
     public const string DecisionGddKey = "Transplant:DecisionGdd";
     public const string PlantsPerHourKey = "Transplant:PlantsPerHour";
     public const string LaborCostPerHourKey = "Transplant:LaborCostPerHour";
@@ -205,23 +238,31 @@ public class SystemParametersService
         return new ParametersUpdateResult(true, []);
     }
 
-    /// <summary>Precio de los nutrientes por litro (en la moneda de los precios); null = sin definir.</summary>
-    public Task<decimal?> GetNutrientPricePerLiterAsync(CancellationToken ct = default) =>
-        _settings.GetDecimalAsync(NutrientPricePerLiterKey, ct);
+    /// <summary>Precio por litro de la Solución A (macro) y de la B (micro), en la moneda de los precios; null = sin definir.</summary>
+    public async Task<NutrientPrices> GetNutrientPricesAsync(CancellationToken ct = default) => new(
+        await _settings.GetDecimalAsync(SolutionAPricePerLiterKey, ct),
+        await _settings.GetDecimalAsync(SolutionBPricePerLiterKey, ct));
 
-    /// <summary>Guarda el precio de nutrientes por litro (vacío = sin definir). Solo Administrador y Productor.</summary>
-    public async Task<ParametersUpdateResult> UpdateNutrientPricePerLiterAsync(
-        decimal? pricePerLiter,
+    /// <summary>Guarda el precio por litro de cada solución (vacío = sin definir). Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateNutrientPricesAsync(
+        NutrientPrices prices,
         ClaimsPrincipal user,
         CancellationToken ct = default)
     {
         if (!CanEdit(user))
             return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
-        if (pricePerLiter is { } price && (price <= 0m || price > MaxNutrientPricePerLiter))
-            return new ParametersUpdateResult(false, ["El precio de nutrientes por litro tiene que ser mayor a 0."]);
+        var errors = new List<string>();
+        if (prices.SolutionAPerLiter is { } a && (a <= 0m || a > MaxNutrientPricePerLiter))
+            errors.Add("El precio por litro de la Solución A tiene que ser mayor a 0.");
+        if (prices.SolutionBPerLiter is { } b && (b <= 0m || b > MaxNutrientPricePerLiter))
+            errors.Add("El precio por litro de la Solución B tiene que ser mayor a 0.");
+        if (errors.Count > 0)
+            return new ParametersUpdateResult(false, errors);
 
-        await _settings.SetDecimalAsync(NutrientPricePerLiterKey, pricePerLiter, ct);
-        _logger.LogInformation("Precio de nutrientes actualizado por {User}: {Price}/L", user.Identity?.Name, pricePerLiter);
+        await _settings.SetDecimalAsync(SolutionAPricePerLiterKey, prices.SolutionAPerLiter, ct);
+        await _settings.SetDecimalAsync(SolutionBPricePerLiterKey, prices.SolutionBPerLiter, ct);
+        _logger.LogInformation("Precios de nutrientes actualizados por {User}: A {A}/L, B {B}/L",
+            user.Identity?.Name, prices.SolutionAPerLiter, prices.SolutionBPerLiter);
         return new ParametersUpdateResult(true, []);
     }
 
@@ -328,7 +369,7 @@ public class SystemParametersService
     /// <summary>Lo mismo con un contexto propio (flujo diario, trasplante, entorno de simulación).</summary>
     public static async Task<TransplantParameters> LoadTransplantAsync(HydroPilotDbContext context, CancellationToken ct = default)
     {
-        string[] keys = [BabyLeafSpacingKey, AdultSpacingKey, DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey];
+        string[] keys = [DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey];
         var values = await context.AppSettings.AsNoTracking()
             .Where(s => keys.Contains(s.Key))
             .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
@@ -340,8 +381,6 @@ public class SystemParametersService
 
         var d = TransplantParameters.Defaults;
         return new TransplantParameters(
-            Value(BabyLeafSpacingKey, d.BabyLeafSpacingCm),
-            Value(AdultSpacingKey, d.AdultSpacingCm),
             Value(DecisionGddKey, d.DecisionGdd),
             (int)Value(PlantsPerHourKey, d.PlantsPerHour),
             Value(LaborCostPerHourKey, d.LaborCostPerHour),
@@ -352,10 +391,6 @@ public class SystemParametersService
     public static IReadOnlyList<string> ValidateTransplant(TransplantParameters p)
     {
         var errors = new List<string>();
-        if (p.BabyLeafSpacingCm is <= 0m or > 100m || p.AdultSpacingCm is <= 0m or > 100m)
-            errors.Add("Las separaciones tienen que estar entre 0 y 100 cm.");
-        else if (p.AdultSpacingCm <= p.BabyLeafSpacingCm)
-            errors.Add("La separación de Adultas tiene que ser mayor que la de Baby Leaf.");
         if (p.DecisionGdd is <= 0m or > 1_000m)
             errors.Add("El GDD de decisión tiene que estar entre 0 y 1.000.");
         if (p.PlantsPerHour is < 1 or > 100_000)
@@ -379,8 +414,6 @@ public class SystemParametersService
         if (errors.Count > 0)
             return new ParametersUpdateResult(false, errors);
 
-        await _settings.SetDecimalAsync(BabyLeafSpacingKey, input.BabyLeafSpacingCm, ct);
-        await _settings.SetDecimalAsync(AdultSpacingKey, input.AdultSpacingCm, ct);
         await _settings.SetDecimalAsync(DecisionGddKey, input.DecisionGdd, ct);
         await _settings.SetDecimalAsync(PlantsPerHourKey, input.PlantsPerHour, ct);
         await _settings.SetDecimalAsync(LaborCostPerHourKey, input.LaborCostPerHour, ct);
