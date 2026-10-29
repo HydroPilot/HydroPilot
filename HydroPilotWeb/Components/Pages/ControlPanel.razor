@@ -22,7 +22,7 @@
 
 <PageTitle>Optimización</PageTitle>
 
-@* Optimización: pH y CE del tanque de cada circuito y sus 4 bombas: dosis manual y la conversación con la Pi.
+@* Optimización: pH y CE del tanque de cada circuito y sus 5 bombas: dosis manual y la conversación con la Pi.
    La lógica está en ControlRules / ControlService (notas/ux/logica-vista-control.md). *@
 
 @if (error is not null)
@@ -196,6 +196,7 @@ else
             </section>
 
             @* --- Bombas --- *@
+            <h3 class="lot-panel-title ctl-timeline-title">Bombas</h3>
             <section class="ctl-pumps">
                 @foreach (var pump in view.Actuators)
                 {
@@ -453,9 +454,9 @@ else
         {
             view = await ControlService.GetViewAsync(circuitId);
             trend = await ControlService.GetTrendAsync(circuitId, trendHours);
-            // Episodios del lote del desplegable (sin lote, no hay episodios de solución).
+            // Episodios del lote del desplegable en las sondas de este circuito (sin lote, no hay episodios de solución).
             episodes = view?.LotId is { } lotId
-                ? await AnomalyQuery.GetTimelineAsync(new AnomalyFilter(null, null, lotId, null, null, null), EpisodeCount)
+                ? await AnomalyQuery.GetTimelineAsync(new AnomalyFilter(null, null, lotId, null, null, null, CircuitId: circuitId), EpisodeCount)
                 : [];
             sensorFaults = await SensorFaults.RecentAsync(circuitId, EpisodeCount, view?.LotSinceUtc);
             error = null;
@@ -973,7 +974,8 @@ else
     {
         ControlContract.KindPhUp => new("#7c3aed", "↑ pH"),
         ControlContract.KindPhDown => new("#e04f2b", "↓ pH"),
-        ControlContract.KindNutrient => new("#0e9384", "↑ CE"),
+        ControlContract.KindNutrientA => new("#0e9384", "↑ CE"),
+        ControlContract.KindNutrientB => new("#0b6b8a", "↑ CE"),
         ControlContract.KindWater => new("#2f7dd1", "↓ CE"),
         _ => new("#94a3b8", string.Empty),
     };

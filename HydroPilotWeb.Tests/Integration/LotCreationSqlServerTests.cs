@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Control;
+using HydroPilotWeb.Services;
 using HydroPilotWeb.Services.Circuits;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
@@ -34,15 +35,16 @@ public class LotCreationSqlServerTests
         var options = await Service().GetOptionsAsync();
         var greenhouseId = options.Greenhouses[0].Id;
         return new NewLotInput(name, options.Crops[0].Id, greenhouseId,
-            DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-2), rows, columns, CircuitId: await NewCircuitAsync(greenhouseId));
+            DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-2), CircuitId: await NewCircuitAsync(greenhouseId, rows, columns));
     }
 
-    /// <summary>Circuito libre nuevo en la Pi del invernadero (cada prueba planta en el suyo).</summary>
-    private async Task<int> NewCircuitAsync(int greenhouseId)
+    /// <summary>Circuito denso libre nuevo en la Pi del invernadero, con su grilla (cada prueba siembra en el suyo).</summary>
+    private async Task<int> NewCircuitAsync(int greenhouseId, int rows = 2, int columns = 3)
     {
         await using var context = _fixture.Factory.CreateDbContext();
         var nodeId = await context.IotNodes.Where(n => n.GreenhouseId == greenhouseId).Select(n => n.Id).FirstAsync();
-        var circuit = await CircuitSetup.CreateAsync(context, greenhouseId, nodeId, $"Circuito {Guid.NewGuid():N}"[..20], 500m, default);
+        var circuit = await CircuitSetup.CreateAsync(context, greenhouseId, nodeId, $"Circuito {Guid.NewGuid():N}"[..20], 500m, default,
+            CircuitKinds.Dense, rows, columns);
         return circuit.Id;
     }
 
@@ -125,7 +127,7 @@ public class LotCreationSqlServerTests
         Assert.Equal(pi.Id, circuit.NodeId);
         Assert.Equal(300m, circuit.ReservoirLiters);
         Assert.Equal(2, circuit.Sensors.Count);
-        Assert.Equal(4, circuit.Actuators.Count);
+        Assert.Equal(5, circuit.Actuators.Count);
         Assert.All(circuit.Sensors, s => Assert.Equal(pi.Id, s.NodeId));
         Assert.All(circuit.Actuators, a => Assert.Equal(pi.Id, a.NodeId));
     }
@@ -153,6 +155,67 @@ public class LotCreationSqlServerTests
 
         var keys = await context.Sensors.Where(s => s.CircuitId == circuit.Id).OrderBy(s => s.TechnicalKey).Select(s => s.TechnicalKey).ToListAsync();
         Assert.Equal(["ec-solucion" + suffix, "ph-solucion" + suffix], keys);
+    }
+
+    [Fact]
+    public async Task Trasplante_Pasa_Plantas_A_Adultas_Y_El_Denso_Se_Libera_Con_La_Ultima()
+    {
+        // Lote de 2 × 3 en un denso nuevo y un circuito de Adultas de 2 × 2 (4 huecos).
+        var input = await InputAsync($"Trasp {Guid.NewGuid():N}"[..20]);
+        var created = await Service().CreateAsync(input, UserWithRole("Productor"));
+        Assert.True(created.Succeeded, string.Join(" ", created.Errors));
+        int adultCircuit;
+        List<int> plantIds;
+        await using (var context = _fixture.Factory.CreateDbContext())
+        {
+            var nodeId = await context.Circuits.Where(c => c.Id == input.CircuitId).Select(c => c.NodeId).FirstAsync();
+            adultCircuit = (await CircuitSetup.CreateAsync(context, input.GreenhouseId, nodeId, $"Adultas {Guid.NewGuid():N}"[..20], 500m, default,
+                CircuitKinds.Adult, 2, 2)).Id;
+            plantIds = await context.Plants.Where(p => p.LotId == created.LotId).OrderBy(p => p.Id).Select(p => p.Id).ToListAsync();
+        }
+        Dictionary<int, (int Row, int Column)> sown;
+        await using (var context = _fixture.Factory.CreateDbContext())
+            sown = await context.Plants.Where(p => plantIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => (p.Row, p.Column));
+        var transplant = new PlantTransplantService(_fixture.Factory, NullLogger<PlantTransplantService>.Instance);
+
+        var moved = await transplant.TransplantAsync(created.LotId!.Value, plantIds.Take(3).ToList(), UserWithRole("Operador"));
+        var tooMany = await transplant.TransplantAsync(created.LotId.Value, plantIds.Skip(3).Take(2).ToList(), UserWithRole("Operador"));
+
+        Assert.True(moved.Succeeded, string.Join(" ", moved.Errors));
+        Assert.Equal(3, moved.Transplanted);
+        Assert.False(tooMany.Succeeded); // queda 1 hueco libre
+        await using (var context = _fixture.Factory.CreateDbContext())
+        {
+            var adults = await context.Plants.Where(p => p.LotId == created.LotId && p.TransplantedOn != null).Include(p => p.CommercialStage).ToListAsync();
+            Assert.Equal(3, adults.Count);
+            Assert.All(adults, p => Assert.Equal(adultCircuit, p.CircuitId));
+            Assert.All(adults, p => Assert.Equal(CommercialStageNames.EnDesarrollo, p.CommercialStage!.Name)); // ruta Adulta, hasta su corte
+            Assert.Equal(3, adults.Select(p => (p.Row, p.Column)).Distinct().Count());
+            Assert.All(adults, p => Assert.Equal(sown[p.Id], (p.DenseRow!.Value, p.DenseColumn!.Value)));
+            Assert.True(await context.CircuitAssignments.AnyAsync(a => a.CircuitId == adultCircuit && a.LotId == created.LotId && a.ValidUntilUtc == null));
+            Assert.NotNull((await context.Lots.FirstAsync(l => l.Id == created.LotId)).TransplantCostPerPlant);
+        }
+
+        // El mapa del denso marca el hueco de cada trasplantada con dónde está ahora.
+        var state = await _fixture.Aggregate.GetLotStateAsync(created.LotId.Value);
+        var ghosts = state!.Cells.Where(c => c.CellKind == "transplanted").ToList();
+        Assert.Equal(plantIds.Take(3).Select(id => sown[id]).OrderBy(p => p), ghosts.Select(c => (c.Row, c.Column)).OrderBy(p => p));
+        Assert.All(ghosts, c => Assert.Equal(adultCircuit, c.MovedTo!.CircuitId));
+        Assert.All(ghosts, c => Assert.Null(c.PlantId));
+        Assert.Equal(3, state.AdultMaps!.Single().Cells.Count(c => c.PlantId is not null));
+        Assert.Equal(3, LotYieldRules.TransplantedDeveloping(state.AllCells)); // en desarrollo, pero de la ruta Adulta
+
+        // Se descartan las 3 que quedaban en el denso: el denso queda libre y el lote sigue con sus adultas.
+        var settings = new SettingsService(_fixture.Factory);
+        var lifecycle = new PlantLifecycleService(_fixture.Factory,
+            new SystemParametersService(_fixture.Factory, settings, NullLogger<SystemParametersService>.Instance));
+        await lifecycle.DiscardPlantsAsync(created.LotId.Value, plantIds.Skip(3).ToList(), "prueba");
+        await using (var context = _fixture.Factory.CreateDbContext())
+        {
+            Assert.False(await context.CircuitAssignments.AnyAsync(a => a.CircuitId == input.CircuitId && a.ValidUntilUtc == null));
+            Assert.True(await context.CircuitAssignments.AnyAsync(a => a.CircuitId == adultCircuit && a.ValidUntilUtc == null));
+            Assert.Equal(LotStatusNames.Activo, await context.Lots.Where(l => l.Id == created.LotId).Select(l => l.Status!.Name).FirstAsync());
+        }
     }
 
     [Fact]

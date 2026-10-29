@@ -334,12 +334,15 @@ public class LotesSqlServerTests
             Microsoft.Extensions.Logging.Abstractions.NullLogger<WeatherService>.Instance);
         var gdd = new GddService(factory, weather, settings);
         var aggregate = new Services.Lotes.LotAggregateService(factory, gdd);
+        var parameters = new SystemParametersService(factory, settings,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SystemParametersService>.Instance);
         return new Services.Lotes.LotDailyFlowService(
             factory,
             gdd,
             new PlantEvaluationService(factory),
             aggregate,
-            new Services.Lotes.NoPlantRiskProvider());
+            new Services.Lotes.NoPlantRiskProvider(),
+            new Services.Lotes.PlantLifecycleService(factory, parameters));
     }
 
     private sealed class TestDbContextFactory(LotesSqlFixture fixture)

@@ -147,14 +147,22 @@ public class SimulationEnvironmentSqlServerTests
             Assert.True(broken.Count == 0, string.Join(Environment.NewLine, broken.Take(10)));
         }
 
-        // Dos mesadas (circuitos de la misma Pi) con su lote en curso; el lote demo del seed ya no está.
-        Assert.Equal(2, await context.Lots.CountAsync(l => l.Status!.Name == LotStatusNames.Activo));
+        // Dos mesadas densas (circuitos de la misma Pi) con su lote en curso (puede haber otro con sus adultas en las
+        // mesadas de Adultas); el lote demo del seed ya no está.
         Assert.False(await context.Lots.AnyAsync(l => l.Name == "Lote Demo 01"));
-        var circuits = await context.Circuits.Where(c => c.IsActive).OrderBy(c => c.Id).Take(2).ToListAsync();
+        var circuits = await context.Circuits.Where(c => c.IsActive && c.Kind == CircuitKinds.Dense).OrderBy(c => c.Id).ToListAsync();
         Assert.Equal(2, circuits.Count);
+        Assert.Equal(5, await context.Circuits.CountAsync(c => c.IsActive && c.Kind == CircuitKinds.Adult));
         Assert.All(circuits, c => Assert.Equal(ControlContract.ModeAuto, c.ControlMode));
+        var open = await context.CircuitAssignments.Where(a => a.ValidUntilUtc == null).ToListAsync();
+        Assert.All(circuits, c => Assert.Single(open, a => a.CircuitId == c.Id));
         Assert.All(await context.Lots.Where(l => l.Status!.Name == LotStatusNames.Activo).ToListAsync(),
             l => Assert.Contains(l.CircuitId, circuits.Select(c => (int?)c.Id)));
+        // Trasplante: las adultas están en circuitos de Adultas, cada una en su hueco.
+        var adults = await context.Plants.Where(p => p.TransplantedOn != null).Select(p => p.Circuit!.Kind).ToListAsync();
+        Assert.NotEmpty(adults);
+        Assert.All(adults, kind => Assert.Equal(CircuitKinds.Adult, kind));
+        Assert.True(await context.Lots.AnyAsync(l => l.BabyLeafPeakGdd != null));
         // Temperatura y humedad del invernadero: sin circuito.
         Assert.Equal(2, await context.Sensors.CountAsync(s => s.CircuitId == null && s.IsActive));
     }
@@ -172,6 +180,11 @@ public class SimulationEnvironmentSqlServerTests
         Assert.Equal(closed, outcomes.Count);
         Assert.All(outcomes.Where(o => o.HarvestedBabyLeaf > 0), o => Assert.InRange(o.AptRate!.Value, 0.05m, 1m));
         Assert.All(outcomes, o => Assert.InRange(o.AverageDailyGdd!.Value, 8m, 25m));
+        // Pérdida tardía = adultas descartadas ÷ trasplantadas (no los descartes del denso al cerrar la ventana).
+        var transplanted = outcomes.Where(o => o.LateLossBase is > 0).ToList();
+        Assert.NotEmpty(transplanted);
+        Assert.True(transplanted.Average(o => o.LateLossRate!.Value) < 0.25m,
+            string.Join(", ", transplanted.Select(o => $"{o.Name}: {o.LateLosses}/{o.LateLossBase}")));
 
         // La receta del lote en curso, recalculada por RecipeService con la base, da lo mismo que dejó el historial.
         var active = await context.Lots.Where(l => l.Status!.Name == LotStatusNames.Activo).OrderBy(l => l.SowingDate).FirstAsync();
@@ -198,7 +211,7 @@ public class SimulationEnvironmentSqlServerTests
         Assert.NotNull(view!.LotId);
         Assert.NotNull(view.Recipe);
         Assert.True(view.Ph.Band.IsDefined && view.Ec.Band.IsDefined);
-        Assert.Equal(4, view.Actuators.Count);
+        Assert.Equal(5, view.Actuators.Count);
         Assert.Contains(view.Actuators, a => a.EffectSamples > 0); // las bombas se calibraron con el historial
 
         // Tendencia de las últimas 24 h: lecturas promediadas, banda del lote y de acción, dosis del motor.

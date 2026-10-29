@@ -74,13 +74,16 @@ public static class DbInitializer
 
         var node = context.IotNodes.OrderBy(n => n.Id).First();
 
-        // --- Circuitos: la Pi del invernadero maneja todos (dos para la demo), cada uno con su pH, CE y 4 bombas;
+        // --- Circuitos: la Pi del invernadero maneja todos (dos para la demo), cada uno con su pH, CE y 5 bombas;
         // temperatura y humedad son del invernadero ---
         if (!context.Circuits.Any())
         {
-            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 1", ControlContract.DefaultReservoirLiters, default)
+            // Densos con la grilla del lote demo (6 × 10); los de Adultas los agrega el entorno de simulación o Ajustes > Circuitos.
+            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 1", ControlContract.DefaultReservoirLiters, default,
+                    CircuitKinds.Dense, 6, 10)
                 .GetAwaiter().GetResult();
-            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 2", ControlContract.DefaultReservoirLiters, default)
+            CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, "Circuito 2", ControlContract.DefaultReservoirLiters, default,
+                    CircuitKinds.Dense, 6, 10)
                 .GetAwaiter().GetResult();
         }
         CircuitSetup.EnsureAmbientSensorsAsync(context, greenhouse.Id, node.Id, default).GetAwaiter().GetResult();
@@ -331,31 +334,46 @@ public static class DbInitializer
             }
 
             // Destino Baby Leaf (ciclo corto, mayor densidad, sin trasplante individual).
-            AddPriceCost("baby_leaf", "price_per_kg", 2600m);
+            AddPriceCost("baby_leaf", "price_per_kg", HydroPilotWeb.Services.ParameterDefaults.BabyLeafPricePerKg);
             AddPriceCost("baby_leaf", "seed_cost_m2", 900m);
             AddPriceCost("baby_leaf", "nutrient_cost_m2", 320m);
             AddPriceCost("baby_leaf", "energy_cost_m2", 260m);
             AddPriceCost("baby_leaf", "transplant_cost_m2", 0m);
 
             // Destino convencional (ciclo más largo, trasplante y mayor consumo de energía).
-            AddPriceCost("conventional", "price_per_kg", 1800m);
+            AddPriceCost("conventional", "price_per_kg", HydroPilotWeb.Services.ParameterDefaults.ConventionalPricePerKg);
             AddPriceCost("conventional", "seed_cost_m2", 250m);
             AddPriceCost("conventional", "nutrient_cost_m2", 420m);
             AddPriceCost("conventional", "energy_cost_m2", 520m);
             AddPriceCost("conventional", "transplant_cost_m2", 480m);
         }
 
+        // --- Parámetros de fábrica (pesos, precios de nutrientes, chequeos de sensores): solo los que faltan ---
+        foreach (var (key, value) in HydroPilotWeb.Services.ParameterDefaults.Settings())
+        {
+            if (context.AppSettings.Find(key) is null)
+                context.AppSettings.Add(new AppSetting
+                {
+                    Key = key,
+                    Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
+        }
+
         context.SaveChanges();
     }
 
     /// <summary>
-    /// Las 4 bombas de cada circuito (subir pH, bajar pH, nutrientes, agua) con límites para un tanque de 500 L.
-    /// Solo agrega las que faltan: no pisa límites editados. Las claves técnicas son únicas en la Pi (el primer
-    /// circuito de la Pi usa la clave base y los demás llevan sufijo, como CircuitSetup).
+    /// Las 5 bombas de cada circuito (subir pH, bajar pH, Solución A, Solución B, agua) con límites para un tanque de
+    /// 500 L. Solo agrega las que faltan: no pisa límites editados (así los circuitos de antes de 2026-10-28 reciben su
+    /// Solución B). Las claves técnicas son únicas en la Pi (el primer circuito de la Pi usa la clave base y los demás
+    /// llevan sufijo, como CircuitSetup). La bomba "Nutrientes" de cuando había una sola pasa a llamarse "Solución A".
     /// </summary>
     public static void SeedActuators(HydroPilotDbContext context)
     {
         context.SaveChanges(); // circuitos recién agregados en este arranque necesitan su Id
+
+        foreach (var single in context.Actuators.Where(a => a.Kind == ControlContract.KindNutrientA && a.Name == "Nutrientes").ToList())
+            single.Name = ControlContract.DefaultFor(ControlContract.KindNutrientA)!.Name;
 
         var circuits = context.Circuits.OrderBy(c => c.Id).Select(c => new { c.Id, c.NodeId }).ToList();
         var existing = context.Actuators.Select(a => new { a.CircuitId, a.NodeId, a.Kind, a.TechnicalKey }).ToList();
@@ -470,6 +488,12 @@ public static class DbInitializer
                 CreatedAt = DateTime.UtcNow
             });
             demoLot.CircuitId = circuit.Id;
+            context.SaveChanges();
+        }
+        if (demoLot.CircuitId is { } demoCircuit)
+        {
+            foreach (var plant in context.Plants.Where(p => p.LotId == demoLot.Id && p.CircuitId == null))
+                plant.CircuitId = demoCircuit;
             context.SaveChanges();
         }
     }

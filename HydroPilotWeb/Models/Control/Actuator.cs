@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace HydroPilotWeb.Models.Control;
 
 /// <summary>
-/// Bomba de un circuito que actúa sobre su tanque: subir pH, bajar pH, nutrientes o agua. La ejecuta la Pi del
+/// Bomba de un circuito que actúa sobre su tanque: subir pH, bajar pH, Solución A, Solución B o agua. La ejecuta la Pi del
 /// invernadero (<see cref="NodeId"/>): la nube manda la cantidad (ml o L) y la Pi la convierte a segundos de bomba
 /// con su propia calibración.
 /// </summary>
@@ -16,7 +16,7 @@ public class Actuator
     /// <summary>Circuito (tanque) sobre el que actúa.</summary>
     public int CircuitId { get; set; }
 
-    /// <summary>Qué hace: ph-up | ph-down | nutrient | water (ControlContract.Kind*).</summary>
+    /// <summary>Qué hace: ph-up | ph-down | nutrient (Solución A) | nutrient-b (Solución B) | water (ControlContract.Kind*).</summary>
     [Required]
     [MaxLength(20)]
     public string Kind { get; set; } = string.Empty;

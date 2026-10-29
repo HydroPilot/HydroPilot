@@ -25,7 +25,8 @@ public class PlantEvaluationService
 
     /// <summary>
     /// Resuelve los umbrales desde los catálogos (LOT-02): configuración Baby Leaf
-    /// activa del cultivo + GddMax de la última etapa fenológica activa (sobremadurez).
+    /// activa del cultivo + GddMax de la última etapa fenológica activa (sobremadurez), y el tamaño
+    /// máximo de Baby Leaf de Ajustes &gt; Parámetros.
     /// Retorna null si faltan catálogos (el flujo no inventa umbrales).
     /// </summary>
     public static async Task<PlantDecisionEngine.PlantDecisionThresholds?> ResolveThresholdsAsync(
@@ -49,12 +50,14 @@ public class PlantEvaluationService
         if (lastStage is null)
             return null;
 
+        var transplant = await SystemParametersService.LoadTransplantAsync(context, ct);
         return new PlantDecisionEngine.PlantDecisionThresholds(
             config.GddMin,
             config.GddMax,
             lastStage.GddMax,
             config.ScoreMinCandidate,
-            config.ScoreMinReady);
+            config.ScoreMinReady,
+            transplant.MaxSizeFactor);
     }
 
     /// <summary>Etapa fenológica según GDD (ventanas del catálogo). Null si no hay catálogo.</summary>
@@ -82,9 +85,9 @@ public class PlantEvaluationService
     /// <summary>
     /// Evalúa una planta Activa dentro de un contexto transaccional provisto por el
     /// caller (flujo diario). No cambia plantas cosechadas/descartadas.
-    /// Retorna true si se persistió algún cambio.
+    /// Devuelve si se persistió algún cambio y la decisión (Discard: el flujo diario la descarta).
     /// </summary>
-    public async Task<bool> EvaluateActivePlantAsync(
+    public async Task<(bool Changed, PlantDecisionEngine.PlantDecision? Decision)> EvaluateActivePlantAsync(
         HydroPilotDbContext context,
         Plant plant,
         int cropTypeId,
@@ -95,7 +98,7 @@ public class PlantEvaluationService
         CancellationToken ct = default)
     {
         if (plant.OperationalState != PlantOperationalState.Activa)
-            return false; // Estado histórico congelado: no se vuelve a evaluar.
+            return (false, null); // Estado histórico congelado: no se vuelve a evaluar.
 
         var lastEvaluation = await context.BabyLeafEvaluations
             .Where(e => e.PlantId == plant.Id)
@@ -107,9 +110,10 @@ public class PlantEvaluationService
                 LotGdd: lotGdd,
                 BabyLeafScore: lastEvaluation?.BabyLeafScore,
                 MandatoryCriteriaMet: lastEvaluation?.MandatoryCriteriaMet,
-                HasSufficientMaturity: null, // madurez solo la confirma el análisis de imagen (fase futura)
                 HasRisk: risk is not null,
-                RiskReason: risk?.Reason),
+                RiskReason: risk?.Reason,
+                IsAdultRoute: plant.IsAdultRoute,
+                SizeRatio: lastEvaluation?.SizeRatio),
             thresholds);
 
         var targetCommercialStage = await context.CommercialStages
@@ -121,7 +125,7 @@ public class PlantEvaluationService
                           && plant.CommercialStageId != targetCommercialStage.Id;
 
         if (!phenoChanged && !commChanged)
-            return false;
+            return (false, decision);
 
         var previousPheno = plant.PhenologicalStageId;
         var previousComm = plant.CommercialStageId;
@@ -145,6 +149,6 @@ public class PlantEvaluationService
             ChangedAtUtc = DateTime.UtcNow
         });
 
-        return true;
+        return (true, decision);
     }
 }

@@ -23,8 +23,13 @@ public sealed record SimulationEnvironmentResult(bool Succeeded, string Message,
 public sealed class SimulationEnvironmentService
 {
     public const string SeededAtKey = "SimulationEnvironment:SeededAtUtc";
-    public const decimal BabyLeafGramsPerPlant = 120m;
-    public const decimal ConventionalGramsPerPlant = 280m;
+    /// <summary>Una planta Baby Leaf (a 6,5 cm) y una adulta (a 22,5 cm, trasplantada).</summary>
+    public const decimal BabyLeafGramsPerPlant = ParameterDefaults.BabyLeafGramsPerPlant;
+    public const decimal ConventionalGramsPerPlant = ParameterDefaults.ConventionalGramsPerPlant;
+
+    /// <summary>Mesadas de la demo: 2 densas de 10 × 20 (donde se siembra) y 5 de Adultas de 4 × 5 (100 huecos).</summary>
+    public const int DenseBenches = 2;
+    public const int AdultBenches = 5;
 
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
@@ -85,6 +90,8 @@ public sealed class SimulationEnvironmentService
         var watch = Stopwatch.StartNew();
         try
         {
+            // Desde Mantenimiento la app sigue corriendo: los barridos y la API esperan a que termine.
+            await RegenerationPause.PauseAsync(ct);
             _logger.LogWarning("Entorno de simulación: generando {Months} meses de historial (la base se reemplaza)…", _options.HistoryMonths);
             await ClearAsync(ct);
             var world = await PrepareWorldAsync(ct);
@@ -131,6 +138,7 @@ public sealed class SimulationEnvironmentService
         }
         finally
         {
+            RegenerationPause.Resume();
             Gate.Release();
         }
     }
@@ -193,29 +201,45 @@ public sealed class SimulationEnvironmentService
     }
 
     /// <summary>
-    /// Lo que el historial necesita y la base de desarrollo puede no traer: dos circuitos (mesadas) en el invernadero
-    /// (si hay uno solo, el segundo se agrega en la misma Pi), los sensores de temperatura y humedad del invernadero,
-    /// los usuarios de ejemplo (productora, operario y soporte, con correo .test que nunca se envía) y sus preferencias.
+    /// Lo que el historial necesita y la base de desarrollo puede no traer: las mesadas en la Pi del invernadero (2 densas
+    /// de 10 × 20 y 5 de Adultas de 4 × 5; se agregan las que falten y se les pone esa grilla), los sensores de
+    /// temperatura y humedad del invernadero, los usuarios de ejemplo (productora, operario y soporte, con correo .test
+    /// que nunca se envía) y sus preferencias.
     /// </summary>
     private async Task<SimWorld> PrepareWorldAsync(CancellationToken ct)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
         var greenhouse = await context.Greenhouses.AsNoTracking().OrderBy(g => g.Id).FirstAsync(ct);
-        var circuits = await context.Circuits.AsNoTracking()
+        var pi = await CircuitSetup.PiOfAsync(context, greenhouse.Id, ct)
+                 ?? throw new InvalidOperationException("No hay Pi en el invernadero: falta el seed de infraestructura.");
+        var existing = await context.Circuits
             .Where(c => c.GreenhouseId == greenhouse.Id && c.IsActive)
             .OrderBy(c => c.Id)
             .ToListAsync(ct);
-        if (circuits.Count == 0)
-            throw new InvalidOperationException("No hay circuitos: falta el seed de infraestructura.");
-        while (circuits.Count < 2)
+        var dense = existing.Where(c => c.Kind == CircuitKinds.Dense).Take(DenseBenches).ToList();
+        while (dense.Count < DenseBenches)
         {
             var name = await CircuitSetup.NextNameAsync(context, greenhouse.Id, ct);
-            circuits.Add(await CircuitSetup.CreateAsync(context, greenhouse.Id, circuits[0].NodeId, name,
-                ControlContract.DefaultReservoirLiters, ct));
+            dense.Add(await CircuitSetup.CreateAsync(context, greenhouse.Id, pi.Id, name, ControlContract.DefaultReservoirLiters, ct,
+                CircuitKinds.Dense, 10, 20));
         }
-        circuits = circuits.Take(2).ToList();
-        await CircuitSetup.EnsureAmbientSensorsAsync(context, greenhouse.Id, circuits[0].NodeId, ct);
+        var adults = existing.Where(c => c.Kind == CircuitKinds.Adult).Take(AdultBenches).ToList();
+        for (var n = 1; adults.Count < AdultBenches; n++)
+        {
+            var name = $"Adultas {n}";
+            if (await context.Circuits.AnyAsync(c => c.GreenhouseId == greenhouse.Id && c.Name == name, ct))
+                continue;
+            adults.Add(await CircuitSetup.CreateAsync(context, greenhouse.Id, pi.Id, name, ControlContract.DefaultReservoirLiters, ct,
+                CircuitKinds.Adult, 4, 5));
+        }
+        foreach (var circuit in dense)
+            (circuit.GridRows, circuit.GridColumns) = (10, 20);
+        foreach (var circuit in adults)
+            (circuit.GridRows, circuit.GridColumns) = (4, 5);
+        await context.SaveChangesAsync(ct);
+        var circuits = dense.Concat(adults).ToList();
+        await CircuitSetup.EnsureAmbientSensorsAsync(context, greenhouse.Id, pi.Id, ct);
 
         var producer = await EnsureUserAsync(context, "carla.gomez@hydropilot.test", "Carla", "Gómez", "Productor", ct);
         var @operator = await EnsureUserAsync(context, "diego.ruiz@hydropilot.test", "Diego", "Ruiz", "Operador", ct);
@@ -265,7 +289,10 @@ public sealed class SimulationEnvironmentService
                 sensors,
                 await context.Actuators.AsNoTracking().Where(a => a.CircuitId == circuit.Id).ToListAsync(ct),
                 circuit.Id,
-                circuit.Name));
+                circuit.Name,
+                circuit.Kind,
+                circuit.GridRows,
+                circuit.GridColumns));
         }
 
         var config = await context.BabyLeafConfigs.AsNoTracking()
@@ -290,7 +317,8 @@ public sealed class SimulationEnvironmentService
             new SimUser(@operator.Id, @operator.Email, "Diego Ruiz", @operator.Role),
             recipients,
             BabyLeafGramsPerPlant,
-            ConventionalGramsPerPlant);
+            ConventionalGramsPerPlant,
+            await SystemParametersService.LoadTransplantAsync(context, ct));
     }
 
     private static async Task<User> EnsureUserAsync(

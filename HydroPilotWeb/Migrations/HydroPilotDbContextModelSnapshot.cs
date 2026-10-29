@@ -363,6 +363,9 @@ namespace HydroPilotWeb.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<decimal?>("SizeRatio")
+                        .HasColumnType("decimal(6,3)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BabyLeafConfigId");
@@ -399,10 +402,27 @@ namespace HydroPilotWeb.Migrations
                     b.Property<int>("GreenhouseId")
                         .HasColumnType("int");
 
+                    b.Property<int>("GridColumns")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(20);
+
+                    b.Property<int>("GridRows")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(10);
+
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasDefaultValue("DENSO");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1062,6 +1082,9 @@ namespace HydroPilotWeb.Migrations
                     b.Property<decimal?>("BabyLeafHarvestTargetPercent")
                         .HasColumnType("decimal(5,2)");
 
+                    b.Property<decimal?>("BabyLeafPeakGdd")
+                        .HasColumnType("decimal(8,2)");
+
                     b.Property<int?>("CircuitId")
                         .HasColumnType("int");
 
@@ -1137,6 +1160,9 @@ namespace HydroPilotWeb.Migrations
 
                     b.Property<int>("StatusId")
                         .HasColumnType("int");
+
+                    b.Property<decimal?>("TransplantCostPerPlant")
+                        .HasColumnType("decimal(12,2)");
 
                     b.HasKey("Id");
 
@@ -1557,6 +1583,9 @@ namespace HydroPilotWeb.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<int?>("CircuitId")
+                        .HasColumnType("int");
+
                     b.Property<int>("Column")
                         .HasColumnType("int");
 
@@ -1567,6 +1596,12 @@ namespace HydroPilotWeb.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasDefaultValueSql("GETUTCDATE()");
+
+                    b.Property<int?>("DenseColumn")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DenseRow")
+                        .HasColumnType("int");
 
                     b.Property<DateOnly?>("DiscardDate")
                         .HasColumnType("date");
@@ -1592,7 +1627,12 @@ namespace HydroPilotWeb.Migrations
                     b.Property<int>("Row")
                         .HasColumnType("int");
 
+                    b.Property<DateOnly?>("TransplantedOn")
+                        .HasColumnType("date");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("CircuitId");
 
                     b.HasIndex("CommercialStageId");
 
@@ -1600,7 +1640,7 @@ namespace HydroPilotWeb.Migrations
 
                     b.HasIndex("PhenologicalStageId");
 
-                    b.HasIndex("LotId", "Row", "Column")
+                    b.HasIndex("LotId", "CircuitId", "Row", "Column")
                         .IsUnique();
 
                     b.ToTable("Plants", (string)null);
@@ -2689,6 +2729,11 @@ namespace HydroPilotWeb.Migrations
 
             modelBuilder.Entity("HydroPilotWeb.Models.Plant", b =>
                 {
+                    b.HasOne("HydroPilotWeb.Models.Circuit", "Circuit")
+                        .WithMany()
+                        .HasForeignKey("CircuitId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("HydroPilotWeb.Models.CommercialStage", "CommercialStage")
                         .WithMany()
                         .HasForeignKey("CommercialStageId")
@@ -2704,6 +2749,8 @@ namespace HydroPilotWeb.Migrations
                         .WithMany()
                         .HasForeignKey("PhenologicalStageId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Circuit");
 
                     b.Navigation("CommercialStage");
 

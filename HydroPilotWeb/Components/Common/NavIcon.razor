@@ -27,6 +27,16 @@
                 <path d="M10 3v6.5L4.6 18.4A1.7 1.7 0 0 0 6.1 21h11.8a1.7 1.7 0 0 0 1.5-2.6L14 9.5V3" />
                 <path d="M7.5 15h9" />
                 break;
+            case "plan-invernadero":
+                <rect x="3.5" y="4" width="17" height="16" rx="1.5" />
+                <path d="M3.5 11h17" />
+                <path d="M10 11v9" />
+                break;
+            case "alertas":
+                <path d="M12 3.5 2.5 20h19Z" />
+                <path d="M12 10v4.5" />
+                <path d="M12 17.2v.3" />
+                break;
             case "optimization":
                 <path d="M11 3.5 12.8 8.2 17.5 10l-4.7 1.8L11 16.5l-1.8-4.7L4.5 10l4.7-1.8Z" />
                 <path d="M18.5 14.5 19.4 17l2.6.9-2.6.9-.9 2.7-.9-2.7-2.6-.9 2.6-.9Z" />
@@ -55,6 +65,13 @@
                 <path d="M12 15v5" />
                 <path d="M8 20h8" />
                 break;
+            case "settings/sensores":
+                <circle cx="12" cy="12" r="2" />
+                <path d="M8.5 8.5a5 5 0 0 0 0 7" />
+                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                <path d="M5.6 5.6a9 9 0 0 0 0 12.8" />
+                <path d="M18.4 5.6a9 9 0 0 1 0 12.8" />
+                break;
             case "admin/users":
                 <circle cx="9" cy="8" r="3.5" />
                 <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
@@ -74,7 +91,7 @@
 
     [Parameter] public string? Class { get; set; }
 
-    public static bool HasIcon(string name) => name is "" or "lotes" or "reports" or "simulation" or "optimization"
+    public static bool HasIcon(string name) => name is "" or "lotes" or "reports" or "simulation" or "plan-invernadero" or "alertas" or "optimization"
         or "settings/profile" or "settings/notifications" or "notifications" or "settings/parametros"
-        or "settings/circuitos" or "admin/users" or "admin/mantenimiento";
+        or "settings/circuitos" or "settings/sensores" or "admin/users" or "admin/mantenimiento";
 }

@@ -1,0 +1,50 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Trasplante a Adultas: desde el GDD de decisión, cuántas pasan (score bajo + excedente sobre la meta Baby Leaf),
+   cuántas no entran en los huecos de Adultas y el costo. "Revisar" las marca en el mapa para confirmarlas.
+   Lógica en TransplantRules / PlantTransplantService (notas/ux/logica-vista-lotes.md). *@
+<section class="lot-card" aria-labelledby="lot-transplant-title">
+    <header class="lot-card__head">
+        <h3 class="lot-card__title" id="lot-transplant-title">Trasplante a Adultas</h3>
+    </header>
+
+    <div class="lot-transplant">
+        <div class="lot-transplant__main">
+            <strong class="lot-transplant__value">@Plan.Proposal.PlantIds.Count</strong>
+            <span class="lot-muted">pasan · @LotFormat.Money(Plan.CostPerPlant * Plan.Proposal.PlantIds.Count, Currency)</span>
+        </div>
+        <div class="lot-transplant__chips">
+            @if (Plan.Proposal.LowScore > 0)
+            {
+                <span class="lot-chip lot-chip--muted">@Plan.Proposal.LowScore score bajo</span>
+            }
+            @if (Plan.Proposal.OverGoal > 0)
+            {
+                <span class="lot-chip lot-chip--muted">@Plan.Proposal.OverGoal sobre la meta</span>
+            }
+            <span class="lot-chip lot-chip--@(Plan.Capacity > 0 ? "success" : "danger")">@Plan.Capacity huecos libres</span>
+            @if (Plan.Proposal.NoRoom > 0)
+            {
+                <span class="lot-chip lot-chip--danger" title="Quedan en el denso: si no llegan a Baby Leaf se descartan al cerrar la ventana.">
+                    @Plan.Proposal.NoRoom sin lugar
+                </span>
+            }
+        </div>
+    </div>
+
+    @if (CanTransplant && Plan.Proposal.PlantIds.Count > 0)
+    {
+        <div class="lot-editor__actions mt-2">
+            <button type="button" class="btn btn-sm lot-select-bar__btn" disabled="@Busy" @onclick="OnReview">Revisar en el mapa</button>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public TransplantPlan Plan { get; set; } = null!;
+    [Parameter] public string Currency { get; set; } = "ARS";
+    [Parameter] public bool CanTransplant { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback OnReview { get; set; }
+}

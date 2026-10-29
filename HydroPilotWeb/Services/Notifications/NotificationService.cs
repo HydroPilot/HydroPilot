@@ -216,6 +216,40 @@ public class NotificationService
     }
 
     /// <summary>
+    /// Borra una notificación de la bandeja del usuario: solo su copia interna. La alerta sigue (para los demás
+    /// usuarios, el dashboard y su resolución) y no vuelve a aparecer en esta bandeja.
+    /// </summary>
+    public async Task DeleteAsync(int deliveryId, int userId, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var delivery = await context.NotificationDeliveries
+            .FirstOrDefaultAsync(d => d.Id == deliveryId && d.UserId == userId && d.Channel == NotificationChannels.Internal, ct);
+        if (delivery is null)
+            return;
+
+        context.NotificationDeliveries.Remove(delivery);
+        await context.SaveChangesAsync(ct);
+        if (!delivery.IsRead)
+            UnreadChanged?.Invoke();
+    }
+
+    /// <summary>Vacía la bandeja del usuario (sus copias internas; las alertas siguen, como en <see cref="DeleteAsync"/>).</summary>
+    public async Task DeleteAllAsync(int userId, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var deliveries = await context.NotificationDeliveries
+            .Where(d => d.UserId == userId && d.Channel == NotificationChannels.Internal)
+            .ToListAsync(ct);
+        if (deliveries.Count == 0)
+            return;
+
+        context.NotificationDeliveries.RemoveRange(deliveries);
+        await context.SaveChangesAsync(ct);
+        if (deliveries.Any(d => !d.IsRead))
+            UnreadChanged?.Invoke();
+    }
+
+    /// <summary>
     /// Obtiene las preferencias de notificación de un usuario, creándolas con valores por defecto si no existen.
     /// </summary>
     public async Task<NotificationPreferenceDto> GetUserPreferencesAsync(int userId, CancellationToken ct = default)

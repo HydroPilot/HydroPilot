@@ -81,6 +81,12 @@ public sealed class SimulationSqlFixture : IAsyncLifetime
         greenhouse.TimeZoneId = "UTC";
         await context.SaveChangesAsync();
 
+        // Circuitos de Adultas (5 de 4 × 5 = 100 huecos, como la demo): las estrategias trasplantan ahí.
+        var node = context.IotNodes.First(n => n.GreenhouseId == greenhouse.Id);
+        for (var i = 1; i <= 5; i++)
+            await Services.Circuits.CircuitSetup.CreateAsync(context, greenhouse.Id, node.Id, $"Adultas {i}", 500m, default,
+                HydroPilotWeb.Models.CircuitKinds.Adult, 4, 5);
+
         var settings = new SettingsService(Factory);
         var weather = new WeatherService(
             new HttpClient(),

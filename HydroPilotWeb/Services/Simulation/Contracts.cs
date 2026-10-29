@@ -56,12 +56,13 @@ public sealed record SimulationClimateInput(
 /// Gastos del sistema del escenario (SIM-05): solo lo que el sistema sabe calcular (semillas =
 /// plantas del lote o del escenario; litros de nutrientes según plantas vivas y etapa). Los demás
 /// costos (mano de obra, energía, etc.) los arma el contador, fuera del sistema. Se cargan solo los
-/// precios, en la moneda de Ajustes &gt; Parámetros. NutrientPricePerLiter null = el de Ajustes &gt;
+/// precios, en la moneda de Ajustes &gt; Parámetros. Precio por litro de la Solución A o B null = el de Ajustes &gt;
 /// Parámetros. Si falta un precio, el componente es "No calculable".
 /// </summary>
 public sealed record SimulationCostsInput(
     decimal? PricePerSeed,
-    decimal? NutrientPricePerLiter);
+    decimal? SolutionAPricePerLiter,
+    decimal? SolutionBPricePerLiter);
 
 /// <summary>Estrategia de cosecha que se elige para el escenario.</summary>
 public enum SimulationStrategyKind
@@ -187,7 +188,8 @@ public sealed record SimulationCostBreakdown(
     int CycleDays, // días de la siembra al último corte de la estrategia
     int Seeds,     // plantas del lote (todas) o del escenario
     NutrientUsage? Usage, // agua y nutrientes del ciclo; null = sin fecha de corte
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    int Transplanted = 0); // plantas trasplantadas a Adultas en el ciclo
 
 /// <summary>
 /// Resultado de una estrategia: cuántas plantas van a cada destino y cuántas se prevé perder,
@@ -207,9 +209,21 @@ public sealed record SimulationStrategyOutcome(
     decimal? TotalKg,
     decimal? Revenue,
     SimulationCostBreakdown Costs,
-    decimal? Margin,
+    decimal? Margin,       // ingresos − gastos del sistema
     decimal? CostPerKg,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    SimulationSpaceUse? Space = null); // lugar y tiempo que ocupa (con trasplante)
+
+/// <summary>
+/// Lugar y tiempo que ocupa una estrategia (m²·día): el denso desde la siembra hasta que sale la última planta, más la
+/// limpieza, y cada trasplantada en su hueco de Adultas desde el trasplante hasta el corte. SameSpaceTimes = cuántas
+/// veces entra en el lugar y el tiempo de la estrategia que más ocupa (el lugar que libera se vuelve a sembrar);
+/// SameSpaceMargin = su margen × esas veces. Null = una sola estrategia medible.
+/// </summary>
+public sealed record SimulationSpaceUse(decimal DenseM2Days, decimal AdultM2Days, decimal? SameSpaceTimes = null, decimal? SameSpaceMargin = null)
+{
+    public decimal TotalM2Days => DenseM2Days + AdultM2Days;
+}
 
 /// <summary>Resultado completo de una simulación preview (SIM-02: un único resultado por corrida).</summary>
 public sealed record SimulationResult(
@@ -251,7 +265,7 @@ public sealed record SimulationContextOptions(
     IReadOnlyList<SimulationLotOption> Lots,
     IReadOnlyList<SimulationCropOption> Crops,
     YieldParameters Parameters,
-    decimal? NutrientPricePerLiter); // de Ajustes > Parámetros; null = sin definir
+    NutrientPrices NutrientPrices); // de Ajustes > Parámetros; null = sin definir
 
 /// <summary>Problema de validación devuelto por la API (SIM-05: negativos y rangos validados en servidor).</summary>
 public sealed record SimulationValidationProblem(IReadOnlyList<string> Errors);

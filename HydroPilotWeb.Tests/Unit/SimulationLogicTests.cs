@@ -15,7 +15,7 @@ public class SimulationLogicTests
     private static readonly DateOnly TestToday = new(2026, 1, 15);
 
     // Semilla $2,5 · nutrientes $5/L.
-    private static SimulationCostsInput FullCosts() => new(2.5m, 5m);
+    private static SimulationCostsInput FullCosts() => new(2.5m, 5m, 5m);
 
     private static SimulationRequest ValidRequest() => new(
         LotId: null,
@@ -32,11 +32,12 @@ public class SimulationLogicTests
     [Fact]
     public void Costos_Siguen_Las_Formulas_Del_Plan()
     {
-        var breakdown = CostCalculator.Calculate(FullCosts(), seeds: 600, new NutrientUsage(100m, 0.5m), cycleDays: 10, "ARS");
+        var breakdown = CostCalculator.Calculate(FullCosts(), seeds: 600, new NutrientUsage(100m, 0.3m, 0.2m), cycleDays: 10, "ARS");
 
-        Assert.Equal(["Semillas", "Nutrientes"], breakdown.Components.Select(c => c.Name)); // solo gastos del sistema
+        Assert.Equal(["Semillas", "Solución A", "Solución B"], breakdown.Components.Select(c => c.Name)); // solo gastos del sistema
         Assert.Equal(1500m, breakdown.Components.Single(c => c.Name == "Semillas").Amount);  // 2,5 × 600 plantas
-        Assert.Equal(2.5m, breakdown.Components.Single(c => c.Name == "Nutrientes").Amount); // 0,5 L × $5
+        Assert.Equal(1.5m, breakdown.Components.Single(c => c.Name == "Solución A").Amount); // 0,3 L × $5
+        Assert.Equal(1m, breakdown.Components.Single(c => c.Name == "Solución B").Amount);   // 0,2 L × $5
         Assert.Equal(1502.5m, breakdown.Total);
         Assert.Equal(10, breakdown.CycleDays);
         Assert.Equal(600, breakdown.Seeds);
@@ -47,7 +48,7 @@ public class SimulationLogicTests
     public void Costos_Sin_Precios_Muestran_No_Calculable_Sin_Inventar()
     {
         var breakdown = CostCalculator.Calculate(
-            FullCosts() with { PricePerSeed = null }, seeds: 600, new NutrientUsage(10m, 0.05m), cycleDays: 7, "ARS");
+            FullCosts() with { PricePerSeed = null }, seeds: 600, new NutrientUsage(10m, 0.03m, 0.02m), cycleDays: 7, "ARS");
 
         var seeds = breakdown.Components.Single(c => c.Name == "Semillas");
         Assert.Null(seeds.Amount);
@@ -76,11 +77,11 @@ public class SimulationLogicTests
             new NutrientConsumptionRules.PlantSpan(1, new DateOnly(2026, 1, 6)),  // 1 descartada el 6/1: 5 días
         ]);
 
-        // Por planta: 10 × 0,15 + 10 × 0,3 + 10 × 0,65 = 11 L de agua; (4,5 L × 5 ml) + (6,5 L × 10 ml) = 0,0875 L de nutrientes.
-        // La descartada: 5 × 0,15 = 0,75 L de agua y 0,00375 L de nutrientes.
-        Assert.Equal(22.75m, usage.WaterLiters);
-        Assert.Equal(0.17875m, usage.NutrientLiters);
-        Assert.Equal(new NutrientUsage(0m, 0m), NutrientConsumptionRules.Calculate(sowing, null, null, []));
+        // Por planta: 10 × 0,015 + 10 × 0,055 + 10 × 0,2 = 2,7 L de agua. Solución A: 0,15 L × 1,75 + 0,55 L × 2,75 + 2 L ×
+        // 4,5 = 10,775 ml; B: 0,15 × 0,65 + 0,55 × 1,1 + 2 × 1,75 = 4,2025 ml. La descartada: 5 × 0,015 = 0,075 L de agua,
+        // 0,13125 ml de A y 0,04875 ml de B.
+        Assert.Equal(new NutrientUsage(5.475m, 0.02168125m, 0.00845375m), usage);
+        Assert.Equal(new NutrientUsage(0m, 0m, 0m), NutrientConsumptionRules.Calculate(sowing, null, null, []));
     }
 
     // --- SIM-05: validación en servidor ---
@@ -239,11 +240,11 @@ public class SimulationLogicTests
         Assert.Equal(0.3m, babyLeaf.TotalKg);
         Assert.Equal(900m, babyLeaf.Revenue);
         Assert.Equal(17, babyLeaf.Costs.CycleDays);
-        // Agua: 10 plantas × (15 días antes de Baby Leaf × 0,15 L + 2 días en Baby Leaf × 0,3 L) = 28,5 L;
-        // nutrientes 28,5 × 5 ml = 0,1425 L × $5 = $0,71. Gastos del sistema = 1500 + 0,71.
-        Assert.Equal(new NutrientUsage(28.5m, 0.1425m), babyLeaf.Costs.Usage);
-        Assert.Equal(1500.71m, babyLeaf.Costs.Total);
-        Assert.Equal(-600.71m, babyLeaf.Margin);
+        // Agua: 10 plantas × (15 días antes de Baby Leaf × 0,015 L + 2 días en Baby Leaf × 0,055 L) = 3,35 L; Solución A
+        // 10 × (0,225 × 1,75 + 0,11 × 2,75) ml = 0,0069625 L ($0,03) y B 0,0026725 L ($0,01). Gastos = 1500 + 0,04.
+        Assert.Equal(new NutrientUsage(3.35m, 0.0069625m, 0.0026725m), babyLeaf.Costs.Usage);
+        Assert.Equal(1500.04m, babyLeaf.Costs.Total);
+        Assert.Equal(-600.04m, babyLeaf.Margin);
 
         // Meta 60 %: 6 Baby Leaf (0,18 kg · $540) + 4 convencionales (0,8 kg · $1600); termina con el corte convencional.
         var mixed = strategies[1];
@@ -253,18 +254,18 @@ public class SimulationLogicTests
         Assert.True(mixed.ConventionalCut!.IsExtrapolated); // más allá de los 7 días de proyección
         Assert.Equal(37, mixed.Costs.CycleDays);
         Assert.Equal(2140m, mixed.Revenue);
-        // 6 Baby Leaf hasta el 18/1 (17,1 L de agua) + 4 convencionales hasta el 7/2: 15 días × 0,15 L +
-        // 11 en Baby Leaf × 0,3 L + 11 en convencional × 0,65 L = 12,7 L cada una (50,8 L).
-        Assert.Equal(new NutrientUsage(67.9m, 0.4825m), mixed.Costs.Usage);
-        Assert.Equal(1502.41m, mixed.Costs.Total);   // 1500 + 0,4825 L × $5
+        // 6 Baby Leaf hasta el 18/1 (0,335 L de agua cada una) + 4 adultas hasta el 7/2: 15 días × 0,015 L + 11 en Baby
+        // Leaf × 0,055 L + 11 de adulta × 0,2 L = 3,03 L cada una (11,9575 ml de A y 4,66175 ml de B).
+        Assert.Equal(new NutrientUsage(14.13m, 0.0520075m, 0.0202505m), mixed.Costs.Usage);
+        Assert.Equal(1500.36m, mixed.Costs.Total);   // 1500 + A $0,26 + B $0,10
 
         // Todo convencional: 10 × 200 g = 2 kg × $2000 = $4000.
         var conventional = strategies[2];
         Assert.Equal(2m, conventional.TotalKg);
         Assert.Equal(4000m, conventional.Revenue);
-        Assert.Equal(new NutrientUsage(127m, 0.9925m), conventional.Costs.Usage); // 10 × 12,7 L; 10 ml/L en convencional
-        Assert.Equal(2495.04m, conventional.Margin);  // 4000 − (1500 + 4,96)
-        Assert.Equal(752.48m, conventional.CostPerKg); // 1504,96 / 2
+        Assert.Equal(new NutrientUsage(30.3m, 0.119575m, 0.0466175m), conventional.Costs.Usage); // 10 × 3,03 L
+        Assert.Equal(2499.17m, conventional.Margin);  // 4000 − (1500 + A $0,60 + B $0,23)
+        Assert.Equal(750.42m, conventional.CostPerKg); // 1500,83 / 2
     }
 
     [Fact]
@@ -278,14 +279,29 @@ public class SimulationLogicTests
     {
         // 20 plantas, 10 % de pérdidas tempranas → 18 vivas; 70 % aptas → hasta 13 Baby Leaf;
         // 20 % de pérdidas tardías sobre las que siguen a convencional.
-        Assert.Equal(new SimulationStrategies.PlantAllocation(13, 4, EarlyLost: 2, LateLost: 1),
+        // Las que siguen a adulta se trasplantan (Transplanted).
+        Assert.Equal(new SimulationStrategies.PlantAllocation(13, 4, EarlyLost: 2, LateLost: 1, Transplanted: 5),
             SimulationStrategies.Allocate(SimulationStrategyKind.MaxBabyLeaf, 20, null, 0.7m, 0.1m, 0.2m));
-        Assert.Equal(new SimulationStrategies.PlantAllocation(9, 7, EarlyLost: 2, LateLost: 2),   // meta 50 % de 18 = 9 (menos que 13)
+        Assert.Equal(new SimulationStrategies.PlantAllocation(9, 7, EarlyLost: 2, LateLost: 2, Transplanted: 9),   // meta 50 % de 18 = 9 (menos que 13)
             SimulationStrategies.Allocate(SimulationStrategyKind.BabyLeafGoal, 20, 50m, 0.7m, 0.1m, 0.2m));
-        Assert.Equal(new SimulationStrategies.PlantAllocation(13, 4, EarlyLost: 2, LateLost: 1),  // meta 90 % = 16, pero solo 13 aptas
+        Assert.Equal(new SimulationStrategies.PlantAllocation(13, 4, EarlyLost: 2, LateLost: 1, Transplanted: 5),  // meta 90 % = 16, pero solo 13 aptas
             SimulationStrategies.Allocate(SimulationStrategyKind.BabyLeafGoal, 20, 90m, 0.7m, 0.1m, 0.2m));
-        Assert.Equal(new SimulationStrategies.PlantAllocation(0, 14, EarlyLost: 2, LateLost: 4),
+        Assert.Equal(new SimulationStrategies.PlantAllocation(0, 14, EarlyLost: 2, LateLost: 4, Transplanted: 18),
             SimulationStrategies.Allocate(SimulationStrategyKind.AllConventional, 20, null, 0.7m, 0.1m, 0.2m));
+    }
+
+    [Fact]
+    public void Reparto_Con_Pocos_Huecos_De_Adultas_Corta_Baby_Leaf_O_Pierde_Lo_Que_No_Entra()
+    {
+        // 18 vivas, 13 aptas. Con 3 huecos: las 5 no aptas no entran todas → 2 se pierden.
+        Assert.Equal(new SimulationStrategies.PlantAllocation(13, 2, EarlyLost: 2, LateLost: 1, NoRoom: 2, Transplanted: 3),
+            SimulationStrategies.Allocate(SimulationStrategyKind.MaxBabyLeaf, 20, null, 0.7m, 0.1m, 0.2m, adultCapacity: 3));
+        // Todo adulta con 10 huecos: entran 10; de las 8 que no, las aptas se cortan como Baby Leaf.
+        Assert.Equal(new SimulationStrategies.PlantAllocation(8, 8, EarlyLost: 2, LateLost: 2, Transplanted: 10),
+            SimulationStrategies.Allocate(SimulationStrategyKind.AllConventional, 20, null, 0.7m, 0.1m, 0.2m, adultCapacity: 10));
+        // Las ya trasplantadas son adultas siempre.
+        Assert.Equal(new SimulationStrategies.PlantAllocation(13, 9, EarlyLost: 2, LateLost: 2, Transplanted: 5),
+            SimulationStrategies.Allocate(SimulationStrategyKind.MaxBabyLeaf, 20, null, 0.7m, 0.1m, 0.2m, fixedAdults: 6));
     }
 
     [Fact]

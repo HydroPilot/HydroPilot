@@ -48,9 +48,13 @@ builder.Services.AddScoped<LotOverviewService>();
 builder.Services.AddScoped<LotCreationService>();
 builder.Services.AddScoped<LotCommentService>();
 builder.Services.AddScoped<RecentVisitService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Sensors.SensorService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Notifications.AlertHistoryService>();
 builder.Services.AddScoped<GreenhouseDashboardService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<BabyLeafOutlookService>();
+builder.Services.AddScoped<BabyLeafOptimumService>();
+builder.Services.AddScoped<PlantTransplantService>();
 
 // --- Módulo de anomalías (plan 15 / ANO-01..09) ---
 // El proveedor de riesgo REAL se registra después del NoPlantRiskProvider: gana el último.
@@ -72,6 +76,7 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 // invoca hardware (SIM-07), y el test de aislamiento lo verifica con un adaptador falso.
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.GreenhousePlanService>();
 
 // --- Control de pH y CE (dosis manual + motor automático) ---
 // La Pi pide sus comandos por /api/nodos/{nodeId}/comandos y responde el resultado. Al llegar lecturas de pH/CE
@@ -202,6 +207,26 @@ if(!useLocalDb)
 {
     app.UseHttpsRedirection();
 }
+
+// Mientras se regenera el historial desde Admin > Mantenimiento, la API no atiende (la Pi reintenta): el historial se
+// carga con sus Id y lo que entre en ese rato choca.
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Path.StartsWithSegments("/api"))
+    {
+        await next(context);
+        return;
+    }
+    using var lease = HydroPilotWeb.Services.SimulationEnvironment.RegenerationPause.TryEnter();
+    if (lease is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        context.Response.Headers.RetryAfter = "60";
+        await context.Response.WriteAsJsonAsync(new { error = "Se está regenerando el historial del entorno de simulación." });
+        return;
+    }
+    await next(context);
+});
 
 app.UseAntiforgery();
 

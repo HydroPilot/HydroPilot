@@ -7,7 +7,9 @@
 @using HydroPilotWeb.Models.Notifications
 @using HydroPilotWeb.Services.Dashboard
 @using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Services.Sensors
 @inject GreenhouseDashboardService Dashboard
+@inject SensorService Sensors
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Invernadero - HydroPilot</PageTitle>
@@ -39,7 +41,7 @@ else
                 <span class="gh-kpi__value gh-kpi__value--accent">@data.ActiveLots</span>
                 <span class="gh-kpi__label">@(data.ActiveLots == 1 ? "Lote activo" : "Lotes activos")</span>
             </section>
-            @Kpi(data.CurrentRevenue, "Rendimiento actual", "Lo listo para cosechar hoy en los lotes activos")
+            @Kpi(data.CurrentRevenue, "Rendimiento actual", "Lo cosechado y lo listo para cosechar en los lotes activos")
             @Kpi(data.ExpectedRevenue, "Rendimiento esperado", "Lo que se espera del ciclo completo de los lotes activos")
 
             <section class="lot-card gh-chart gh-chart--bars" aria-labelledby="gh-stages-title">
@@ -53,7 +55,10 @@ else
             </section>
 
             <section class="lot-card gh-list-card gh-list-card--half" aria-labelledby="gh-alerts-title">
-                <h3 class="gh-card__title" id="gh-alerts-title">Alertas</h3>
+                <div class="gh-card__head">
+                    <h3 class="gh-card__title" id="gh-alerts-title">Alertas</h3>
+                    <a class="lot-link" href="alertas">Ver todas</a>
+                </div>
                 @if (data.Alerts.Count == 0)
                 {
                     <p class="gh-empty">Sin alertas.</p>
@@ -89,7 +94,7 @@ else
                 }
                 else if (data.SensorChecks.Count == 0)
                 {
-                    <p class="gh-empty">Sin sensores activos.</p>
+                    <p class="gh-empty">Nada vence en los próximos @GreenhouseDashboardRules.CheckWindowDays días. <a class="lot-link" href="settings/sensores">Ver sensores</a></p>
                 }
                 else
                 {
@@ -192,7 +197,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         user = (await AuthState.GetAuthenticationStateAsync()).User;
-        canCalibrate = GreenhouseDashboardService.CanRegisterCalibration(user);
+        canCalibrate = SensorService.CanRegisterCalibration(user);
         await LoadAsync();
     }
 
@@ -214,7 +219,7 @@ else
         calibrating = sensorId;
         try
         {
-            if (!await Dashboard.RegisterCalibrationAsync(sensorId, user))
+            if (!await Sensors.RegisterCalibrationAsync(sensorId, user))
                 error = "No se pudo registrar el chequeo del sensor.";
             await LoadAsync();
         }

@@ -9,8 +9,9 @@ namespace HydroPilotWeb.Services.Control;
 /// adentro de la banda del lote) para corregir antes de que la solución salga de rango. Corrige primero la CE y
 /// después el pH (salvo pH crítico), una corrección por vez, apuntando al objetivo; espera la mezcla y dos lecturas
 /// nuevas antes de volver a dosificar. El tamaño de la dosis sale del volumen del tanque y del efecto por ml de la bomba, y se aplica
-/// solo una parte según una lógica difusa (cuánto se desvió y si se está acercando o alejando). Lógica pura,
-/// testeable sin I/O (notas/ux/logica-vista-control.md, sección 7).
+/// solo una parte según una lógica difusa (cuánto se desvió y si se está acercando o alejando). La CE se sube con la Solución A
+/// y la B por separado (no se mezclan concentradas), una dosis por vez, en la proporción de la etapa
+/// (<see cref="ChooseNutrient"/>). Lógica pura, testeable sin I/O (notas/ux/logica-vista-control.md, sección 7).
 /// </summary>
 public static class ControlEngine
 {
@@ -25,6 +26,10 @@ public static class ControlEngine
 
     /// <summary>Parte del camino del objetivo a cada borde de la banda en la que el motor ya actúa.</summary>
     public const decimal ActionBandShare = 0.7m;
+
+    /// <summary>Parte de Solución A si no se indica: la de la ventana Baby Leaf (2,75 : 1,1 ml/L).</summary>
+    public static readonly decimal DefaultNutrientShareA =
+        HydroPilotWeb.Services.Simulation.NutrientConsumptionRules.SolutionAShare(adult: false);
 
     public static class Codes
     {
@@ -51,7 +56,10 @@ public static class ControlEngine
 
     public sealed record Settings(int MixingMinutes, int DirectionChangeMinutes, int PollStaleMinutes, int TrendMinutes);
 
-    /// <summary>Bomba del nodo. Effect: por ml y litro (null = la estimación de fábrica).</summary>
+    /// <summary>
+    /// Bomba del nodo. Effect: por ml y litro (null = la estimación de fábrica). RecentlyRejected: la Pi rechazó su último
+    /// comando (p. ej. todavía no tiene esa bomba): para A y B, se usa la otra.
+    /// </summary>
     public sealed record Pump(
         int Id,
         string Kind,
@@ -61,7 +69,8 @@ public static class ControlEngine
         decimal MaxPerDay,
         bool IsActive,
         decimal UsedLast24h,
-        decimal? Effect);
+        decimal? Effect,
+        bool RecentlyRejected = false);
 
     public sealed record Point(DateTime AtUtc, decimal Value);
 
@@ -87,7 +96,8 @@ public static class ControlEngine
         bool HasInFlight,
         IReadOnlyList<AppliedDose> RecentDoses,
         Settings Settings,
-        IReadOnlyList<SensorIssue>? Sensors = null);
+        IReadOnlyList<SensorIssue>? Sensors = null,
+        decimal? NutrientShareA = null);
 
     public sealed record Decision(
         Outcome Outcome,
@@ -182,20 +192,26 @@ public static class ControlEngine
         var raise = magnitude.Status.State == SolutionState.Raise;
         var kind = parameter == ControlContract.ParameterPh
             ? (raise ? ControlContract.KindPhUp : ControlContract.KindPhDown)
-            : (raise ? ControlContract.KindNutrient : ControlContract.KindWater);
+            : (raise ? ControlContract.KindNutrientA : ControlContract.KindWater);
 
-        var pump = input.Pumps.FirstOrDefault(p => p.Kind == kind);
+        // Subir la CE: la Solución A o la B, la que quedó atrás de su parte (sin ninguna activa, la A da "bomba apagada").
+        var nutrient = kind == ControlContract.KindNutrientA
+            ? ChooseNutrient(input.Pumps, input.NutrientShareA ?? DefaultNutrientShareA)
+            : null;
+        var pump = nutrient?.Pump ?? input.Pumps.FirstOrDefault(p => p.Kind == kind);
         if (pump is null || !pump.IsActive)
             return new(Outcome.Blocked, Codes.PumpOff, parameter, pump, Value: value, Target: target);
+        kind = pump.Kind;
 
         // Sin vaivén: no se dosifica en sentido contrario a una dosis reciente.
-        var opposite = input.RecentDoses.Where(d => d.Kind == Opposite(kind)).MaxBy(d => d.AppliedAtUtc);
+        var opposite = input.RecentDoses.Where(d => Opposes(d.Kind, kind)).MaxBy(d => d.AppliedAtUtc);
         if (opposite is not null && input.NowUtc < opposite.AppliedAtUtc.AddMinutes(input.Settings.DirectionChangeMinutes))
             return new(Outcome.Blocked, Codes.Direction, parameter, pump, Value: value, Target: target,
                 UntilUtc: opposite.AppliedAtUtc.AddMinutes(input.Settings.DirectionChangeMinutes));
 
+        // Con nutrientes, la dosis completa es de la mezcla A + B (con el efecto de la mezcla); a esta bomba le toca su parte.
         var effect = EffectOf(pump);
-        if (RawDose(kind, value, target, input.ReservoirLiters, effect, input.SourceWaterEc) is not { } raw)
+        if (RawDose(kind, value, target, input.ReservoirLiters, nutrient?.MixEffect ?? effect, input.SourceWaterEc) is not { } raw)
             return new(Outcome.Blocked, Codes.WaterTarget, parameter, pump, Value: value, Target: target);
 
         var step = Step(pump.Unit);
@@ -211,11 +227,13 @@ public static class ControlEngine
         if (strength <= 0m)
             return new(Outcome.Waiting, Codes.Approaching, parameter, pump, Value: value, Target: target);
 
-        var amount = Math.Max(step, Math.Round(raw * strength / step, MidpointRounding.AwayFromZero) * step);
+        var planned = nutrient is null ? raw * strength : nutrient.Part(raw * strength);
+        var full = nutrient is null ? raw : nutrient.Part(raw);
+        var amount = Math.Max(step, Math.Round(planned / step, MidpointRounding.AwayFromZero) * step);
         amount = Math.Min(amount, pump.MaxPerCommand);
         amount = Math.Min(amount, Math.Floor(remaining / step) * step);
 
-        return new(Outcome.Dose, Codes.Dose, parameter, pump, amount, Math.Round(raw, 2), strength, value, target,
+        return new(Outcome.Dose, Codes.Dose, parameter, pump, amount, Math.Round(full, 2), strength, value, target,
             ExpectedEffect(kind, amount, input.ReservoirLiters, effect, value, input.SourceWaterEc));
     }
 
@@ -249,14 +267,61 @@ public static class ControlEngine
     // Dosis
     // ------------------------------------------------------------------
 
-    /// <summary>Bomba contraria: la que deshace lo que hace esta.</summary>
-    public static string Opposite(string kind) => kind switch
+    /// <summary>Una dosis de <paramref name="doseKind"/> deshace lo que hace <paramref name="kind"/>: misma magnitud, sentido contrario.</summary>
+    public static bool Opposes(string doseKind, string kind) =>
+        ControlRules.ParameterFor(doseKind) == ControlRules.ParameterFor(kind) && Raises(doseKind) != Raises(kind);
+
+    /// <summary>Sube su magnitud: pH Up y las soluciones A y B (el agua y pH Down bajan).</summary>
+    public static bool Raises(string kind) =>
+        kind is ControlContract.KindPhUp or ControlContract.KindNutrientA or ControlContract.KindNutrientB;
+
+    /// <summary>
+    /// Bomba de nutrientes que toca para subir la CE. ShareA: parte de la Solución A (1 si solo está la A, 0 si solo la B);
+    /// UsedA / UsedB: lo dosificado en 24 h; MixEffect: efecto por ml/L de la mezcla en esa proporción.
+    /// </summary>
+    public sealed record NutrientChoice(Pump Pump, decimal ShareA, decimal UsedA, decimal UsedB, decimal MixEffect)
     {
-        ControlContract.KindPhUp => ControlContract.KindPhDown,
-        ControlContract.KindPhDown => ControlContract.KindPhUp,
-        ControlContract.KindNutrient => ControlContract.KindWater,
-        _ => ControlContract.KindNutrient,
-    };
+        /// <summary>
+        /// Cuánto le toca a la bomba elegida para que, con <paramref name="mixAmount"/> ml más de mezcla, lo de 24 h quede en
+        /// la proporción: su parte de (A + B + mezcla) menos lo que ya puso. Con una sola bomba, toda la mezcla.
+        /// </summary>
+        public decimal Part(decimal mixAmount)
+        {
+            if (ShareA is 0m or 1m)
+                return mixAmount;
+            var isA = Pump.Kind == ControlContract.KindNutrientA;
+            var share = isA ? ShareA : 1m - ShareA;
+            return Math.Max(0m, share * (UsedA + UsedB + mixAmount) - (isA ? UsedA : UsedB));
+        }
+    }
+
+    /// <summary>
+    /// A o B: la que quedó más atrás de su parte en lo dosificado en 24 h (a igualdad, la A). Una desactivada, o cuya última
+    /// dosis rechazó la Pi (p. ej. porque todavía no tiene esa bomba), no se usa y la otra va sola; si la Pi rechazó las dos,
+    /// se reintenta igual. Null si ninguna está activa.
+    /// </summary>
+    public static NutrientChoice? ChooseNutrient(IReadOnlyList<Pump> pumps, decimal shareA)
+    {
+        var a = pumps.FirstOrDefault(p => p.Kind == ControlContract.KindNutrientA);
+        var b = pumps.FirstOrDefault(p => p.Kind == ControlContract.KindNutrientB);
+        var useA = a is { IsActive: true, RecentlyRejected: false };
+        var useB = b is { IsActive: true, RecentlyRejected: false };
+        if (!useA && !useB)
+        {
+            useA = a is { IsActive: true };
+            useB = b is { IsActive: true };
+        }
+        if (!useA && !useB)
+            return null;
+
+        var share = useA && useB ? Math.Clamp(shareA, 0m, 1m) : useA ? 1m : 0m;
+        var usedA = a?.UsedLast24h ?? 0m;
+        var usedB = b?.UsedLast24h ?? 0m;
+        var total = usedA + usedB;
+        var pickB = share == 0m || (share < 1m && (1m - share) * total - usedB > share * total - usedA);
+        var mix = (useA ? share * EffectOf(a!) : 0m) + (useB ? (1m - share) * EffectOf(b!) : 0m);
+        return new NutrientChoice(pickB ? b! : a!, share, usedA, usedB, mix);
+    }
 
     public static decimal EffectOf(Pump pump) =>
         pump.Effect is > 0m ? pump.Effect.Value : ControlContract.DefaultFor(pump.Kind)?.Effect ?? 1m;
@@ -266,7 +331,7 @@ public static class ControlEngine
 
     /// <summary>
     /// Dosis completa para llevar el valor al objetivo (sin la parte difusa):
-    /// pH Up/Down y nutrientes = desvío ÷ efecto por ml/L × litros; agua = litros × (CE − obj.) ÷ (obj. − CE del agua).
+    /// pH Up/Down y soluciones A y B = desvío ÷ efecto por ml/L × litros; agua = litros × (CE − obj.) ÷ (obj. − CE del agua).
     /// Null si el agua no puede bajar la CE hasta el objetivo (objetivo ≤ CE del agua de red).
     /// </summary>
     public static decimal? RawDose(string kind, decimal value, decimal target, decimal liters, decimal effect, decimal sourceWaterEc)
@@ -274,7 +339,7 @@ public static class ControlEngine
         var raw = kind switch
         {
             ControlContract.KindPhDown => (value - target) * liters / effect,
-            ControlContract.KindPhUp or ControlContract.KindNutrient => (target - value) * liters / effect,
+            ControlContract.KindPhUp or ControlContract.KindNutrientA or ControlContract.KindNutrientB => (target - value) * liters / effect,
             _ when target > sourceWaterEc => liters * (value - target) / (target - sourceWaterEc),
             _ => (decimal?)null,
         };
@@ -287,7 +352,7 @@ public static class ControlEngine
         var expected = kind switch
         {
             ControlContract.KindPhDown => -(amount / liters) * effect,
-            ControlContract.KindPhUp or ControlContract.KindNutrient => amount / liters * effect,
+            ControlContract.KindPhUp or ControlContract.KindNutrientA or ControlContract.KindNutrientB => amount / liters * effect,
             _ => (sourceWaterEc - value) * amount / (liters + amount),
         };
         return Math.Round(expected, 4);

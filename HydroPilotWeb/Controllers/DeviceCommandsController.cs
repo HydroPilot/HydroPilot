@@ -1,3 +1,4 @@
+using HydroPilotWeb.Services.Circuits;
 using HydroPilotWeb.Services.Control;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,10 +15,23 @@ namespace HydroPilotWeb.Controllers;
 public class DeviceCommandsController : ControllerBase
 {
     private readonly ControlService _control;
+    private readonly CircuitService _circuits;
 
-    public DeviceCommandsController(ControlService control)
+    public DeviceCommandsController(ControlService control, CircuitService circuits)
     {
         _control = control;
+        _circuits = circuits;
+    }
+
+    /// <summary>
+    /// Los circuitos de la Pi: claves de sondas y bombas, litros, plantas activas y días del lote. La Pi virtual arma un
+    /// tanque por circuito y lo vuelve a pedir cada minuto (trasplantes, cosechas, lotes nuevos).
+    /// </summary>
+    [HttpGet("circuitos")]
+    public async Task<ActionResult<DeviceConfigResponse>> GetCircuits(string nodeId, CancellationToken ct)
+    {
+        var config = await _circuits.DeviceConfigAsync(nodeId, DateTime.UtcNow, ct);
+        return config is null ? NotFound(new TelemetryErrorDto($"Nodo '{nodeId}' no registrado.")) : Ok(config);
     }
 
     /// <summary>Comandos a ejecutar (pendientes y entregados sin resultado, no vencidos).</summary>

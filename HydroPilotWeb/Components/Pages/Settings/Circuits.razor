@@ -1,15 +1,16 @@
 @page "/settings/circuitos"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @using HydroPilotWeb.Models.Control
+@using HydroPilotWeb.Services
 @using HydroPilotWeb.Services.Circuits
 @inject CircuitService CircuitService
 @inject AuthenticationStateProvider AuthState
 
 <PageTitle>Circuitos - HydroPilot</PageTitle>
 
-@* Circuitos del invernadero: cada uno es un tanque independiente con sus sensores de pH y CE y sus 4 bombas. Una sola
-   Pi por invernadero los maneja a todos. Todos los ven; solo Administrador y Productor los editan. Lógica en
-   CircuitService. *@
+@* Circuitos del invernadero: cada uno es un tanque independiente con sus sensores de pH y CE y sus 5 bombas. Una sola
+   Pi por invernadero los maneja a todos. Todos los ven; solo Administrador y Productor los crean (modal "Nuevo
+   circuito") y editan (lápiz de la fila). Lógica en CircuitService; vista en notas/ux/logica-vista-circuitos.md. *@
 <section class="settings-layout">
     <div class="settings-stack">
         @if (error is not null)
@@ -22,20 +23,22 @@
                 <div>
                     <span class="settings-eyebrow">Invernadero</span>
                     <h3>Circuitos</h3>
-                    <p class="panel__subtitle">
-                        Cada circuito es un tanque con sus sensores de pH y CE y 4 bombas; un lote se planta en un circuito
-                        libre. La temperatura y la humedad son del invernadero.
-                        @if (greenhouses is { Count: 1 })
-                        {
-                            <text> Todos los maneja la Pi <strong>@greenhouses[0].PiIdentifier</strong>.</text>
-                        }
-                    </p>
                 </div>
                 @if (!canEdit)
                 {
                     <span class="settings-readonly-badge">Solo lectura</span>
                 }
+                else if (greenhouses is { Count: > 0 })
+                {
+                    <button type="button" class="btn lot-toolbar__new circuits-new" @onclick="OpenCreateAsync"
+                            disabled="@creating">+ Nuevo circuito</button>
+                }
             </div>
+
+            @if (!string.IsNullOrEmpty(savedMessage))
+            {
+                <p class="lot-muted mt-0">@savedMessage</p>
+            }
 
             @if (circuits is null)
             {
@@ -47,123 +50,163 @@
             }
             else
             {
-                <div class="table-responsive">
-                    <table class="table table-sm hp-table mb-0 circuits-table">
-                        <thead>
-                            <tr>
-                                <th>Circuito</th>
-                                @if (ManyGreenhouses)
-                                {
-                                    <th>Invernadero</th>
-                                }
-                                <th class="text-end">Tanque</th>
-                                <th>Lote en curso</th>
-                                <th>Claves en la Pi</th>
-                                <th>Estado</th>
-                                @if (canEdit)
-                                {
-                                    <th></th>
-                                }
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var circuit in circuits)
-                            {
-                                var editing = editingId == circuit.Id;
-                                <tr class="@(circuit.IsActive ? null : "circuits-table__inactive")">
-                                    <td>
-                                        @if (editing)
-                                        {
-                                            <input class="form-control form-control-sm" maxlength="@Models.Circuit.NameMaxLength"
-                                                   aria-label="Nombre del circuito" @bind="editName" />
-                                        }
-                                        else
-                                        {
-                                            <strong>@circuit.Name</strong>
-                                        }
-                                    </td>
+                <div class="hp-grid-filters">
+                    <input type="search" class="form-control form-control-sm" placeholder="Buscar circuito o lote"
+                           aria-label="Buscar circuito o lote" @bind="search" @bind:event="oninput" />
+                    <select class="form-select form-select-sm" aria-label="Tipo" @bind="kindFilter">
+                        <option value="">Todos los tipos</option>
+                        @foreach (var kind in CircuitKinds.All)
+                        {
+                            <option value="@kind">@CircuitKinds.Label(kind)</option>
+                        }
+                    </select>
+                    <select class="form-select form-select-sm" aria-label="Lote" @bind="lotFilter">
+                        <option value="">Libres y con lote</option>
+                        <option value="free">Libres</option>
+                        <option value="busy">Con lote</option>
+                    </select>
+                    <select class="form-select form-select-sm" aria-label="Estado" @bind="stateFilter">
+                        <option value="">Activos e inactivos</option>
+                        <option value="active">Activos</option>
+                        <option value="inactive">Inactivos</option>
+                    </select>
+                </div>
+
+                @if (Filtered.Count == 0)
+                {
+                    <div class="text-muted small">Ningún circuito con esos filtros.</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm hp-table mb-0 circuits-table">
+                            <thead>
+                                <tr>
+                                    <th>Circuito</th>
                                     @if (ManyGreenhouses)
                                     {
-                                        <td>@circuit.GreenhouseName · Pi @circuit.NodeIdentifier</td>
+                                        <th>Invernadero</th>
                                     }
-                                    <td class="text-end">
-                                        @if (editing)
-                                        {
-                                            <input type="number" min="1" max="@ControlContract.MaxReservoirLiters" step="1"
-                                                   class="form-control form-control-sm circuits-table__liters" aria-label="Litros del tanque"
-                                                   @bind="editLiters" />
-                                        }
-                                        else
-                                        {
-                                            @($"{circuit.ReservoirLiters:0.#} L")
-                                        }
-                                    </td>
-                                    <td>@(circuit.CurrentLot ?? "Libre")</td>
-                                    <td class="circuits-table__keys">
-                                        <span>@string.Join(" · ", circuit.SensorKeys)</span>
-                                        <span>@string.Join(" · ", circuit.PumpKeys)</span>
-                                    </td>
-                                    <td>
-                                        @if (editing)
-                                        {
-                                            <label class="circuits-table__active">
-                                                <input type="checkbox" @bind="editActive" disabled="@(circuit.CurrentLot is not null)" /> Activo
-                                            </label>
-                                        }
-                                        else
-                                        {
-                                            <span class="lot-chip lot-chip--@(circuit.IsActive ? "success" : "muted")">@(circuit.IsActive ? "Activo" : "Inactivo")</span>
-                                        }
-                                    </td>
+                                    <th>Tipo</th>
+                                    <th>Huecos</th>
+                                    <th class="text-end">Tanque</th>
+                                    <th>Lote en curso</th>
+                                    @* Claves en la Pi: oculta desde 2026-10-28 (CircuitRow.SensorKeys / PumpKeys siguen).
+                                    <th>Claves en la Pi</th>
+                                    *@
+                                    <th>Estado</th>
                                     @if (canEdit)
                                     {
-                                        <td class="text-end">
+                                        <th></th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var circuit in Filtered)
+                                {
+                                    var editing = editingId == circuit.Id;
+                                    <tr class="@(circuit.IsActive ? null : "circuits-table__inactive")">
+                                        <td>
                                             @if (editing)
                                             {
-                                                <span class="circuits-table__actions">
-                                                    <button type="button" class="btn btn-success btn-sm" disabled="@saving" @onclick="SaveEditAsync">Guardar</button>
-                                                    <button type="button" class="btn btn-sm hp-btn-secondary" @onclick="CancelEdit">Cancelar</button>
+                                                <input class="form-control form-control-sm" maxlength="@Models.Circuit.NameMaxLength"
+                                                       aria-label="Nombre del circuito" @bind="editName" />
+                                            }
+                                            else
+                                            {
+                                                <strong>@circuit.Name</strong>
+                                            }
+                                        </td>
+                                        @if (ManyGreenhouses)
+                                        {
+                                            <td>@circuit.GreenhouseName · Pi @circuit.NodeIdentifier</td>
+                                        }
+                                        @{ var locked = circuit.CurrentLot is not null; }
+                                        <td>
+                                            @if (editing && !locked)
+                                            {
+                                                <select class="form-select form-select-sm" aria-label="Tipo de circuito" @bind="editKind">
+                                                    @foreach (var kind in CircuitKinds.All)
+                                                    {
+                                                        <option value="@kind">@CircuitKinds.Label(kind)</option>
+                                                    }
+                                                </select>
+                                            }
+                                            else
+                                            {
+                                                @CircuitKinds.Label(circuit.Kind)
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (editing && !locked)
+                                            {
+                                                <span class="circuits-table__grid">
+                                                    <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control form-control-sm"
+                                                           aria-label="Filas" @bind="editRows" />
+                                                    ×
+                                                    <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control form-control-sm"
+                                                           aria-label="Columnas" @bind="editColumns" />
                                                 </span>
                                             }
                                             else
                                             {
-                                                <button type="button" class="btn btn-sm hp-btn-secondary" @onclick="() => StartEdit(circuit)">Editar</button>
+                                                @($"{circuit.GridRows} × {circuit.GridColumns}")
                                             }
                                         </td>
-                                    }
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
-
-            @if (canEdit && greenhouses is { Count: > 0 })
-            {
-                <h4 class="circuits-new__title">Nuevo circuito</h4>
-                <div class="lot-editor">
-                    @if (greenhouses.Count > 1)
-                    {
-                        <div class="lot-editor__field">
-                            <label class="form-label mb-1" for="circuit-greenhouse">Invernadero</label>
-                            <select id="circuit-greenhouse" class="form-select" @bind="newGreenhouseId" @bind:after="SuggestNameAsync">
-                                @foreach (var greenhouse in greenhouses)
-                                {
-                                    <option value="@greenhouse.Id">@greenhouse.Name · Pi @greenhouse.PiIdentifier</option>
+                                        <td class="text-end">
+                                            @if (editing)
+                                            {
+                                                <input type="number" min="1" max="@ControlContract.MaxReservoirLiters" step="1"
+                                                       class="form-control form-control-sm circuits-table__liters" aria-label="Litros del tanque"
+                                                       @bind="editLiters" />
+                                            }
+                                            else
+                                            {
+                                                @($"{circuit.ReservoirLiters:0.#} L")
+                                            }
+                                        </td>
+                                        <td>@(circuit.CurrentLot ?? "Libre")</td>
+                                        @* Claves en la Pi: oculta desde 2026-10-28.
+                                        <td class="circuits-table__keys">
+                                            <span>@string.Join(" · ", circuit.SensorKeys)</span>
+                                            <span>@string.Join(" · ", circuit.PumpKeys)</span>
+                                        </td>
+                                        *@
+                                        <td>
+                                            @if (editing)
+                                            {
+                                                <label class="circuits-table__active">
+                                                    <input type="checkbox" @bind="editActive" disabled="@(circuit.CurrentLot is not null)" /> Activo
+                                                </label>
+                                            }
+                                            else
+                                            {
+                                                <span class="lot-chip lot-chip--@(circuit.IsActive ? "success" : "muted")">@(circuit.IsActive ? "Activo" : "Inactivo")</span>
+                                            }
+                                        </td>
+                                        @if (canEdit)
+                                        {
+                                            <td class="text-end">
+                                                @if (editing)
+                                                {
+                                                    <span class="circuits-table__actions">
+                                                        <button type="button" class="btn btn-success btn-sm" disabled="@saving" @onclick="SaveEditAsync">Guardar</button>
+                                                        <button type="button" class="btn btn-sm hp-btn-secondary" @onclick="CancelEdit">Cancelar</button>
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <button type="button" class="lot-icon-btn" title="Editar circuito" aria-label="Editar @circuit.Name"
+                                                            @onclick="() => StartEdit(circuit)">✎</button>
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
                                 }
-                            </select>
-                        </div>
-                    }
-                    <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="circuit-name">Nombre</label>
-                        <input id="circuit-name" class="form-control" maxlength="@Models.Circuit.NameMaxLength" @bind="newName" />
+                            </tbody>
+                        </table>
                     </div>
-                    <div class="lot-editor__field">
-                        <label class="form-label mb-1" for="circuit-liters">Tanque (litros)</label>
-                        <input id="circuit-liters" type="number" min="1" max="@ControlContract.MaxReservoirLiters" step="1"
-                               class="form-control" @bind="newLiters" />
-                    </div>
-                </div>
+                }
             }
 
             @if (errors.Count > 0)
@@ -177,22 +220,74 @@
                     </ul>
                 </div>
             }
-
-            @if (canEdit && greenhouses is { Count: > 0 })
-            {
-                <div class="lot-editor__actions">
-                    @if (!string.IsNullOrEmpty(savedMessage))
-                    {
-                        <span class="lot-muted mt-0 me-auto">@savedMessage</span>
-                    }
-                    <button class="btn btn-success btn-sm" @onclick="CreateAsync" disabled="@saving">
-                        @(saving ? "Creando…" : "Crear circuito")
-                    </button>
-                </div>
-            }
         </article>
     </div>
 </section>
+
+@if (creating && greenhouses is { Count: > 0 })
+{
+    <LotModal Title="Nuevo circuito" Busy="saving" OnClose="CloseCreate">
+        <div class="lot-editor">
+            @if (greenhouses.Count > 1)
+            {
+                <div class="lot-editor__field">
+                    <label class="form-label mb-1" for="circuit-greenhouse">Invernadero</label>
+                    <select id="circuit-greenhouse" class="form-select" @bind="newGreenhouseId" @bind:after="SuggestNameAsync">
+                        @foreach (var greenhouse in greenhouses)
+                        {
+                            <option value="@greenhouse.Id">@greenhouse.Name · Pi @greenhouse.PiIdentifier</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="lot-editor__field">
+                <label class="form-label mb-1" for="circuit-name">Nombre</label>
+                <input id="circuit-name" class="form-control" maxlength="@Models.Circuit.NameMaxLength" @bind="newName" />
+            </div>
+            <div class="lot-editor__field">
+                <label class="form-label mb-1" for="circuit-kind">Tipo</label>
+                <select id="circuit-kind" class="form-select" @bind="newKind">
+                    @foreach (var kind in CircuitKinds.All)
+                    {
+                        <option value="@kind">@CircuitKinds.Label(kind)</option>
+                    }
+                </select>
+            </div>
+            <div class="lot-editor__field">
+                <label class="form-label mb-1" for="circuit-rows">Huecos (filas × columnas)</label>
+                <div class="circuits-new__grid">
+                    <input id="circuit-rows" type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control" aria-label="Filas" @bind="newRows" />
+                    <span aria-hidden="true">×</span>
+                    <input type="number" min="1" max="@Models.Circuit.MaxGridSide" class="form-control" aria-label="Columnas" @bind="newColumns" />
+                </div>
+            </div>
+            <div class="lot-editor__field">
+                <label class="form-label mb-1" for="circuit-liters">Tanque (litros)</label>
+                <input id="circuit-liters" type="number" min="1" max="@ControlContract.MaxReservoirLiters" step="1"
+                       class="form-control" @bind="newLiters" />
+            </div>
+        </div>
+
+        @if (createErrors.Count > 0)
+        {
+            <div class="alert alert-danger py-2 mt-3 mb-0 small">
+                <ul class="mb-0">
+                    @foreach (var item in createErrors)
+                    {
+                        <li>@item</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <div class="lot-editor__actions">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="CloseCreate" disabled="@saving">Cancelar</button>
+            <button class="btn btn-success btn-sm" @onclick="CreateAsync" disabled="@saving">
+                @(saving ? "Creando…" : "Crear circuito")
+            </button>
+        </div>
+    </LotModal>
+}
 
 <style>
     .circuits-table td {
@@ -213,6 +308,16 @@
         white-space: nowrap;
     }
 
+    .circuits-table__grid {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .circuits-table__grid input {
+        width: 70px;
+    }
+
     .circuits-table__liters {
         width: 90px;
         margin-left: auto;
@@ -230,10 +335,21 @@
         gap: 6px;
     }
 
-    .circuits-new__title {
-        margin: 24px 0 12px;
-        font-size: 1rem;
-        font-weight: 700;
+    /* "+ Nuevo circuito": como "+ Nuevo lote", arriba a la derecha sin estirarse al alto del encabezado. */
+    .btn.circuits-new {
+        align-self: flex-start;
+    }
+
+    /* Alta: filas × columnas debajo de su label y a todo el ancho del campo, como los demás inputs. */
+    .circuits-new__grid {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .circuits-new__grid input {
+        flex: 1 1 0;
+        min-width: 0;
     }
 </style>
 
@@ -241,23 +357,57 @@
     private System.Security.Claims.ClaimsPrincipal user = new();
     private bool canEdit;
     private bool saving;
+    private bool creating;
     private string? error;
     private IReadOnlyList<string> errors = [];
+    private IReadOnlyList<string> createErrors = [];
     private string? savedMessage;
 
     private IReadOnlyList<CircuitRow>? circuits;
     private IReadOnlyList<CircuitGreenhouseChoice>? greenhouses;
 
+    private string search = "";
+    private string kindFilter = "";
+    private string lotFilter = "";
+    private string stateFilter = "";
+
     private int newGreenhouseId;
     private string? newName;
     private decimal newLiters = ControlContract.DefaultReservoirLiters;
+    private string newKind = CircuitKinds.Dense;
+    private int newRows = Models.Circuit.DefaultGridRows;
+    private int newColumns = Models.Circuit.DefaultGridColumns;
 
     private int? editingId;
     private string? editName;
     private decimal editLiters;
     private bool editActive;
+    private string editKind = CircuitKinds.Dense;
+    private int editRows;
+    private int editColumns;
 
     private bool ManyGreenhouses => circuits?.Select(c => c.GreenhouseId).Distinct().Count() > 1;
+
+    private IReadOnlyList<CircuitRow> Filtered
+    {
+        get
+        {
+            if (circuits is null)
+                return [];
+            var text = search.Trim();
+            return circuits
+                .Where(c => text.Length == 0
+                            || c.Name.Contains(text, StringComparison.CurrentCultureIgnoreCase)
+                            || (c.CurrentLot?.Contains(text, StringComparison.CurrentCultureIgnoreCase) ?? false)
+                            || c.GreenhouseName.Contains(text, StringComparison.CurrentCultureIgnoreCase))
+                .Where(c => kindFilter == "" || c.Kind == kindFilter)
+                .Where(c => lotFilter == "" || (c.CurrentLot is null) == (lotFilter == "free"))
+                .Where(c => stateFilter == "" || c.IsActive == (stateFilter == "active"))
+                .OrderBy(c => c.GreenhouseName, NaturalStringComparer.Instance)
+                .ThenBy(c => c.Name, NaturalStringComparer.Instance)
+                .ToList();
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -268,7 +418,6 @@
             greenhouses = await CircuitService.GreenhousesAsync();
             newGreenhouseId = greenhouses.FirstOrDefault()?.Id ?? 0;
             await LoadAsync();
-            await SuggestNameAsync();
         }
         catch (Exception ex)
         {
@@ -284,24 +433,49 @@
             newName = await CircuitService.SuggestNameAsync(newGreenhouseId);
     }
 
-    private async Task CreateAsync()
+    /// <summary>Abre el modal con los valores por defecto y el próximo nombre libre.</summary>
+    private async Task OpenCreateAsync()
     {
-        saving = true;
+        newKind = CircuitKinds.Dense;
+        newRows = Models.Circuit.DefaultGridRows;
+        newColumns = Models.Circuit.DefaultGridColumns;
+        newLiters = ControlContract.DefaultReservoirLiters;
+        createErrors = [];
         savedMessage = null;
         try
         {
-            var result = await CircuitService.CreateAsync(newGreenhouseId, newName, newLiters, user);
-            errors = result.Errors;
+            await SuggestNameAsync();
+        }
+        catch (Exception ex)
+        {
+            createErrors = [$"No se pudo sugerir un nombre: {ex.Message}"];
+        }
+        creating = true;
+    }
+
+    private void CloseCreate()
+    {
+        creating = false;
+        createErrors = [];
+    }
+
+    private async Task CreateAsync()
+    {
+        saving = true;
+        try
+        {
+            var result = await CircuitService.CreateAsync(newGreenhouseId, newName, newLiters, user, newKind, newRows, newColumns);
+            createErrors = result.Errors;
             if (result.Succeeded)
             {
+                creating = false;
                 savedMessage = $"{newName?.Trim()} creado.";
                 await LoadAsync();
-                await SuggestNameAsync();
             }
         }
         catch (Exception ex)
         {
-            errors = [$"No se pudo crear el circuito: {ex.Message}"];
+            createErrors = [$"No se pudo crear el circuito: {ex.Message}"];
         }
         finally
         {
@@ -315,6 +489,9 @@
         editName = circuit.Name;
         editLiters = circuit.ReservoirLiters;
         editActive = circuit.IsActive;
+        editKind = circuit.Kind;
+        editRows = circuit.GridRows;
+        editColumns = circuit.GridColumns;
         errors = [];
         savedMessage = null;
     }
@@ -332,7 +509,7 @@
         saving = true;
         try
         {
-            var result = await CircuitService.UpdateAsync(id, editName, editLiters, editActive, user);
+            var result = await CircuitService.UpdateAsync(id, editName, editLiters, editActive, user, editKind, editRows, editColumns);
             errors = result.Errors;
             if (result.Succeeded)
             {

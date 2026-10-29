@@ -18,7 +18,8 @@ public class ControlRulesTests
     [Theory]
     [InlineData(ControlContract.KindPhUp, ControlContract.ParameterPh)]
     [InlineData(ControlContract.KindPhDown, ControlContract.ParameterPh)]
-    [InlineData(ControlContract.KindNutrient, ControlContract.ParameterEc)]
+    [InlineData(ControlContract.KindNutrientA, ControlContract.ParameterEc)]
+    [InlineData(ControlContract.KindNutrientB, ControlContract.ParameterEc)]
     [InlineData(ControlContract.KindWater, ControlContract.ParameterEc)]
     public void Cada_bomba_corrige_su_magnitud(string kind, string parameter) =>
         Assert.Equal(parameter, ControlRules.ParameterFor(kind));

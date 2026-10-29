@@ -14,7 +14,10 @@ public static class ControlContract
     // --- Tipo de actuador (qué hace sobre el tanque) ---
     public const string KindPhUp = "ph-up";
     public const string KindPhDown = "ph-down";
-    public const string KindNutrient = "nutrient";
+    /// <summary>Solución A (macro). Conserva el valor "nutrient" de cuando había una sola bomba de nutrientes.</summary>
+    public const string KindNutrientA = "nutrient";
+    /// <summary>Solución B (micro): bomba aparte, A y B no se mezclan concentradas.</summary>
+    public const string KindNutrientB = "nutrient-b";
     public const string KindWater = "water";
 
     public const string UnitMl = "ml";
@@ -65,14 +68,16 @@ public static class ControlContract
 
     /// <summary>
     /// Actuadores con que arranca cada nodo; límites pensados para un tanque de 500 L. Effect: cuánto mueve
-    /// 1 ml de producto por litro de tanque (pH para pH Up/Down, mS/cm para nutrientes); el agua diluye y no
-    /// lleva efecto propio. Son estimaciones iniciales: se autocalibran con cada dosis.
+    /// 1 ml de producto por litro de tanque (pH para pH Up/Down, mS/cm para las soluciones A y B); el agua diluye y no
+    /// lleva efecto propio. Son estimaciones iniciales: se autocalibran con cada dosis. La B lleva ~40 % de lo de la A
+    /// (proporción de la tabla del cultivo).
     /// </summary>
     public static readonly IReadOnlyList<ActuatorDefault> DefaultActuators =
     [
         new(KindPhUp, "Subir pH", UnitMl, 50m, 250m, 2.5m),
         new(KindPhDown, "Bajar pH", UnitMl, 50m, 250m, 2.5m),
-        new(KindNutrient, "Nutrientes", UnitMl, 500m, 2_000m, 0.3m),
+        new(KindNutrientA, "Solución A", UnitMl, 500m, 2_000m, 0.3m),
+        new(KindNutrientB, "Solución B", UnitMl, 200m, 800m, 0.3m),
         new(KindWater, "Agua", UnitLiters, 50m, 150m, null),
     ];
 

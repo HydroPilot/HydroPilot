@@ -22,7 +22,8 @@ public sealed record DashboardVisitItem(string Title, string View, string Link, 
 
 /// <summary>
 /// Chequeo de un sensor: próximo = última calibración + días del tipo (Ajustes &gt; Parámetros). Sin
-/// calibración registrada, el chequeo vence hoy.
+/// calibración registrada, el chequeo vence hoy. El dashboard solo trae los vencidos y los que vencen en
+/// <see cref="GreenhouseDashboardRules.CheckWindowDays"/> días o menos; todos están en Infraestructura &gt; Sensores.
 /// </summary>
 public sealed record DashboardSensorCheck(
     int SensorId, string Place, string SensorType, DateOnly? LastCalibration, int IntervalDays, DateOnly DueDate);
@@ -37,7 +38,7 @@ public sealed record GreenhouseDashboard(
     IReadOnlyList<DashboardStageCount> Stages,
     int TotalPlants,
     int ExpectedBabyLeafPlants,
-    IReadOnlyList<DashboardAlertItem> Alerts,
+    IReadOnlyList<DashboardAlertItem> Alerts, // las abiertas y las últimas resueltas (GreenhouseDashboardService.AlertsShown)
     IReadOnlyList<DashboardHarvestItem> Harvests,
     IReadOnlyList<DashboardVisitItem> RecentVisits,
     IReadOnlyList<DashboardSensorCheck> SensorChecks,
@@ -46,6 +47,9 @@ public sealed record GreenhouseDashboard(
 /// <summary>Reglas puras del dashboard: links de las alertas, cosechas, chequeos y totales.</summary>
 public static class GreenhouseDashboardRules
 {
+    /// <summary>Días hacia adelante que mira el dashboard en los chequeos de sensores.</summary>
+    public const int CheckWindowDays = 7;
+
     /// <summary>
     /// A dónde lleva una alerta: error de sensor de un circuito, a Optimización con ese circuito; nodo
     /// desconectado o error de un sensor del invernadero, a Optimización; las de la solución (anomalías
@@ -81,6 +85,9 @@ public static class GreenhouseDashboardRules
     /// <summary>Próximo chequeo: última calibración + intervalo; sin calibración registrada, hoy.</summary>
     public static DateOnly NextCheck(DateOnly? lastCalibration, int intervalDays, DateOnly today) =>
         lastCalibration is { } last ? last.AddDays(intervalDays) : today;
+
+    /// <summary>Vencido o vence en <see cref="CheckWindowDays"/> días o menos: va en el dashboard.</summary>
+    public static bool DueSoon(DateOnly dueDate, DateOnly today) => dueDate.DayNumber - today.DayNumber <= CheckWindowDays;
 
     /// <summary>Suma de $ de los lotes; null si a alguno le falta (no se muestra un total incompleto).</summary>
     public static decimal? Total(IEnumerable<decimal?> amounts)

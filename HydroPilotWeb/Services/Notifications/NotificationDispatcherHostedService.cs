@@ -1,5 +1,6 @@
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models.Notifications;
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.EntityFrameworkCore;
 
 namespace HydroPilotWeb.Services.Notifications;
@@ -27,7 +28,9 @@ public class NotificationDispatcherHostedService : BackgroundService
         {
             try
             {
-                await ProcessPendingDeliveriesAsync(stoppingToken);
+                using var lease = RegenerationPause.TryEnter();
+                if (lease is not null)
+                    await ProcessPendingDeliveriesAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

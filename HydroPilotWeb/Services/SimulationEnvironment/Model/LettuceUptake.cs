@@ -8,9 +8,9 @@ public readonly record struct Uptake(double WaterLiters, double Salts, double Ph
 
 /// <summary>
 /// Cuánto toman las plantas de lechuga del tanque (lógica pura, compartida con la Pi virtual):
-/// - Agua por planta y día según la etapa: los mismos litros que Simulación (NutrientConsumptionRules: 0,15 L antes
-///   de la ventana Baby Leaf, 0,3 L en la ventana y 0,65 L después). Cada "planta" del lote es una celda de siembra
-///   densa (~45 plantas de baby leaf a 3–6 ml por día cada una, Gonnella et al. 2003).
+/// - Agua por planta y día según la etapa: los mismos litros que Simulación (NutrientConsumptionRules: 0,04 L antes
+///   de la ventana Baby Leaf, 0,075 L en la ventana y 0,25 L la adulta). Desde 2026-10-26 cada hueco es una planta (a
+///   6,5 cm; 30 g en Baby Leaf, 280 g de adulta): 200 Baby Leafs toman lo mismo que las 60 celdas de antes (~6 kg).
 /// - El calor y el aire seco suben la transpiración; casi toda pasa de día.
 /// - Sales: lo que absorben con cada litro ("CE de absorción"). Con frío toman más sales que agua y la CE del
 ///   tanque baja; con calor toman más agua y la CE sube (Cornell CEA: la CE sube con la evapotranspiración).
@@ -18,9 +18,9 @@ public readonly record struct Uptake(double WaterLiters, double Salts, double Ph
 /// </summary>
 public static class LettuceUptake
 {
-    public const double WaterBeforeBabyLeaf = 0.15;
-    public const double WaterDuringBabyLeaf = 0.3;
-    public const double WaterConventional = 0.65;
+    public const double WaterBeforeBabyLeaf = 0.015;
+    public const double WaterDuringBabyLeaf = 0.055;
+    public const double WaterConventional = 0.2;
     public const double BabyLeafOpensGdd = 250;
     public const double BabyLeafClosesGdd = 450;
 

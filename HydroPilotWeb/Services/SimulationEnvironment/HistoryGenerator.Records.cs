@@ -18,8 +18,12 @@ public sealed partial class HistoryGenerator
     // Anomalías (como AnomalyEventService, lectura por lectura)
     // ------------------------------------------------------------------
 
+    /// <summary>Clave del episodio: un lote en el denso y en Adultas tiene uno por circuito y magnitud.</summary>
+    private static string EpisodeKey(BenchRun bench, string type) => $"{bench.Bench.CircuitId}:{type}";
+
     private void TrackAnomaly(BenchRun bench, LotRun run, string type, SensorReading reading)
     {
+        var key = EpisodeKey(bench, type);
         if (!_w.AnomalyRules.TryGetValue(type, out var catalog) || !catalog.IsActive)
             return;
         var band = AnomalyBandResolver.ResolveOperative(_w.Crop, run.Stage, type, catalog);
@@ -28,7 +32,7 @@ public sealed partial class HistoryGenerator
 
         var at = reading.ObservedAtUtc;
         var outOfBand = AnomalyEvaluator.IsOutOfBand(reading.Value, band);
-        run.OpenEpisodes.TryGetValue(type, out var episode);
+        run.OpenEpisodes.TryGetValue(key, out var episode);
 
         if (!outOfBand)
         {
@@ -36,7 +40,7 @@ public sealed partial class HistoryGenerator
                 return;
             episode.Normals++;
             if (episode.Normals >= 2)
-                ResolveEpisode(run, type, episode, at.AddSeconds(20), "recuperación: 2 lecturas normales consecutivas");
+                ResolveEpisode(run, key, episode, at.AddSeconds(20), "recuperación: 2 lecturas normales consecutivas");
             return;
         }
 
@@ -59,7 +63,7 @@ public sealed partial class HistoryGenerator
             return;
         }
 
-        if (run.LastResolved.TryGetValue(type, out var resolved) && at < resolved.AddMinutes(catalog.CooldownMinutes))
+        if (run.LastResolved.TryGetValue(key, out var resolved) && at < resolved.AddMinutes(catalog.CooldownMinutes))
             return;
 
         var anomaly = new AnomalyEvent
@@ -88,7 +92,7 @@ public sealed partial class HistoryGenerator
         };
         _data.Anomalies.Add(anomaly);
         var created = new EpisodeRun(anomaly, new ResolvedAnomalyRule(catalog.Code, catalog.Name, catalog.ConsecutiveToOpen, catalog.CooldownMinutes));
-        run.OpenEpisodes[type] = created;
+        run.OpenEpisodes[key] = created;
         if (catalog.ConsecutiveToOpen <= 1)
             OpenEpisode(run, created, at.AddSeconds(20));
     }
@@ -105,14 +109,14 @@ public sealed partial class HistoryGenerator
             $"anomaly-event-{e.Id}", run.Lot.Id, at.AddSeconds(15));
     }
 
-    private void ResolveEpisode(LotRun run, string type, EpisodeRun episode, DateTime at, string reason)
+    private void ResolveEpisode(LotRun run, string key, EpisodeRun episode, DateTime at, string reason)
     {
         var e = episode.Event;
         e.Status = AnomalyContract.StatusResuelta;
         e.ResolvedAtUtc = at;
         e.ResolutionReason = reason;
-        run.LastResolved[type] = at;
-        run.OpenEpisodes.Remove(type);
+        run.LastResolved[key] = at;
+        run.OpenEpisodes.Remove(key);
         if (episode.Alert is { } alert)
         {
             alert.IsResolved = true;
@@ -137,17 +141,12 @@ public sealed partial class HistoryGenerator
               + $"; desde {first.FirstObservedAtUtc:g}";
     }
 
-    /// <summary>Al cerrar el lote, lo abierto se resuelve (Anomalías) y el aviso de cosecha se da por resuelto.</summary>
-    private void BuildAnomalies(LotRun run, DateTime t)
+    /// <summary>Cuando el lote deja un circuito, lo abierto en sus sondas se resuelve (Anomalías).</summary>
+    private void BuildAnomalies(LotRun run, BenchRun bench, DateTime t)
     {
-        foreach (var (type, episode) in run.OpenEpisodes.ToList())
-            ResolveEpisode(run, type, episode, t.AddSeconds(30), "lote finalizado (cosechado o descartado): no genera más anomalías operativas");
-
-        if (run.HarvestAlert is { IsResolved: false } harvest)
-        {
-            harvest.IsResolved = true;
-            harvest.ResolvedAtUtc = t;
-        }
+        var prefix = EpisodeKey(bench, string.Empty);
+        foreach (var (key, episode) in run.OpenEpisodes.Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal)).ToList())
+            ResolveEpisode(run, key, episode, t.AddSeconds(30), "lote finalizado (cosechado o descartado): no genera más anomalías operativas");
     }
 
     // ------------------------------------------------------------------
@@ -256,9 +255,6 @@ public sealed partial class HistoryGenerator
     // Precios y parámetros
     // ------------------------------------------------------------------
 
-    /// <summary>Precio de nutrientes por litro de concentrado A+B (kit Acquagarden 1 L A + 1 L B ≈ $30.870, 2026).</summary>
-    private const decimal NutrientPricePerLiter = 15_000m;
-
     /// <summary>
     /// Precio por kg de cada destino a una fecha (pesos nominales, supuesto a partir de CEPA y góndolas):
     /// Baby Leaf al productor ~45 % de la bolsa en góndola ($26.600–29.300/kg en 2026) con ~2,2 % de suba por mes;
@@ -273,10 +269,22 @@ public sealed partial class HistoryGenerator
         return (Math.Round(babyLeaf / 50m) * 50m, Math.Round(conventional / 50m) * 50m);
     }
 
+    /// <summary>
+    /// El modelo llevado a los precios de fábrica: el trimestre actual queda en <see cref="ParameterDefaults"/> y los
+    /// anteriores con la misma suba del modelo.
+    /// </summary>
+    private (decimal BabyLeaf, decimal Conventional) CalibratedPrices(DateOnly date)
+    {
+        var current = PriceModel(new DateOnly(_today.Year, (_today.Month - 1) / 3 * 3 + 1, 1).AddMonths(1));
+        var (bl, conv) = PriceModel(date);
+        return (Math.Round(bl * ParameterDefaults.BabyLeafPricePerKg / current.BabyLeaf / 50m) * 50m,
+            Math.Round(conv * ParameterDefaults.ConventionalPricePerKg / current.Conventional / 50m) * 50m);
+    }
+
     private (decimal BabyLeaf, decimal Conventional) PricesOn(DateOnly date)
     {
         var row = _priceQuarters.LastOrDefault(q => q.From <= date);
-        return row == default ? PriceModel(date) : (row.BabyLeaf, row.Conventional);
+        return row == default ? CalibratedPrices(date) : (row.BabyLeaf, row.Conventional);
     }
 
     private readonly List<(DateOnly From, decimal BabyLeaf, decimal Conventional)> _priceQuarters = [];
@@ -287,7 +295,7 @@ public sealed partial class HistoryGenerator
         var start = new DateOnly(historyStart.Year, (historyStart.Month - 1) / 3 * 3 + 1, 1);
         for (var from = start; from <= _today; from = from.AddMonths(3))
         {
-            var (bl, conv) = PriceModel(from.AddMonths(1));
+            var (bl, conv) = CalibratedPrices(from.AddMonths(1));
             _priceQuarters.Add((from, bl, conv));
             var until = from.AddMonths(3) > _today ? (DateOnly?)null : from.AddMonths(3).AddDays(-1);
             foreach (var (destination, value) in new[] { (OptimizationContractDestination.BabyLeaf, bl), (OptimizationContractDestination.Conventional, conv) })
@@ -309,7 +317,8 @@ public sealed partial class HistoryGenerator
 
         _data.Settings[SystemParametersService.BabyLeafGramsKey] = _w.BabyLeafGramsPerPlant.ToString(System.Globalization.CultureInfo.InvariantCulture);
         _data.Settings[SystemParametersService.ConventionalGramsKey] = _w.ConventionalGramsPerPlant.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        _data.Settings[SystemParametersService.NutrientPricePerLiterKey] = NutrientPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _data.Settings[SystemParametersService.SolutionAPricePerLiterKey] = ParameterDefaults.SolutionAPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _data.Settings[SystemParametersService.SolutionBPricePerLiterKey] = ParameterDefaults.SolutionBPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     // ------------------------------------------------------------------
@@ -318,10 +327,12 @@ public sealed partial class HistoryGenerator
 
     private void Finish(DateOnly historyStart)
     {
-        // Lotes en curso: su receta y su GDD de hoy quedan como los dejaría la web.
+        // Lotes en curso (una vez cada uno, aunque estén en el denso y en Adultas): su receta y su GDD de hoy quedan
+        // como los dejaría la web.
+        var finished = new HashSet<LotRun>();
         foreach (var bench in _benches)
         {
-            if (bench.Lot is { } run)
+            if (bench.Lot is { } run && finished.Add(run))
             {
                 if (run.Recipe is { } recipe)
                     _data.Recipes.Add(recipe);

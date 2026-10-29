@@ -59,19 +59,11 @@
                     }
                 </ul>
             }
-            @if (Overview.Forecast is { } forecast)
+            @if (Overview.Forecast?.ForecastCorrection is { } correction)
             {
                 <p class="lot-muted">
-                    Fuente del pronóstico: @forecast.DataSourceSummary · modelo @forecast.ModelVersion ·
-                    cobertura @(forecast.CoveragePercent is { } c ? LotFormat.Pct(c) : "—")
+                    Pronóstico corregido a la temperatura de adentro: @LotFormat.SignedNum(correction.OffsetPerDay) GDD/día.
                 </p>
-                @if (forecast.ForecastCorrection is { } correction)
-                {
-                    <p class="lot-muted">
-                        Pronóstico corregido a la temperatura de adentro: @LotFormat.SignedNum(correction.OffsetPerDay) GDD/día
-                        (diferencia promedio entre el sensor y el pronóstico de los últimos @LotFormat.Days(correction.CalibrationDays)).
-                    </p>
-                }
             }
         </div>
         @if (Overview.Curve is { } curve && Overview.Timeline is { } timeline)

@@ -48,7 +48,8 @@ public sealed record AnomalyFilter(
     string? Status,
     DateOnly? From,
     DateOnly? To,
-    int? NodeId = null);
+    int? NodeId = null,
+    int? CircuitId = null); // solo los de los sensores del circuito (un lote puede estar en el denso y en Adultas)
 
 /// <summary>
 /// Regla de anomalía para Parámetros (solo lectura). Bands: una sola (pH, o temp/humedad con umbral

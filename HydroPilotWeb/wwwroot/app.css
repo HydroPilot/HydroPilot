@@ -1455,6 +1455,224 @@ button {
     --bs-btn-padding-x: 14px;
 }
 
+/* Trasplantar, Cosechar y Descartar (barra de selección del mapa): mismo tamaño y forma, cada uno con fondo de su
+   color un poco transparente y borde del color (--batch); al pasar el mouse, el fondo se llena. Trasplantar usa el
+   violeta de las adultas (a donde van); Cosechar, el verde de la app; Descartar, el rojo. */
+.btn.lot-batch-btn {
+    --bs-btn-color: var(--text-primary);
+    --bs-btn-bg: color-mix(in srgb, var(--batch) 28%, transparent);
+    --bs-btn-border-color: var(--batch);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--batch);
+    --bs-btn-hover-border-color: var(--batch);
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: var(--batch);
+    --bs-btn-active-border-color: var(--batch);
+    --bs-btn-disabled-color: var(--text-primary);
+    --bs-btn-disabled-bg: color-mix(in srgb, var(--batch) 28%, transparent);
+    --bs-btn-disabled-border-color: var(--batch);
+}
+
+.btn.lot-batch-btn--transplant {
+    --batch: #8a4fd3;
+}
+
+.btn.lot-batch-btn--harvest {
+    --batch: #198754;
+}
+
+.btn.lot-batch-btn--discard {
+    --batch: #dc3545;
+}
+
+/* --- Campos de texto, número y búsqueda (form-control): como los desplegables, fondo claro de los chips y foco verde
+   (sin el fondo oscuro ni el azul de Bootstrap). --- */
+.form-control {
+    background-color: var(--chip-bg);
+    border-color: var(--border-input);
+    border-radius: 10px;
+    color: var(--text-primary);
+}
+
+.form-control::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+}
+
+.form-control:hover:not(:disabled):not([readonly]) {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border-input));
+}
+
+.form-control:focus {
+    background-color: var(--chip-bg);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    color: var(--text-primary);
+}
+
+.form-control:disabled {
+    background-color: var(--chip-bg);
+    opacity: 0.6;
+}
+
+/* --- Selector de fecha propio (HpDateInput): el campo es un botón con el aspecto de form-control; el calendario se
+   abre debajo, con los colores de la lista de los desplegables. --- */
+.hp-date {
+    position: relative;
+    display: inline-block;
+    min-width: 150px;
+}
+
+/* Más específico que los filtros de las grillas (que dejan los campos con width: auto). */
+.hp-date > .form-control.hp-date__field {
+    width: 100%;
+    min-width: 0;
+}
+
+.hp-date__field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+}
+
+.hp-date__placeholder {
+    color: var(--text-muted);
+}
+
+.hp-date__icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+}
+
+.hp-date__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1060;
+}
+
+.hp-date__panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 1061;
+    width: 272px;
+    padding: 10px;
+    border: 1px solid var(--border-input);
+    border-radius: 14px;
+    background: var(--bg-picker);
+    color: var(--text-primary);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+}
+
+.hp-date__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    font-size: 0.9rem;
+}
+
+.hp-date__nav {
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.hp-date__nav:hover {
+    background: var(--chip-bg);
+    color: var(--text-primary);
+}
+
+.hp-date__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.hp-date__dow {
+    padding: 4px 0;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.hp-date__day {
+    height: 34px;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.hp-date__day:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.hp-date__day--out {
+    color: var(--text-muted);
+    opacity: 0.55;
+}
+
+.hp-date__day--today {
+    box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.hp-date__day--selected,
+.hp-date__day--selected:hover:not(:disabled) {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    opacity: 1;
+}
+
+.hp-date__day:disabled {
+    opacity: 0.25;
+    cursor: default;
+}
+
+.hp-date__foot {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-input);
+}
+
+.hp-date__link {
+    border: 0;
+    background: none;
+    padding: 2px 4px;
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 650;
+}
+
+.hp-date__link--today {
+    margin-left: auto;
+}
+
+.hp-date__link:disabled {
+    opacity: 0.4;
+}
+
 /* --- Desplegables (form-select): fondo claro como los chips y foco verde (sin el azul de Bootstrap). En
    Chrome/Edge con select personalizable, la lista abierta también: fondo del panel, opciones redondeadas y la
    barra fina del menú. En los demás navegadores la lista queda nativa. --- */
@@ -1797,8 +2015,8 @@ button {
 .field-block input,
 .field-block select {
     width: 100%;
-    border: 1px solid rgba(18, 48, 43, 0.12);
-    background: var(--bg-input);
+    border: 1px solid var(--border-input);
+    background: var(--chip-bg);
     border-radius: 14px;
     padding: 12px 14px;
     outline: none;
@@ -2008,6 +2226,21 @@ button {
     margin-top: 8px;
     font-size: 1.2rem;
     font-family: 'IBM Plex Mono', monospace;
+}
+
+/* Card destacada: verde (lo que conviene, un margen positivo) o roja (un margen negativo). */
+.mini-card--good {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.mini-card--good strong {
+    color: var(--accent);
+}
+
+.mini-card--bad {
+    background: color-mix(in srgb, #e04f2b 14%, transparent);
+    border: 1px solid color-mix(in srgb, #e04f2b 40%, transparent);
 }
 
 .recommendations {
@@ -3057,6 +3290,16 @@ button.lot-chip[aria-pressed="true"] {
     background: var(--chip-bg);
 }
 
+/* Barra vacía (0 %): el % igual se ve, a la izquierda. */
+.lot-stack__empty {
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 0.78rem;
+    font-weight: 750;
+    color: var(--text-secondary);
+}
+
 /* Rótulo único sobre varios tramos (todas las plantas activas, en riesgo incluidas). */
 .lot-stack__over {
     position: absolute;
@@ -3879,6 +4122,18 @@ button.lot-chip[aria-pressed="true"] {
     opacity: 0.55;
 }
 
+/* Hueco del denso de una trasplantada: vacío con borde y letras de Adulta. */
+.lot-cell--transplanted {
+    background: transparent;
+    border: 2px dashed #8a4fd3;
+    color: #8a4fd3;
+}
+
+[data-theme="dark"] .lot-cell--transplanted {
+    border-color: #a77ae6;
+    color: #b993ee;
+}
+
 .lot-cell--dim {
     opacity: 0.15;
 }
@@ -4148,19 +4403,26 @@ button.lot-chip[aria-pressed="true"] {
 
 /* ===================================================================
    Dashboard del invernadero (vista Invernadero, "/")
-   Izquierda: 3 cards de números, los 2 gráficos y 2 listas; derecha: 3 listas.
-   Cada lista tiene su propio scroll para no estirar la pantalla.
+   Izquierda: 3 cards de números, los 2 gráficos y 2 listas; derecha: 2 listas.
+   Ocupa todo el alto de la pantalla (menos la barra de arriba y los márgenes): Alertas y Próximos
+   chequeos se estiran hasta abajo. Cada lista tiene su propio scroll para no estirar la pantalla.
    =================================================================== */
+/* La fila única no crece con el contenido (minmax(0, 1fr)): las listas largas scrollean adentro de su card. */
 .gh-dash {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 16px;
+    height: calc(100dvh - 106px);
+    min-height: 680px;
 }
 
 .gh-dash__main {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: auto auto minmax(0, 1fr);
     gap: 16px;
+    min-height: 0;
 }
 
 /* Columna derecha: tan alta como la izquierda (contain: size → su contenido no la estira) y partida
@@ -4212,6 +4474,14 @@ button.lot-chip[aria-pressed="true"] {
     font-size: 0.78rem;
 }
 
+/* Título de una card con un link a la derecha ("Ver todas"). */
+.gh-card__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 .gh-card__title {
     margin: 0;
     font-size: 0.95rem;
@@ -4234,6 +4504,13 @@ button.lot-chip[aria-pressed="true"] {
 
 .gh-list-card--half {
     grid-column: span 3;
+    min-height: 0;
+}
+
+.gh-list-card--half .gh-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
 }
 
 /* --- Barras verticales de plantas por estado ---
@@ -4241,7 +4518,7 @@ button.lot-chip[aria-pressed="true"] {
 .gh-bars {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-rows: 150px auto;
+    grid-template-rows: 190px auto;
     column-gap: 8px;
     row-gap: 6px;
 }
@@ -4260,7 +4537,7 @@ button.lot-chip[aria-pressed="true"] {
     justify-content: flex-end;
     align-items: center;
     width: 100%;
-    height: 150px;
+    height: 190px;
     border-bottom: 1px solid var(--border-input);
 }
 
@@ -4297,8 +4574,8 @@ button.lot-chip[aria-pressed="true"] {
 /* --- Dona de Baby Leaf esperado --- */
 .gh-donut {
     position: relative;
-    width: 150px;
-    height: 150px;
+    width: 180px;
+    height: 180px;
 }
 
 .gh-donut__chart {
@@ -4528,6 +4805,17 @@ a.gh-row:focus-visible {
 @media (max-width: 1200px) {
     .gh-dash {
         grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        height: auto;
+        min-height: 0;
+    }
+
+    .gh-dash__main {
+        grid-template-rows: none;
+    }
+
+    .gh-list-card--half .gh-list {
+        max-height: 248px;
     }
 
     /* Abajo de todo: las listas vuelven a su alto fijo. */
@@ -4610,4 +4898,57 @@ a.gh-row:focus-visible {
     .gh-bars__value {
         margin: 0 0 0 6px;
     }
+}
+
+/* Mapas por circuito: el denso donde se sembró y los de Adultas con las trasplantadas. */
+.lot-map-subtitle {
+    margin: 16px 0 8px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+/* Card de trasplante a Adultas: cuántas pasan, su costo y los huecos libres. */
+.lot-transplant {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lot-transplant__main {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.lot-transplant__value {
+    font-size: 1.6rem;
+    font-weight: 750;
+    color: var(--text-primary);
+}
+
+.lot-transplant__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Filtros arriba de una grilla (Circuitos, Sensores): en una fila; en pantallas chicas bajan de línea. */
+.hp-grid-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.hp-grid-filters .form-select,
+.hp-grid-filters .form-control {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 150px;
+}
+
+.hp-grid-filters input[type="search"] {
+    flex: 1 1 200px;
+    max-width: 280px;
 }

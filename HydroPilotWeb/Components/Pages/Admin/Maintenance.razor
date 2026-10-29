@@ -225,10 +225,11 @@
                                 }
                             </select>
                         </label>
-                        <label class="flow-form__field">
+                        <div class="flow-form__field">
                             <span>Evaluar al (vacío = hoy)</span>
-                            <input type="date" @bind="_flowDate" disabled="@_isProcessing" />
-                        </label>
+                            <HpDateInput @bind-Value="_flowDate" Disabled="_isProcessing" Placeholder="Hoy" AriaLabel="Evaluar al"
+                                         Class="flow-form__date" />
+                        </div>
                         <button class="btn btn-primary" @onclick="ExecuteDailyFlowAsync" disabled="@(_isProcessing || _flowLotId is null)">
                             Ejecutar flujo diario
                         </button>
@@ -476,7 +477,8 @@
         color: var(--text-muted, #8ea1b4);
     }
 
-    .flow-form__field .form-select {
+    .flow-form__field .form-select,
+    .flow-form__date {
         min-width: 170px;
         font-size: 14px;
     }

@@ -3,6 +3,7 @@ using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Notifications;
 using HydroPilotWeb.Services.Notifications;
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -38,7 +39,9 @@ public sealed class NodeConnectionMonitorHostedService : BackgroundService
         {
             try
             {
-                await RunOnceAsync(stoppingToken);
+                using var lease = RegenerationPause.TryEnter();
+                if (lease is not null)
+                    await RunOnceAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

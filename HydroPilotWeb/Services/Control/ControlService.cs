@@ -90,17 +90,21 @@ public sealed class ControlService
             .ToList();
     }
 
-    /// <summary>Circuito donde está plantado el lote (para abrir Optimización desde un lote).</summary>
+    /// <summary>
+    /// Circuito del lote para abrir Optimización desde un lote: el denso donde se sembró mientras lo tenga; después del
+    /// último corte de Baby Leaf, el de Adultas más reciente.
+    /// </summary>
     public async Task<int?> CircuitForLotAsync(int lotId, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var now = DateTime.UtcNow;
-        return await context.CircuitAssignments.AsNoTracking()
+        var dense = await context.Lots.AsNoTracking().Where(l => l.Id == lotId).Select(l => l.CircuitId).FirstOrDefaultAsync(ct);
+        var open = await context.CircuitAssignments.AsNoTracking()
             .Where(a => a.LotId == lotId && a.ValidFromUtc <= now && (a.ValidUntilUtc == null || a.ValidUntilUtc > now))
             .OrderByDescending(a => a.ValidFromUtc)
-            .Select(a => (int?)a.CircuitId)
-            .FirstOrDefaultAsync(ct)
-            ?? await context.Lots.AsNoTracking().Where(l => l.Id == lotId).Select(l => l.CircuitId).FirstOrDefaultAsync(ct);
+            .Select(a => a.CircuitId)
+            .ToListAsync(ct);
+        return dense is { } d && open.Contains(d) ? d : open.Count > 0 ? open[0] : dense;
     }
 
     public async Task<ControlViewDto?> GetViewAsync(int circuitId, CancellationToken ct = default)
@@ -975,7 +979,9 @@ public sealed class ControlService
                 a.Id, a.Kind, a.Name, a.Unit, a.MaxPerCommand, a.MaxPerDay, a.IsActive,
                 commands.Where(c => c.Command.ActuatorId == a.Id && c.Command.CreatedAtUtc >= day)
                     .Sum(c => ControlRules.UsedAmount(c.Command.Status, c.Command.Amount, c.Command.ExecutedAmount)),
-                a.EffectPerUnit))
+                a.EffectPerUnit,
+                commands.Where(c => c.Command.ActuatorId == a.Id).MaxBy(c => c.Command.CreatedAtUtc)?.Command.Status
+                    == ControlContract.StatusRejected))
             .ToList();
         var applied = commands
             .Where(c => c.Command.CompletedAtUtc is not null && WasApplied(c.Command))
@@ -995,7 +1001,9 @@ public sealed class ControlService
             commands.Any(c => ControlRules.IsInFlight(c.Command.Status)),
             applied,
             EngineSettings with { PollStaleMinutes = PiContactStaleMinutes(node) },
-            SensorIssuesFor(faults, phReadings, ecReadings, node, nowUtc));
+            SensorIssuesFor(faults, phReadings, ecReadings, node, nowUtc),
+            // A : B de la etapa: la de adultas en un circuito de Adultas, la de la ventana Baby Leaf en el denso.
+            HydroPilotWeb.Services.Simulation.NutrientConsumptionRules.SolutionAShare(circuit.Kind == CircuitKinds.Adult));
 
         return new CircuitSnapshot(circuit, node, lot, actuators, commands, input, recipe, ph, ec, faults);
     }

@@ -117,7 +117,7 @@ public class ControlSqlServerTests
         Assert.Equal(
             ControlContract.DefaultActuators.Select(a => a.Kind).OrderBy(k => k),
             kinds.OrderBy(k => k));
-        Assert.Equal(8, await check.Actuators.CountAsync()); // 2 circuitos × 4 bombas
+        Assert.Equal(10, await check.Actuators.CountAsync()); // 2 circuitos × 5 bombas (A y B por separado)
 
         var circuit = await check.Circuits.SingleAsync(c => c.Id == _fx.CircuitId);
         Assert.Equal(ControlContract.ModeManual, circuit.ControlMode);
@@ -129,7 +129,7 @@ public class ControlSqlServerTests
     {
         await _fx.ResetCommandsAsync();
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
-        var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrient);
+        var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrientA);
 
         Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, "operador@test")).Succeeded);
         Assert.True((await _fx.Control.RequestDoseAsync(_fx.CircuitId, nutrient, 150m, "operador@test")).Succeeded);
@@ -293,7 +293,7 @@ public class ControlSqlServerTests
     {
         await _fx.ResetCommandsAsync();
         var phDown = await _fx.ActuatorIdAsync(ControlContract.KindPhDown);
-        var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrient);
+        var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrientA);
 
         await _fx.Control.RequestDoseAsync(_fx.CircuitId, phDown, 20m, null);
         await using (var context = _fx.NewContext())
@@ -305,7 +305,7 @@ public class ControlSqlServerTests
         // Cancelada, la bomba queda libre y la Pi no la recibe.
         await _fx.Control.RequestDoseAsync(_fx.CircuitId, nutrient, 100m, null);
         var delivered = Assert.Single((await _fx.Control.PollAsync(ControlSqlFixture.NodeIdentifier, DateTime.UtcNow))!);
-        Assert.Equal(ControlContract.KindNutrient, delivered.Actuator);
+        Assert.Equal(ControlContract.KindNutrientA, delivered.Actuator);
 
         var late = await _fx.Control.CancelAsync(_fx.CircuitId, delivered.CommandId, "admin");
         Assert.False(late.Succeeded);

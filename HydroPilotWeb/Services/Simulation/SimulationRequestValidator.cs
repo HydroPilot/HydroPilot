@@ -51,7 +51,8 @@ public static class SimulationRequestValidator
 
         // --- Costos (SIM-05): negativos rechazados en servidor ---
         ValidateNonNegative(errors, "precio de semilla", request.Costs.PricePerSeed);
-        ValidateNonNegative(errors, "precio de nutrientes por litro", request.Costs.NutrientPricePerLiter);
+        ValidateNonNegative(errors, "precio por litro de la Solución A", request.Costs.SolutionAPricePerLiter);
+        ValidateNonNegative(errors, "precio por litro de la Solución B", request.Costs.SolutionBPricePerLiter);
 
         // --- Estrategia: la meta Baby Leaf máxima es obligatoria si se elige esa estrategia ---
         if (request.Harvest.BabyLeafGoalPercent is { } goal && goal is < 0 or > 100)

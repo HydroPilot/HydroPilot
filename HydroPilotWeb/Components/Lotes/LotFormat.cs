@@ -80,11 +80,14 @@ public static class LotCellKeys
     public const string Cosechada = "cosechada";
     public const string Descartada = "descartada";
     public const string Vacia = "vacia";
+    public const string Trasplantada = "trasplantada";
 
     public static string For(PlantCellDto cell)
     {
         if (cell.CellKind == "empty")
             return Vacia;
+        if (cell.CellKind == "transplanted")
+            return Trasplantada;
         if (cell.CellKind == "discarded" || cell.OperationalState == PlantOperationalState.Descartada)
             return Descartada;
         if (cell.OperationalState == PlantOperationalState.Cosechada)

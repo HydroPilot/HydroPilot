@@ -1,3 +1,4 @@
+using HydroPilotWeb.Services.SimulationEnvironment;
 using Microsoft.Azure.Devices;
 using Microsoft.Extensions.Options;
 
@@ -36,6 +37,8 @@ public sealed class IotHubFeedbackHostedService : BackgroundService
                 if (batch is null)
                     continue;
 
+                // Mientras se regenera el historial, el acuse espera (no se puede saltear).
+                using (await RegenerationPause.EnterAsync(stoppingToken))
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var control = scope.ServiceProvider.GetRequiredService<ControlService>();

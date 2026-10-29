@@ -1,0 +1,141 @@
+@namespace HydroPilotWeb.Components.Common
+@using System.Globalization
+
+@* Selector de fecha propio (el calendario nativo no sigue los colores del sistema): un campo con la fecha (dd/mm/aaaa)
+   y, al tocarlo, un calendario con el mes, la semana de lunes a domingo, hoy marcado y la elegida en verde. Cierra al
+   elegir, con Escape o tocando afuera. Min / Max deshabilitan los días de afuera. *@
+<div class="hp-date @Class">
+    <button type="button" id="@Id" class="form-control hp-date__field @(Small ? "form-control-sm" : null)"
+            aria-label="@AriaLabel" title="@Title" aria-haspopup="dialog" aria-expanded="@(open ? "true" : "false")"
+            disabled="@Disabled" @onclick="Toggle">
+        <span class="@(Value is null ? "hp-date__placeholder" : null)">@(Value?.ToString("dd/MM/yyyy", Es) ?? Placeholder)</span>
+        <svg class="hp-date__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
+            <path d="M3.5 10h17M8 3v4M16 3v4" />
+        </svg>
+    </button>
+
+    @if (open)
+    {
+        <div class="hp-date__backdrop" @onclick="Close"></div>
+        <div class="hp-date__panel" role="dialog" aria-label="Elegir fecha" @onkeydown="OnKeyDown">
+            <div class="hp-date__head">
+                <button type="button" class="hp-date__nav" aria-label="Mes anterior" @onclick="() => Move(-1)">‹</button>
+                <strong>@MonthTitle</strong>
+                <button type="button" class="hp-date__nav" aria-label="Mes siguiente" @onclick="() => Move(1)">›</button>
+            </div>
+            <div class="hp-date__grid">
+                @foreach (var weekday in WeekDays)
+                {
+                    <span class="hp-date__dow">@weekday</span>
+                }
+                @foreach (var day in Days)
+                {
+                    <button type="button" class="hp-date__day @DayClass(day)" disabled="@(!Allowed(day))"
+                            aria-pressed="@(day == Value ? "true" : "false")" aria-label="@(day.ToString("d 'de' MMMM yyyy", Es))"
+                            @onclick="() => PickAsync(day)">@day.Day</button>
+                }
+            </div>
+            <div class="hp-date__foot">
+                @if (Clearable && Value is not null)
+                {
+                    <button type="button" class="hp-date__link" @onclick="ClearAsync">Borrar</button>
+                }
+                <button type="button" class="hp-date__link hp-date__link--today" disabled="@(!Allowed(Today))"
+                        @onclick="() => PickAsync(Today)">Hoy</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly CultureInfo Es = CultureInfo.GetCultureInfo("es-AR");
+    private static readonly string[] WeekDays = ["LU", "MA", "MI", "JU", "VI", "SA", "DO"];
+
+    [Parameter] public DateOnly? Value { get; set; }
+    [Parameter] public EventCallback<DateOnly?> ValueChanged { get; set; }
+    [Parameter] public DateOnly? Min { get; set; }
+    [Parameter] public DateOnly? Max { get; set; }
+    /// <summary>Muestra "Borrar" (vuelve a vacío). En un campo obligatorio, false.</summary>
+    [Parameter] public bool Clearable { get; set; } = true;
+    [Parameter] public string Placeholder { get; set; } = "dd/mm/aaaa";
+    [Parameter] public string? AriaLabel { get; set; }
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool Small { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private bool open;
+    private DateOnly month;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
+
+    private string MonthTitle
+    {
+        get
+        {
+            var text = month.ToString("MMMM yyyy", Es);
+            return char.ToUpper(text[0], Es) + text[1..];
+        }
+    }
+
+    /// <summary>Seis semanas de lunes a domingo, desde la semana del día 1 del mes.</summary>
+    private IEnumerable<DateOnly> Days
+    {
+        get
+        {
+            var start = month.AddDays(-(((int)month.DayOfWeek + 6) % 7));
+            for (var i = 0; i < 42; i++)
+                yield return start.AddDays(i);
+        }
+    }
+
+    private bool Allowed(DateOnly day) => (Min is null || day >= Min) && (Max is null || day <= Max);
+
+    private string DayClass(DateOnly day) => string.Join(" ",
+        new[]
+        {
+            day.Month != month.Month ? "hp-date__day--out" : null,
+            day == Today ? "hp-date__day--today" : null,
+            day == Value ? "hp-date__day--selected" : null,
+        }.Where(c => c is not null));
+
+    private void Toggle()
+    {
+        if (!open)
+        {
+            var shown = Value ?? Today;
+            if (Max is { } max && shown > max)
+                shown = max;
+            if (Min is { } min && shown < min)
+                shown = min;
+            month = new DateOnly(shown.Year, shown.Month, 1);
+        }
+        open = !open;
+    }
+
+    private void Close() => open = false;
+
+    private void Move(int months) => month = month.AddMonths(months);
+
+    private async Task PickAsync(DateOnly day)
+    {
+        if (!Allowed(day))
+            return;
+        open = false;
+        await ValueChanged.InvokeAsync(day);
+    }
+
+    private async Task ClearAsync()
+    {
+        open = false;
+        await ValueChanged.InvokeAsync(null);
+    }
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            open = false;
+    }
+}

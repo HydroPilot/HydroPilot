@@ -32,7 +32,16 @@ public sealed record PlantCellDto(
     int? PlantId,
     string? CommercialStageName,
     PlantOperationalState? OperationalState,
-    string CellKind); // plant | empty | discarded
+    string CellKind, // plant | empty | discarded | transplanted (el hueco del denso de una trasplantada)
+    int? CircuitId = null,
+    bool IsAdultRoute = false,
+    PlantCellMove? MovedTo = null);
+
+/// <summary>Dónde está ahora la planta que salió de ese hueco del denso: su circuito de Adultas y su hueco.</summary>
+public sealed record PlantCellMove(int CircuitId, string CircuitName, int Row, int Column);
+
+/// <summary>Mapa de un circuito de Adultas con las plantas trasplantadas del lote (sus huecos: filas × columnas).</summary>
+public sealed record LotCircuitMapDto(int CircuitId, string Name, int Rows, int Columns, IReadOnlyList<PlantCellDto> Cells);
 
 public sealed record PlantHistoryEntryDto(
     DateTime ChangedAtUtc,
@@ -111,7 +120,13 @@ public sealed record LotStateDto(
     IReadOnlyList<StageCountDto> CommercialCounts,
     IReadOnlyList<PlantCellDto> Cells,
     LotHarvestReadiness? HarvestReadiness,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<LotCircuitMapDto>? AdultMaps = null, // circuitos de Adultas con plantas trasplantadas del lote
+    string? CircuitName = null)                        // circuito denso donde se sembró
+{
+    /// <summary>Todas las celdas: las del circuito denso y las de Adultas.</summary>
+    public IEnumerable<PlantCellDto> AllCells => Cells.Concat(AdultMaps?.SelectMany(m => m.Cells) ?? []);
+}
 
 /// <summary>Resultado de una corrida del flujo diario para un lote (LOT-07).</summary>
 public sealed record LotDailyFlowResult(

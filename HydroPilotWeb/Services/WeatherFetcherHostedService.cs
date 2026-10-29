@@ -1,3 +1,5 @@
+using HydroPilotWeb.Services.SimulationEnvironment;
+
 namespace HydroPilotWeb.Services;
 
 /// <summary>
@@ -24,7 +26,9 @@ public class WeatherFetcherHostedService : BackgroundService
         {
             try
             {
-                await RunOnceIfNeededAsync(stoppingToken);
+                // Una vez por día: si justo se está regenerando el historial, espera en vez de saltear el día.
+                using (await RegenerationPause.EnterAsync(stoppingToken))
+                    await RunOnceIfNeededAsync(stoppingToken);
             }
             catch (Exception ex)
             {

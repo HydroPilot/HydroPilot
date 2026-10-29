@@ -1,13 +1,16 @@
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Control;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.SimulationEnvironment.Model;
 
 namespace HydroPilotWeb.Services.SimulationEnvironment;
 
 /// <summary>
-/// Plantas: crecen con el GDD según qué tan cerca del óptimo estuvo la solución (pH 5,8; CE de la estación, más baja
-/// con calor), se evalúan una vez por día (imagen → métricas → score) y el flujo diario les da su estado comercial;
-/// el productor corta Baby Leaf en la ventana y el resto a convencional.
+/// Plantas: crecen con el GDD según qué tan cerca del óptimo estuvo la solución de su tanque (pH 5,8; CE de la
+/// estación, más baja con calor), se evalúan una vez por día (imagen → métricas → score y tamaño) y el flujo diario
+/// les da su estado comercial. A los 250 GDD las que no llegan a Baby Leaf y el excedente sobre la meta pasan a las
+/// mesadas de Adultas (si entran); el productor corta Baby Leaf en el pico de aptas y las adultas en su óptimo. En el
+/// denso, la que se pasó de tamaño o no se cortó antes de cerrar la ventana se descarta.
 /// </summary>
 public sealed partial class HistoryGenerator
 {
@@ -23,17 +26,19 @@ public sealed partial class HistoryGenerator
         (double)stage.EcObjective - stage.Order switch { 1 => 0.0, 2 => 0.15, _ => 0.25 }
         - (stage.Order == 1 ? 0.008 : 0.0125) * (meanTemperature - 18);
 
-    private void AddPlants(LotRun run, DateTime t)
+    private void AddPlants(LotRun run, BenchRun bench, DateTime t)
     {
+        var rows = bench.Bench.GridRows;
+        var columns = bench.Bench.GridColumns;
         var empty = new HashSet<(int, int)>();
         var gaps = _rng.Next(0, 4);
         while (empty.Count < gaps)
-            empty.Add((_rng.Next(1, 7), _rng.Next(1, 11)));
+            empty.Add((_rng.Next(1, rows + 1), _rng.Next(1, columns + 1)));
 
         var developing = _w.CommercialStageIds[CommercialStageNames.EnDesarrollo];
-        for (var row = 1; row <= 6; row++)
+        for (var row = 1; row <= rows; row++)
         {
-            for (var column = 1; column <= 10; column++)
+            for (var column = 1; column <= columns; column++)
             {
                 if (empty.Contains((row, column)))
                     continue;
@@ -41,6 +46,7 @@ public sealed partial class HistoryGenerator
                 {
                     Id = ++_plantId,
                     LotId = run.Lot.Id,
+                    CircuitId = bench.Bench.CircuitId,
                     Row = row,
                     Column = column,
                     PhenologicalStageId = run.Stage.Id,
@@ -60,7 +66,7 @@ public sealed partial class HistoryGenerator
                     Reason = "Siembra",
                     ChangedAtUtc = t,
                 });
-                run.Plants.Add(new PlantRun(plant, Math.Clamp(1 + HistoryPlanner.Gaussian(_rng) * 0.25, 0.4, 1.45)));
+                run.Plants.Add(new PlantRun(plant, Math.Clamp(1 + HistoryPlanner.Gaussian(_rng) * 0.25, 0.4, 1.45)) { Bench = bench });
             }
         }
     }
@@ -74,8 +80,15 @@ public sealed partial class HistoryGenerator
         var run = bench.Lot!;
         var date = DateOnly.FromDateTime(local);
         run.EvaluatedOn = date;
+        // Temperatura y humedad del invernadero; pH y CE de cada tanque donde está el lote.
         var day = run.Day;
         run.Day = new DayStats();
+        var solutions = _benches.Where(b => b.Lot == run).ToDictionary(b => b, b =>
+        {
+            var solution = b.Day;
+            b.Day = new DayStats();
+            return solution;
+        });
 
         var gdd = run.Gdd;
         var grown = (double)(gdd - run.GddAtLastFlow);
@@ -89,24 +102,29 @@ public sealed partial class HistoryGenerator
         run.Lot.AppliedPhenologicalStageId = stage.Id;
         run.Lot.PredominantPhenologicalStageId = stage.Id;
 
-        // Estrés del último día.
+        // Estrés del último día, por tanque. Las trasplantadas frenan los días de estrés (su corte se corre ese GDD).
         var meanT = day.MeanTemperature ?? 20;
         var meanRh = day.MeanHumidity ?? 65;
-        var quality = Quality(day, stage, meanT);
+        var qualities = solutions.ToDictionary(s => s.Key, s => Quality(s.Value, day, stage, meanT));
         UpdateRoots(run, meanT, date);
-        var tipburnDay = day.MaxEc >= 1.75 && day.MaxTemperature >= 27 && meanRh >= 62 && (double)gdd > 180;
-        var yellowing = day.MeanPh switch
-        {
-            > 6.6 => 4.0,
-            > 6.4 => 2.0,
-            < 5.3 => 3.0,
-            _ => -1.0,
-        };
+        var stressed = run.StressUntil is { } until && date <= until;
+        if (stressed)
+            run.StressGdd += Math.Max(0, (decimal)grown);
 
         foreach (var plant in run.Plants.Where(p => p.Active))
         {
+            var solution = plant.Bench is { } b && solutions.TryGetValue(b, out var own) ? own : new DayStats();
+            var quality = plant.Bench is { } pb && qualities.TryGetValue(pb, out var q) ? q : Quality(solution, day, stage, meanT);
+            var tipburnDay = solution.MaxEc >= 1.75 && day.MaxTemperature >= 27 && meanRh >= 62 && (double)gdd > 180;
+            var yellowing = solution.MeanPh switch
+            {
+                > 6.6 => 4.0,
+                > 6.4 => 2.0,
+                < 5.3 => 3.0,
+                _ => -1.0,
+            };
             var health = plant.InfectedDays is { } d ? Math.Max(0.2, 1 - 0.15 * d) : 1.0;
-            var efficiency = plant.Vigor * quality * health;
+            var efficiency = plant.AdultRoute && stressed ? 0 : plant.Vigor * quality * health;
             plant.Size += Math.Max(0, grown) * efficiency;
             plant.QualitySum += quality;
             plant.QualityDays++;
@@ -130,22 +148,29 @@ public sealed partial class HistoryGenerator
             run.Events.Add((t, "tipburn", "se baja la CE"));
         }
 
-        // Imagen → métricas → score de cada planta activa (desde que se ven, día 3).
+        // Imagen → métricas → score y tamaño de cada planta activa (desde que se ven, día 3).
         var risk = OpenEpisodeReason(run);
-        var thresholds = new PlantDecisionEngine.PlantDecisionThresholds(
-            _w.Config.GddMin, _w.Config.GddMax, _w.Stages[^1].GddMax, _w.Config.ScoreMinCandidate, _w.Config.ScoreMinReady);
+        var thresholds = Thresholds;
         var scores = new List<decimal>();
+        var toDiscard = new List<(PlantRun Plant, string Reason)>();
         foreach (var plant in run.Plants.Where(p => p.Active))
         {
             if (cycleDay >= 3)
             {
                 var score = Evaluate(run, plant, t.AddMinutes(-6), gdd, grown);
-                scores.Add(score.Score);
-                run.ScoreSamples.Add(new Control.RecipeRules.ScoreSample(plant.Plant.Id, DateOnly.FromDateTime(t), score.Score, Math.Round(gdd, 2)));
+                var size = SizeRatio(plant);
+                if (!plant.AdultRoute)
+                {
+                    scores.Add(score.Score);
+                    run.ScoreSamples.Add(new Control.RecipeRules.ScoreSample(plant.Plant.Id, DateOnly.FromDateTime(t), score.Score, Math.Round(gdd, 2)));
+                }
                 plant.LastScore = score.Score;
-                ApplyDecision(run, plant, PlantDecisionEngine.Evaluate(
-                    new PlantDecisionEngine.PlantEvaluationInput(gdd, score.Score, score.Mandatory, null, risk is not null, risk),
-                    thresholds), stage, t);
+                var decision = PlantDecisionEngine.Evaluate(
+                    new PlantDecisionEngine.PlantEvaluationInput(gdd, score.Score, score.Mandatory, risk is not null, risk, plant.AdultRoute, size),
+                    thresholds);
+                ApplyDecision(run, plant, decision, stage, t);
+                if (decision.Discard)
+                    toDiscard.Add((plant, decision.Reason ?? "Ya no puede ser Baby Leaf"));
             }
             else if (plant.Plant.PhenologicalStageId != stage.Id)
             {
@@ -156,6 +181,21 @@ public sealed partial class HistoryGenerator
         if (scores.Count > 0)
             run.DailyScores.Add((DateOnly.FromDateTime(t), Math.Round(scores.Average(), 2)));
         run.ScoreSamples.RemoveAll(s => s.Day < DateOnly.FromDateTime(t).AddDays(-12));
+
+        // Curva de aptas de la ruta Baby Leaf (las del denso, por su evaluación): el corte va en el pico.
+        if (cycleDay >= 3)
+        {
+            var evaluated = run.Plants.Where(p => p.Active && !p.AdultRoute).ToList();
+            run.AptCurve.Add(new AptCurvePoint(date, Math.Round(gdd, 1), evaluated.Count(p => p.EvaluatedApt), evaluated.Count));
+        }
+
+        // La que se pasó de tamaño o no se cortó antes de cerrar la ventana: sin lugar para seguir como adulta.
+        foreach (var (plant, reason) in toDiscard)
+            Discard(run, plant, date, t.AddMinutes(25), reason);
+
+        // Trasplante a Adultas desde el GDD de decisión (una vez).
+        if (!run.TransplantDone && TransplantRules.IsDue(gdd, _w.TransplantOrDefault.DecisionGdd, _w.Config.GddMax))
+            Transplant(run, date, t.AddMinutes(40));
 
         // Predominancia sobre activas (Mixto ante empate), como LotDailyFlowService.
         var counts = run.Plants.Where(p => p.Active)
@@ -173,21 +213,119 @@ public sealed partial class HistoryGenerator
         HarvestAlerts(run, t, date);
     }
 
-    /// <summary>Qué tan bien le fue a la planta ayer (0,3–1,03) según la solución y el calor.</summary>
-    private double Quality(DayStats day, PhenologicalStage stage, double meanTemperature)
+    /// <summary>Qué tan bien le fue a la planta ayer (0,3–1,03) según la solución de su tanque y el calor.</summary>
+    private double Quality(DayStats solution, DayStats ambient, PhenologicalStage stage, double meanTemperature)
     {
         var q = 1.0 + HistoryPlanner.Gaussian(_rng) * 0.02;
-        if (day.MeanEc is { } ec)
+        if (solution.MeanEc is { } ec)
             q -= 0.17 * Math.Pow((ec - OptimalEc(stage, meanTemperature)) / 0.3, 2);
-        if (day.MeanPh is { } ph)
+        if (solution.MeanPh is { } ph)
             q -= 0.14 * Math.Pow((ph - OptimalPh) / 0.35, 2);
-        if (day.MaxEc > 1.85)
+        if (solution.MaxEc > 1.85)
             q -= 0.05;
-        if (day.MaxTemperature > 30)
-            q -= 0.03 * (day.MaxTemperature - 30);
-        if (day.MeanPh is > 6.6 or < 5.2)
+        if (ambient.MaxTemperature > 30)
+            q -= 0.03 * (ambient.MaxTemperature - 30);
+        if (solution.MeanPh is > 6.6 or < 5.2)
             q -= 0.1;
         return Math.Clamp(q, 0.3, 1.03);
+    }
+
+    private PlantDecisionEngine.PlantDecisionThresholds Thresholds => new(
+        _w.Config.GddMin, _w.Config.GddMax, _w.Stages[^1].GddMax, _w.Config.ScoreMinCandidate, _w.Config.ScoreMinReady,
+        _w.TransplantOrDefault.MaxSizeFactor);
+
+    /// <summary>Tamaño respecto del ideal de Baby Leaf (300 = el de una planta perfecta en el óptimo).</summary>
+    private static decimal SizeRatio(PlantRun plant) => Math.Round((decimal)(plant.Size / 300), 3);
+
+    // ------------------------------------------------------------------
+    // Trasplante a Adultas (08 h, desde el GDD de decisión)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Como Lotes (TransplantRules): pasan las de score bajo y el excedente sobre la meta Baby Leaf, hasta llenar los
+    /// huecos de las mesadas de Adultas libres. Cada una con su asignación, su tanque y la Pi de siempre.
+    /// </summary>
+    private void Transplant(LotRun run, DateOnly date, DateTime t)
+    {
+        run.TransplantDone = true;
+        var free = _benches.Where(b => b.IsAdult && b.Lot is null).ToList();
+        var candidates = run.Plants.Where(p => p.Active && !p.AdultRoute)
+            .Select(p => new TransplantCandidate(p.Plant.Id, p.LastScore))
+            .ToList();
+        var proposal = TransplantRules.Propose(candidates, run.Plants.Count, run.Lot.BabyLeafGoalPercent,
+            free.Sum(b => b.Bench.Holes), _w.Config.ScoreMinCandidate, run.Plants.Count(p => p.CutAsBabyLeaf));
+        if (proposal.PlantIds.Count == 0)
+        {
+            run.Events.Add((t, "transplant", $"nadie a Adultas, {proposal.NoRoom} sin lugar"));
+            return;
+        }
+
+        var byId = run.Plants.ToDictionary(p => p.Plant.Id);
+        var queue = new Queue<PlantRun>(proposal.PlantIds.Select(id => byId[id]).OrderBy(p => p.Plant.Row).ThenBy(p => p.Plant.Column));
+        // Como en la app: la trasplantada queda "En desarrollo" en la ruta Adulta.
+        var developing = _w.CommercialStageIds[CommercialStageNames.EnDesarrollo];
+        foreach (var bench in free)
+        {
+            if (queue.Count == 0)
+                break;
+            AttachAdultBench(bench, run, t);
+            foreach (var (row, column) in TransplantRules.FreeHoles(bench.Bench.GridRows, bench.Bench.GridColumns, new HashSet<(int, int)>()))
+            {
+                if (queue.Count == 0)
+                    break;
+                var plant = queue.Dequeue();
+                var p = plant.Plant;
+                var previous = p.CommercialStageId;
+                (p.DenseRow, p.DenseColumn) = (p.Row, p.Column);
+                p.CircuitId = bench.Bench.CircuitId;
+                p.Row = row;
+                p.Column = column;
+                p.TransplantedOn = date;
+                p.CommercialStageId = developing;
+                plant.Bench = bench;
+                plant.AdultRoute = true;
+                _data.StageHistories.Add(new PlantStageHistory
+                {
+                    Id = ++_historyId,
+                    PlantId = p.Id,
+                    PreviousOperationalState = p.OperationalState.ToString(),
+                    PreviousCommercialStageId = previous,
+                    NewOperationalState = p.OperationalState.ToString(),
+                    NewCommercialStageId = developing,
+                    Source = "transplant",
+                    Reason = $"Trasplantada a {bench.Bench.CircuitName}",
+                    ChangedAtUtc = t,
+                });
+            }
+        }
+
+        run.StressUntil = date.AddDays(_w.TransplantOrDefault.StressDays);
+        run.Lot.TransplantCostPerPlant = _w.TransplantOrDefault.CostPerPlant;
+        run.Events.Add((t, "transplant", $"{proposal.PlantIds.Count} a Adultas, {proposal.NoRoom} sin lugar"));
+    }
+
+    /// <summary>La mesada de Adultas recibe al lote: su asignación desde ahora y la solución de la etapa en el tanque.</summary>
+    private void AttachAdultBench(BenchRun bench, LotRun run, DateTime t)
+    {
+        var assignment = new CircuitAssignment
+        {
+            Id = ++_assignmentId,
+            CircuitId = bench.Bench.CircuitId,
+            LotId = run.Lot.Id,
+            ValidFromUtc = t,
+            Source = TelemetryContract.AssignmentSourceManual,
+            CreatedAt = t,
+        };
+        _data.Assignments.Add(assignment);
+        bench.Lot = run;
+        bench.Assignment = assignment;
+        bench.Day = new DayStats();
+        bench.ClearReadings();
+        foreach (var sensor in bench.Bench.Sensors.Values.Where(s => s.Type is AnomalyContract.SensorTypePh or AnomalyContract.SensorTypeCe))
+            bench.Calibrations[sensor.Id] = t.AddMinutes(-30);
+        bench.PhProbeOffset = 0;
+        bench.Tank = new NutrientTank(500, 5.95 + _rng.NextDouble() * 0.15, (double)run.Stage.EcObjective + run.EcBias * 0.5);
+        bench.Mode = DateOnly.FromDateTime(ToLocal(t)) >= _autoStart ? ControlContract.ModeAuto : ControlContract.ModeManual;
     }
 
     /// <summary>Solución tibia (≥ 24 °C) 3 días seguidos: Pythium (UTS/Kentucky). Solo en el lote del incidente se propaga en serio.</summary>
@@ -273,6 +411,7 @@ public sealed partial class HistoryGenerator
     /// </summary>
     private ScoreResult Evaluate(LotRun run, PlantRun plant, DateTime at, decimal gdd, double grown)
     {
+        var size = SizeRatio(plant);
         // Tamaño respecto del de Baby Leaf en el óptimo, por la forma: con malas condiciones la planta se estira.
         var morphology = Math.Clamp(100 * Math.Min(1, plant.Size / 300) * (0.35 + 0.65 * Math.Min(1, plant.AverageQuality))
                                     + HistoryPlanner.Gaussian(_rng) * 2.5, 0, 100);
@@ -335,6 +474,10 @@ public sealed partial class HistoryGenerator
             ModelVersion = "CV-sim-1.0",
             AnalyzedAtUtc = at.AddMinutes(2),
         });
+        var evaluatedAs = PlantDecisionEngine.Evaluate(
+            new PlantDecisionEngine.PlantEvaluationInput(gdd, score, result.AllMandatoryMet, false, null, plant.AdultRoute, size),
+            Thresholds).CommercialStageName;
+        plant.EvaluatedApt = evaluatedAs == CommercialStageNames.BabyLeafApta;
         _data.Evaluations.Add(new BabyLeafEvaluation
         {
             Id = ++_evaluationId,
@@ -343,14 +486,12 @@ public sealed partial class HistoryGenerator
             PlantImageId = image.Id,
             EvaluatedAtUtc = at.AddMinutes(4),
             BabyLeafScore = score,
-            Result = PlantDecisionEngine.Evaluate(
-                new PlantDecisionEngine.PlantEvaluationInput(gdd, score, result.AllMandatoryMet, null, false, null),
-                new PlantDecisionEngine.PlantDecisionThresholds(_w.Config.GddMin, _w.Config.GddMax, _w.Stages[^1].GddMax,
-                    _w.Config.ScoreMinCandidate, _w.Config.ScoreMinReady)).CommercialStageName,
+            Result = evaluatedAs,
             Confidence = Math.Round((decimal)Math.Clamp(0.78 + _rng.NextDouble() * 0.18 - plant.Damage / 400, 0.5, 0.97), 2),
             ModelVersion = "BL-1.0",
             GddAtEvaluation = Math.Round(gdd, 2),
             MandatoryCriteriaMet = result.AllMandatoryMet,
+            SizeRatio = size,
             FoliarAreaUsed = Round(0.62 * Math.PI * diameter * diameter / 4),
             LeafLengthUsed = Round(diameter * 0.46),
             GrowthRateUsed = Round(dayRate),
@@ -417,31 +558,30 @@ public sealed partial class HistoryGenerator
         var date = DateOnly.FromDateTime(local);
         run.HarvestCheckedOn = date;
         var gdd = run.Gdd;
-        var apt = _w.CommercialStageIds[CommercialStageNames.BabyLeafApta];
         var active = run.Plants.Where(p => p.Active).ToList();
 
         if (active.Count == 0)
         {
-            CloseLot(bench, t);
+            // Las lecturas de este paso ya son del lote: se cierra un minuto después.
+            CloseLot(run, t.AddMinutes(1));
             return;
         }
 
-        // Corte Baby Leaf: la regla híbrida de Lotes (ventana + % de aptas) o el último día útil de la ventana.
-        var goal = (int)Math.Round((run.Lot.BabyLeafGoalPercent ?? 0m) / 100m * run.Plants.Count);
-        var cut = run.Plants.Count(p => p.CutAsBabyLeaf);
-        var aptPlants = active.Where(p => p.Plant.CommercialStageId == apt).OrderByDescending(p => p.LastScore).ToList();
-        if (cut < goal && aptPlants.Count > 0 && gdd >= _w.Config.GddMin && gdd < _w.Config.GddMax)
+        // Corte Baby Leaf (las del denso): en el pico de aptas (las aptas bajaron del mejor día), al cerrar la ventana
+        // o, después del corte, las que llegaron (al menos 5, cada 2 días). Se corta todo lo que la evaluación dio Baby
+        // Leaf, aunque haya una anomalía abierta (el riesgo es de la solución, no de la hoja).
+        var aptPlants = active.Where(p => !p.AdultRoute && p.EvaluatedApt).ToList();
+        if (aptPlants.Count > 0 && gdd >= _w.Config.GddMin && gdd < _w.Config.GddMax)
         {
-            var readiness = HarvestReadinessRules.Evaluate(new HarvestReadinessRules.Input(
-                gdd, _w.Config.GddMin, _w.Config.GddMax, aptPlants.Count, active.Count, run.Lot.BabyLeafHarvestTargetPercent));
-            var closing = gdd >= _w.Config.GddMax - 50m;
+            var peak = BabyLeafOptimumRules.PeakReached(run.AptCurve);
+            var closing = gdd >= _w.Config.GddMax - 30m;
             var second = run.LastBabyLeafCut is { } last && date.DayNumber - last.DayNumber >= 2 && aptPlants.Count >= 5;
-            if (readiness.IsReady == true || closing || second)
+            if ((run.LastBabyLeafCut is null && peak) || closing || second)
             {
-                foreach (var plant in aptPlants.Take(goal - cut))
+                foreach (var plant in aptPlants)
                     HarvestPlant(run, plant, date, t, babyLeaf: true);
                 run.LastBabyLeafCut = date;
-                run.Events.Add((t, "bl-cut", $"{Math.Min(aptPlants.Count, goal - cut)}"));
+                run.Events.Add((t, "bl-cut", $"{aptPlants.Count}"));
                 if (run.HarvestAlert is { IsResolved: false } alert)
                 {
                     alert.IsResolved = true;
@@ -450,25 +590,37 @@ public sealed partial class HistoryGenerator
             }
         }
 
-        // Corte convencional el día del óptimo (o el planificado), y lo que queda en riesgo se descarta.
-        if (gdd >= CycleTimelineLogic.ConventionalOptimumGdd || date >= run.Plan.PlannedEnd)
+        // El denso queda libre cuando no le quedan plantas del lote.
+        if (run.DenseBench is { } dense && dense.Lot == run && !run.Plants.Any(p => p.Active && p.Bench == dense))
+            ReleaseBench(dense, run, t.AddMinutes(45));
+
+        // Corte de las adultas en su óptimo (650 GDD más lo que frenaron por el trasplante); las que están en riesgo
+        // (anomalía abierta) esperan al día siguiente y, al final del ciclo, se descartan.
+        var adults = run.Plants.Where(p => p.Active && p.AdultRoute).ToList();
+        if (adults.Count > 0 && gdd >= CycleTimelineLogic.ConventionalOptimumGdd + run.StressGdd)
         {
-            // Las que están en riesgo (anomalía abierta) esperan al día siguiente; al final del ciclo se descartan.
             var risk = _w.CommercialStageIds[CommercialStageNames.RiesgoFueraDeVentana];
             var riskNow = OpenEpisodeReason(run) is not null;
-            var last = date >= run.Plan.PlannedEnd.AddDays(2) || gdd >= _w.Stages[^1].GddMax - 30m;
-            foreach (var plant in run.Plants.Where(p => p.Active).ToList())
+            var lastDay = gdd >= _w.Stages[^1].GddMax - 30m;
+            foreach (var plant in adults)
             {
                 if (plant.Plant.CommercialStageId != risk || !riskNow)
                     HarvestPlant(run, plant, date, t.AddMinutes(30), babyLeaf: false);
-                else if (last)
+                else if (lastDay)
                     Discard(run, plant, date, t.AddMinutes(40), "Fuera de ventana al cierre del ciclo");
             }
             run.Events.Add((t, "conv-cut", string.Empty));
         }
 
+        // Cada mesada de Adultas queda libre con su última planta.
+        foreach (var hosting in _benches.Where(b => b.IsAdult && b.Lot == run).ToList())
+        {
+            if (!run.Plants.Any(p => p.Active && p.Bench == hosting))
+                ReleaseBench(hosting, run, t.AddMinutes(50));
+        }
+
         if (run.Plants.All(p => !p.Active))
-            CloseLot(bench, t.AddHours(1));
+            CloseLot(run, t.AddHours(1));
     }
 
     private void HarvestPlant(LotRun run, PlantRun plant, DateOnly date, DateTime at, bool babyLeaf)
@@ -477,6 +629,8 @@ public sealed partial class HistoryGenerator
         var previous = p.CommercialStageId;
         if (!babyLeaf)
             p.CommercialStageId = _w.CommercialStageIds[CommercialStageNames.CosechaConvencional];
+        else if (p.CommercialStageId != _w.CommercialStageIds[CommercialStageNames.CandidataBabyLeaf])
+            p.CommercialStageId = _w.CommercialStageIds[CommercialStageNames.BabyLeafApta]; // se corta como Baby Leaf
         p.OperationalState = PlantOperationalState.Cosechada;
         p.HarvestDate = date;
         plant.CutAsBabyLeaf = babyLeaf;

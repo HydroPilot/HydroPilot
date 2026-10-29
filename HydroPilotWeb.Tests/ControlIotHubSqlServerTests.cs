@@ -147,7 +147,7 @@ public class ControlIotHubSqlServerTests
         await _fx.ResetCommandsAsync();
         var channel = new RecordingCommandChannel(failFirst: 1);
         var control = _fx.NewControl(channel);
-        var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrient);
+        var nutrient = await _fx.ActuatorIdAsync(ControlContract.KindNutrientA);
 
         Assert.True((await control.RequestDoseAsync(_fx.CircuitId, nutrient, 100m, null)).Succeeded);
         Assert.Empty(channel.Sent);

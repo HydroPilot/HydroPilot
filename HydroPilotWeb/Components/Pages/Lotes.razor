@@ -10,6 +10,7 @@
 @inject LotCreationService LotCreation
 @inject LotAggregateService LotAggregate
 @inject PlantLifecycleService PlantLifecycle
+@inject PlantTransplantService PlantTransplant
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
 
@@ -161,34 +162,56 @@ else
                                     <button type="button" class="btn btn-sm lot-select-bar__btn" @onclick="() => picked.Clear()">Limpiar</button>
                                 }
                                 <span class="lot-select-bar__actions">
-                                    <button type="button" class="btn btn-success btn-sm" disabled="@(picked.Count == 0 || operating)"
+                                    @if (transplantPlan is not null && canTransplant && HasDensePlants)
+                                    {
+                                        <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--transplant" disabled="@(!CanTransplantPicked || operating)"
+                                                title="@TransplantHint" @onclick="() => AskBatch(BatchAction.Transplant)">Trasplantar</button>
+                                    }
+                                    <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--harvest" disabled="@(picked.Count == 0 || operating)"
                                             @onclick="() => AskBatch(BatchAction.Harvest)">Cosechar</button>
-                                    <button type="button" class="btn btn-outline-danger btn-sm" disabled="@(picked.Count == 0 || operating)"
+                                    <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--discard" disabled="@(picked.Count == 0 || operating)"
                                             @onclick="() => AskBatch(BatchAction.Discard)">Descartar</button>
                                 </span>
                             </div>
                         }
+                        @* Con trasplantadas, el mapa de cada circuito: el denso donde se sembró y los de Adultas. *@
+                        @if (overview.State.AdultMaps is { Count: > 0 })
+                        {
+                            <h4 class="lot-map-subtitle">@(overview.State.CircuitName ?? "Circuito") · denso</h4>
+                        }
                         @* El detalle de la planta se abre como popover anclado a la celda (no reserva espacio fijo). *@
-                        <div class="lot-map-stage @(detail is not null ? "lot-map-stage--open" : null)" style="@MapStageStyle">
+                        <div class="lot-map-stage @(DetailIn(DenseCircuitId) ? "lot-map-stage--open" : null)" style="@StageStyle(overview.State.GridColumns ?? 0)">
                             <LotMap Rows="overview.State.GridRows ?? 0"
                                     Columns="overview.State.GridColumns ?? 0"
                                     Cells="overview.State.Cells"
-                                    SelectedPosition="selectedPosition"
+                                    SelectedPosition="PositionIn(DenseCircuitId)"
                                     HighlightKey="@highlightKey"
                                     SelectionMode="selecting"
                                     PickedPlantIds="picked"
                                     OnCellSelected="SelectCellAsync" />
-                            @if (detail is not null && Popover is { } popover)
+                            @if (DetailIn(DenseCircuitId) && PopoverFor(overview.State.GridRows ?? 0, overview.State.GridColumns ?? 0) is { } popover)
                             {
-                                <div class="lot-popover @popover.Css" style="@popover.Style" role="dialog"
-                                     aria-label="@($"Detalle de la posición F{detail.Row}-C{detail.Column}")"
-                                     tabindex="-1" @ref="popoverRef" @onkeydown="OnPopoverKeyDown">
-                                    <PlantDetailCard Detail="detail" AllowActions="!overview.IsClosed" Busy="operating"
-                                                     OnHarvest="HarvestSelectedAsync" OnDiscard="DiscardSelectedAsync"
-                                                     OnClose="ClosePopover" />
-                                </div>
+                                @PopoverMarkup(popover)
                             }
                         </div>
+                        @foreach (var map in overview.State.AdultMaps ?? [])
+                        {
+                            <h4 class="lot-map-subtitle">@map.Name · Adultas</h4>
+                            <div class="lot-map-stage @(DetailIn(map.CircuitId) ? "lot-map-stage--open" : null)" style="@StageStyle(map.Columns)">
+                                <LotMap Rows="map.Rows"
+                                        Columns="map.Columns"
+                                        Cells="map.Cells"
+                                        SelectedPosition="PositionIn(map.CircuitId)"
+                                        HighlightKey="@highlightKey"
+                                        SelectionMode="selecting"
+                                        PickedPlantIds="picked"
+                                        OnCellSelected="SelectCellAsync" />
+                                @if (DetailIn(map.CircuitId) && PopoverFor(map.Rows, map.Columns) is { } adultPopover)
+                                {
+                                    @PopoverMarkup(adultPopover)
+                                }
+                            </div>
+                        }
                         @* Estado de todas las plantas del lote, a todo el ancho debajo del mapa. *@
                         <div class="mt-3">
                             <LotStatusBar Plants="overview.Plants" />
@@ -207,6 +230,10 @@ else
 
                 <div class="lot-layout__side">
                     <LotWindowCard Overview="overview" />
+                    @if (transplantPlan is { IsDue: true } plan)
+                    {
+                        <LotTransplantCard Plan="plan" Currency="@Currency" CanTransplant="canTransplant" Busy="operating" OnReview="ReviewTransplant" />
+                    }
                     <LotBabyLeafCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
                     <LotActiveCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
 
@@ -239,9 +266,18 @@ else
 @if (batchAction is { } action && overview is not null)
 {
     var harvest = action == BatchAction.Harvest;
+    var transplantAction = action == BatchAction.Transplant;
     var count = LotFormat.Plants(picked.Count);
-    <LotModal Title="@(harvest ? "Cosechar plantas" : "Descartar plantas")" Busy="operating" OnClose="CloseBatch">
-        @if (harvest)
+    <LotModal Title="@(transplantAction ? "Trasplantar a Adultas" : harvest ? "Cosechar plantas" : "Descartar plantas")" Busy="operating" OnClose="CloseBatch">
+        @if (transplantAction)
+        {
+            <p class="mt-0">
+                Pasan <strong>@count</strong> a @string.Join(", ", transplantPlan?.Room.Select(r => r.CircuitName) ?? [])
+                (en ese orden, hueco por hueco). Mano de obra: @LotFormat.Money((transplantPlan?.CostPerPlant ?? 0m) * picked.Count, Currency).
+                No se puede deshacer.
+            </p>
+        }
+        else if (harvest)
         {
             <p class="mt-0">
                 Se van a cosechar <strong>@count</strong>: @SplitText(HarvestSplit()).
@@ -255,7 +291,7 @@ else
             <input id="batch-reason" class="form-control form-control-sm" maxlength="300" placeholder="Ej.: granizo, tipburn"
                    @bind="batchReason" />
         }
-        @if (picked.Count >= overview.Plants.Active)
+        @if (!transplantAction && picked.Count >= overview.Plants.Active)
         {
             <p class="lot-muted mt-2 mb-0">No quedan otras plantas activas: el lote se cierra.</p>
         }
@@ -265,8 +301,9 @@ else
         }
         <div class="lot-editor__actions">
             <button class="btn btn-outline-secondary btn-sm" @onclick="CloseBatch" disabled="@operating">Cancelar</button>
-            <button class="btn btn-sm @(harvest ? "btn-success" : "btn-danger")" @onclick="ConfirmBatchAsync" disabled="@operating">
-                @(operating ? (harvest ? "Cosechando…" : "Descartando…") : $"{(harvest ? "Cosechar" : "Descartar")} {count}")
+            <button class="btn btn-sm @(transplantAction || harvest ? "btn-success" : "btn-danger")" @onclick="ConfirmBatchAsync" disabled="@operating">
+                @(operating ? (transplantAction ? "Trasplantando…" : harvest ? "Cosechando…" : "Descartando…")
+                    : $"{(transplantAction ? "Trasplantar" : harvest ? "Cosechar" : "Descartar")} {count}")
             </button>
         </div>
     </LotModal>
@@ -289,7 +326,10 @@ else
     private DateOnly? simDate;
     private LotOverviewDto? overview;
     private PlantDetailDto? detail;
-    private (int Row, int Column)? selectedPosition;
+    // Celda del detalle: circuito (el denso o uno de Adultas), fila y columna.
+    private (int? Circuit, int Row, int Column)? selected;
+    private TransplantPlan? transplantPlan;
+    private bool canTransplant;
     private string? highlightKey;
     private ElementReference popoverRef;
     private bool focusPopover;
@@ -300,7 +340,7 @@ else
     private bool operating;
     private string? notice;
     // Selección de plantas en el mapa para cosechar o descartar varias.
-    private enum BatchAction { Harvest, Discard }
+    private enum BatchAction { Harvest, Discard, Transplant }
     private bool selecting;
     private readonly HashSet<int> picked = [];
     private BatchAction? batchAction;
@@ -327,6 +367,7 @@ else
             canEdit = LotOverviewService.CanEditObjectives(user);
             canEditParameters = SystemParametersService.CanEdit(user);
             canCreateLot = LotCreationService.CanCreate(user);
+            canTransplant = PlantTransplantService.CanTransplant(user);
 
             lots = await LotOverview.GetLotOptionsAsync();
             selectedLotId = lots.Any(l => l.Id == LotFromQuery) ? LotFromQuery : lots.FirstOrDefault()?.Id;
@@ -364,7 +405,10 @@ else
                 return;
             overview = loaded;
             detail = null;
-            selectedPosition = null;
+            selected = null;
+            transplantPlan = overview is { IsClosed: false } open
+                ? await PlantTransplant.GetPlanAsync(lotId, open.State.GddAccumulated)
+                : null;
             if (overview is null)
                 error = "El lote seleccionado ya no existe.";
             else if (visitedLotId != lotId)
@@ -394,6 +438,15 @@ else
 
     private async Task SelectCellAsync(PlantCellDto cell)
     {
+        // El hueco del denso de una trasplantada abre la planta en su circuito de Adultas.
+        if (cell.MovedTo is { } to)
+        {
+            if (selecting || overview?.State.AllCells.FirstOrDefault(c =>
+                    c.CircuitId == to.CircuitId && c.Row == to.Row && c.Column == to.Column && c.PlantId is not null) is not { } target)
+                return;
+            cell = target;
+        }
+
         if (selecting)
         {
             if (IsSelectable(cell) && !picked.Remove(cell.PlantId!.Value))
@@ -402,13 +455,13 @@ else
         }
 
         // Tocar la misma planta cierra el detalle; otra planta lo mueve a esa celda.
-        if (detail is not null && selectedPosition == (cell.Row, cell.Column))
+        if (detail is not null && selected == (cell.CircuitId, cell.Row, cell.Column))
         {
             ClosePopover();
             return;
         }
 
-        selectedPosition = (cell.Row, cell.Column);
+        selected = (cell.CircuitId, cell.Row, cell.Column);
         detail = await LoadDetailAsync(cell);
         focusPopover = true;
     }
@@ -416,8 +469,27 @@ else
     private void ClosePopover()
     {
         detail = null;
-        selectedPosition = null;
+        selected = null;
     }
+
+    /// <summary>Circuito del mapa denso (null en lotes de antes de los circuitos).</summary>
+    private int? DenseCircuitId => overview?.State.Cells.FirstOrDefault()?.CircuitId;
+
+    private bool DetailIn(int? circuitId) => detail is not null && selected is { } s && s.Circuit == circuitId;
+
+    private (int Row, int Column)? PositionIn(int? circuitId) =>
+        selected is { } s && s.Circuit == circuitId ? (s.Row, s.Column) : null;
+
+    private RenderFragment PopoverMarkup(PopoverPlacement popover) => __builder =>
+    {
+        <div class="lot-popover @popover.Css" style="@popover.Style" role="dialog"
+             aria-label="@($"Detalle de la posición F{detail!.Row}-C{detail.Column}")"
+             tabindex="-1" @ref="popoverRef" @onkeydown="OnPopoverKeyDown">
+            <PlantDetailCard Detail="detail" AllowActions="!(overview?.IsClosed ?? true)" Busy="operating"
+                             OnHarvest="HarvestSelectedAsync" OnDiscard="DiscardSelectedAsync"
+                             OnClose="ClosePopover" />
+        </div>
+    };
 
     private void OnPopoverKeyDown(KeyboardEventArgs e)
     {
@@ -448,8 +520,8 @@ else
         }
     }
 
-    /// <summary>Ancho máximo del mapa: celdas de hasta 72 px para que no quede gigante a pantalla completa.</summary>
-    private string MapStageStyle => overview?.State.GridColumns is int cols and > 0
+    /// <summary>Ancho máximo de un mapa: celdas de hasta 72 px para que no quede gigante a pantalla completa.</summary>
+    private static string StageStyle(int cols) => cols > 0
         ? $"max-width: {cols * 72 + (cols - 1) * 4 + 22}px;"
         : string.Empty;
 
@@ -460,14 +532,11 @@ else
     /// hacia arriba en la inferior; se alinea a izquierda/centro/derecha según la columna.
     /// Las posiciones son % del mapa (descontando su padding), así acompañan el ancho de la pantalla.
     /// </summary>
-    private PopoverPlacement? Popover
+    private PopoverPlacement? PopoverFor(int rows, int cols)
     {
-        get
         {
-            if (overview is null || selectedPosition is not { } pos)
+            if (overview is null || selected is not { } pos)
                 return null;
-            var rows = overview.State.GridRows ?? 0;
-            var cols = overview.State.GridColumns ?? 0;
             if (rows <= 0 || cols <= 0)
                 return null;
 
@@ -624,9 +693,46 @@ else
 
     /// <summary>Plantas activas que marca "Seleccionar todas": con un filtro del mapa activo, solo las de ese filtro.</summary>
     private List<PlantCellDto> Selectable() =>
-        overview?.State.Cells
+        overview?.State.AllCells
             .Where(c => IsSelectable(c) && (highlightKey is null || LotCellKeys.For(c) == highlightKey))
             .ToList() ?? [];
+
+    private string Currency => overview?.Yield.Prices.Currency ?? "ARS";
+
+    /// <summary>Se trasplantan activas que siguen en el denso, si entran en los huecos de Adultas.</summary>
+    private bool CanTransplantPicked =>
+        transplantPlan is { IsDue: true } plan && picked.Count > 0 && picked.Count <= plan.Capacity
+        && overview is not null
+        && overview.State.Cells.Count(c => c.PlantId is { } id && picked.Contains(id) && IsSelectable(c) && !c.IsAdultRoute) == picked.Count;
+
+    /// <summary>Quedan plantas activas en el circuito denso (las que se pueden trasplantar).</summary>
+    private bool HasDensePlants => overview?.State.Cells.Any(c => IsSelectable(c) && !c.IsAdultRoute) == true;
+
+    /// <summary>Por qué "Trasplantar" está deshabilitado (o qué hace): fuera de la ventana, sin lugar o no entran.</summary>
+    private string TransplantHint => transplantPlan switch
+    {
+        null => string.Empty,
+        { IsDue: false } plan when overview is not null && overview.State.GddAccumulated < plan.DecisionGdd =>
+            $"Se trasplanta desde {LotFormat.Num(plan.DecisionGdd)} GDD (hoy {LotFormat.Num(overview.State.GddAccumulated)}) hasta que cierra la ventana Baby Leaf.",
+        { IsDue: false } => "La ventana Baby Leaf ya cerró: no se trasplanta.",
+        { Capacity: 0 } => "No hay huecos libres en circuitos de Adultas.",
+        { } plan when picked.Count > plan.Capacity => $"No entran: hay {plan.Capacity} huecos libres en Adultas.",
+        _ => "Pasan a Adultas las marcadas del circuito denso."
+    };
+
+    /// <summary>Card de trasplante: marca en el mapa las que propone el sistema para revisarlas y confirmar.</summary>
+    private void ReviewTransplant()
+    {
+        if (transplantPlan is not { } plan)
+            return;
+        ClosePopover();
+        notice = null;
+        picked.Clear();
+        foreach (var id in plan.Proposal.PlantIds)
+            picked.Add(id);
+        highlightKey = null;
+        selecting = true;
+    }
 
     private string SelectAllLabel => highlightKey is null
         ? $"Seleccionar todas ({Selectable().Count})"
@@ -669,9 +775,9 @@ else
     /// <summary>Cuántas de las marcadas van a Baby Leaf y cuántas a adultas, por su estado (como lo decide el servicio).</summary>
     private (int BabyLeaf, int Adult) HarvestSplit()
     {
-        var states = overview?.State.Cells
+        var states = overview?.State.AllCells
             .Where(c => c.PlantId is { } id && picked.Contains(id))
-            .Select(c => PlantHarvestRules.DestinationFor(c.CommercialStageName))
+            .Select(c => PlantHarvestRules.DestinationFor(c.CommercialStageName, c.IsAdultRoute))
             .ToList() ?? [];
         var babyLeaf = states.Count(d => d == HarvestDestination.BabyLeaf);
         return (babyLeaf, states.Count - babyLeaf);
@@ -695,6 +801,20 @@ else
         try
         {
             var ids = picked.ToList();
+            if (action == BatchAction.Transplant)
+            {
+                var moved = await PlantTransplant.TransplantAsync(lotId, ids, user);
+                if (!moved.Succeeded)
+                {
+                    batchError = string.Join(" ", moved.Errors);
+                    return;
+                }
+                StopSelecting();
+                notice = $"Se trasplantaron {LotFormat.Plants(moved.Transplanted)} a {string.Join(", ", moved.Circuits)}.";
+                await ReloadAfterPlantChangeAsync();
+                return;
+            }
+
             var result = action == BatchAction.Harvest
                 ? await PlantLifecycle.HarvestPlantsAsync(lotId, ids)
                 : await PlantLifecycle.DiscardPlantsAsync(lotId, ids, string.IsNullOrWhiteSpace(batchReason) ? null : batchReason.Trim());
@@ -706,7 +826,7 @@ else
         }
         catch (Exception ex)
         {
-            batchError = $"No se pudo {(action == BatchAction.Harvest ? "cosechar" : "descartar")}: {ex.Message}";
+            batchError = $"No se pudo {(action == BatchAction.Transplant ? "trasplantar" : action == BatchAction.Harvest ? "cosechar" : "descartar")}: {ex.Message}";
         }
         finally
         {
@@ -745,12 +865,13 @@ else
         try
         {
             await operation();
-            var position = selectedPosition;
+            var position = selected;
             notice = null;
             await ReloadAfterPlantChangeAsync();
-            if (position is { } pos && overview?.State.Cells.FirstOrDefault(c => c.Row == pos.Row && c.Column == pos.Column) is { } cell)
+            if (position is { } pos
+                && overview?.State.AllCells.FirstOrDefault(c => c.CircuitId == pos.Circuit && c.Row == pos.Row && c.Column == pos.Column) is { } cell)
             {
-                selectedPosition = pos;
+                selected = pos;
                 detail = await LoadDetailAsync(cell);
             }
         }
