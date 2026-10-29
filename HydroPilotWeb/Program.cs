@@ -49,6 +49,7 @@ builder.Services.AddScoped<LotCreationService>();
 builder.Services.AddScoped<LotCommentService>();
 builder.Services.AddScoped<RecentVisitService>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Sensors.SensorService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Notifications.AlertHistoryService>();
 builder.Services.AddScoped<GreenhouseDashboardService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<BabyLeafOutlookService>();

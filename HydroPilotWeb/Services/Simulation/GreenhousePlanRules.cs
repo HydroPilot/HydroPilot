@@ -29,7 +29,8 @@ public sealed record GreenhouseCircuits(int DenseHoles, int AdultHoles, decimal 
 
 /// <summary>
 /// Una distribución del invernadero por mes: circuitos densos y de Adultas (los que entran en la superficie y los que se
-/// llenan), plantas de cada destino, las que se descartan por no tener lugar y el margen (ventas − gastos del sistema).
+/// llenan), plantas de cada destino, las que se descartan por no tener lugar, el margen (ventas − gastos del sistema) y
+/// cuántos lotes se hacen (uno por ciclo de cada denso).
 /// </summary>
 public sealed record GreenhouseOption(
     int DenseCircuits,
@@ -39,7 +40,8 @@ public sealed record GreenhouseOption(
     decimal BabyLeafPerMonth,
     decimal AdultsPerMonth,
     decimal UnplacedPerMonth,
-    decimal MarginPerMonth);
+    decimal MarginPerMonth,
+    decimal LotsPerMonth);
 
 /// <summary>
 /// Plan del invernadero (lógica pura): cuántos circuitos densos y cuántos de Adultas conviene tener en una superficie.
@@ -62,7 +64,8 @@ public static class GreenhousePlanRules
     /// <param name="babyLeafCap">Baby Leaf que se pueden vender por mes (plantas); null = sin tope.</param>
     public static GreenhouseOption Evaluate(GreenhouseCycle c, GreenhouseCircuits k, int dense, int adult, decimal? babyLeafCap = null)
     {
-        var seeded = c.DenseCycleDays > 0 ? dense * k.DenseHoles * DaysPerMonth / c.DenseCycleDays : 0m;
+        var lots = c.DenseCycleDays > 0 ? dense * DaysPerMonth / c.DenseCycleDays : 0m;
+        var seeded = lots * k.DenseHoles;
         var apt = seeded * c.BabyLeafShare;
         var sellable = babyLeafCap is { } cap ? Math.Min(apt, Math.Max(0m, cap)) : apt;
         var candidates = seeded * c.RescueShare + apt - sellable; // no llegan a Baby Leaf o pasan el tope
@@ -85,7 +88,8 @@ public static class GreenhousePlanRules
             Math.Round(babyLeaf, 0),
             Math.Round(transplanted * (1m - c.AdultLossRate), 0),
             Math.Round(unplaced, 0),
-            Math.Round(margin, 0));
+            Math.Round(margin, 0),
+            Math.Round(lots, 1));
     }
 
     /// <summary>Cada cantidad de circuitos densos que entra en la superficie, con el resto en circuitos de Adultas.</summary>

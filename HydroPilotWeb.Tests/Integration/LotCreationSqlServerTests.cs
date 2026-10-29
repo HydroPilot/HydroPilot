@@ -127,7 +127,7 @@ public class LotCreationSqlServerTests
         Assert.Equal(pi.Id, circuit.NodeId);
         Assert.Equal(300m, circuit.ReservoirLiters);
         Assert.Equal(2, circuit.Sensors.Count);
-        Assert.Equal(4, circuit.Actuators.Count);
+        Assert.Equal(5, circuit.Actuators.Count);
         Assert.All(circuit.Sensors, s => Assert.Equal(pi.Id, s.NodeId));
         Assert.All(circuit.Actuators, a => Assert.Equal(pi.Id, a.NodeId));
     }

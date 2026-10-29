@@ -33,6 +33,14 @@ public static class NutrientConsumptionRules
     public const decimal SolutionAMlPerLiterAdult = 4.5m;
     public const decimal SolutionBMlPerLiterAdult = 1.75m;
 
+    /// <summary>
+    /// Parte de Solución A en lo que se dosifica (A ÷ (A + B)), para el control de CE: en Adultas, la de adultas
+    /// (4,5 : 1,75 → 72 %); en el denso, la de la ventana Baby Leaf (2,75 : 1,1 → 71 %; la de crecimiento es casi igual, 73 %).
+    /// </summary>
+    public static decimal SolutionAShare(bool adult) => adult
+        ? Math.Round(SolutionAMlPerLiterAdult / (SolutionAMlPerLiterAdult + SolutionBMlPerLiterAdult), 4)
+        : Math.Round(SolutionAMlPerLiterBabyLeaf / (SolutionAMlPerLiterBabyLeaf + SolutionBMlPerLiterBabyLeaf), 4);
+
     /// <summary>Plantas que consumen desde la siembra hasta el día anterior a <paramref name="Until"/> (corte, descarte o pérdida).</summary>
     public sealed record PlantSpan(int Plants, DateOnly Until);
 

@@ -101,7 +101,8 @@ public sealed class NutrientTank
             case "ph-up":
                 _mixing.Add(new Mix { Ph = PhUpPerMlPerLiter * amount / Liters });
                 break;
-            case "nutrient":
+            case "nutrient":   // Solución A
+            case "nutrient-b": // Solución B
                 _mixing.Add(new Mix
                 {
                     Salts = EcPerNutrientMlPerLiter * amount,

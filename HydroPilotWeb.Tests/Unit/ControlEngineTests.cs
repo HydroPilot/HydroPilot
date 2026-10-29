@@ -86,7 +86,7 @@ public class ControlEngineTests
         Assert.Equal(104m, RawDose(ControlContract.KindPhDown, 6.52m, 6.0m, 500m, 2.5m, 0.2m));
         Assert.Equal(100m, RawDose(ControlContract.KindPhUp, 5.5m, 6.0m, 500m, 2.5m, 0.2m));
         // CE 1,1 → 1,5 con 0,3 por ml/L: 0,4 × 500 ÷ 0,3 ≈ 666,67 ml.
-        Assert.Equal(666.67m, Math.Round(RawDose(ControlContract.KindNutrient, 1.1m, 1.5m, 500m, 0.3m, 0.2m)!.Value, 2));
+        Assert.Equal(666.67m, Math.Round(RawDose(ControlContract.KindNutrientA, 1.1m, 1.5m, 500m, 0.3m, 0.2m)!.Value, 2));
         // CE 2,0 → 1,7 con agua de 0,2: 500 × 0,3 ÷ 1,5 = 100 L.
         Assert.Equal(100m, RawDose(ControlContract.KindWater, 2.0m, 1.7m, 500m, 0m, 0.2m));
         // El agua no puede bajar la CE por debajo de la del agua de red.
@@ -98,7 +98,7 @@ public class ControlEngineTests
     {
         Assert.Equal(-0.25m, ExpectedEffect(ControlContract.KindPhDown, 50m, 500m, 2.5m, 6.8m, 0.2m));
         Assert.Equal(0.25m, ExpectedEffect(ControlContract.KindPhUp, 50m, 500m, 2.5m, 5.2m, 0.2m));
-        Assert.Equal(0.3m, ExpectedEffect(ControlContract.KindNutrient, 500m, 500m, 0.3m, 1.1m, 0.2m));
+        Assert.Equal(0.3m, ExpectedEffect(ControlContract.KindNutrientA, 500m, 500m, 0.3m, 1.1m, 0.2m));
         Assert.Equal(-0.1636m, ExpectedEffect(ControlContract.KindWater, 50m, 500m, 0m, 2.0m, 0.2m));
     }
 
@@ -152,7 +152,49 @@ public class ControlEngineTests
     public void CE_alta_se_baja_con_agua_y_baja_con_nutrientes()
     {
         Assert.Equal(ControlContract.KindWater, Decide(Tank(ec: Out(2.0m))).Pump!.Kind);
-        Assert.Equal(ControlContract.KindNutrient, Decide(Tank(ec: Out(1.0m))).Pump!.Kind);
+        Assert.Equal(ControlContract.KindNutrientA, Decide(Tank(ec: Out(1.0m))).Pump!.Kind);
+    }
+
+    [Fact]
+    public void Sube_la_CE_con_A_y_B_por_separado_en_la_proporcion_de_la_etapa()
+    {
+        // Proporción por defecto: la de la ventana Baby Leaf, 2,75 : 1,1 → 71,4 % de A.
+        Assert.Equal(ControlContract.KindNutrientA, Decide(WithB(Tank(ec: Out(1.0m)))).Pump!.Kind);                        // nada en 24 h: A
+        Assert.Equal(ControlContract.KindNutrientB, Decide(WithB(Tank(ec: Out(1.0m)), usedA: 300m)).Pump!.Kind);           // A adelante: B
+        Assert.Equal(ControlContract.KindNutrientA, Decide(WithB(Tank(ec: Out(1.0m)), usedA: 300m, usedB: 150m)).Pump!.Kind); // B se pasó: A
+    }
+
+    [Fact]
+    public void A_cada_bomba_le_toca_su_parte_de_la_mezcla()
+    {
+        var pumpA = new Pump(3, ControlContract.KindNutrientA, "Solución A", ControlContract.UnitMl, 500m, 2_000m, true, 300m, 0.3m);
+        var pumpB = new Pump(5, ControlContract.KindNutrientB, "Solución B", ControlContract.UnitMl, 200m, 800m, true, 0m, 0.3m);
+
+        // 70 % de A: con 100 ml más de mezcla, la B pone el 30 % de 400 (lo que ya puso la A más la mezcla).
+        Assert.Equal(120m, new NutrientChoice(pumpB, 0.7m, 300m, 0m, 0.3m).Part(100m));
+        // Con una sola bomba, toda la mezcla.
+        Assert.Equal(100m, new NutrientChoice(pumpA, 1m, 300m, 50m, 0.3m).Part(100m));
+        // Efecto de la mezcla: 70 % × 0,3 + 30 % × 0,2.
+        Assert.Equal(0.27m, ChooseNutrient([pumpA with { UsedLast24h = 0m }, pumpB with { Effect = 0.2m }], 0.7m)!.MixEffect);
+    }
+
+    [Fact]
+    public void Si_la_B_esta_apagada_o_la_Pi_la_rechazo_la_A_va_sola()
+    {
+        Assert.Equal(ControlContract.KindNutrientA, Decide(WithB(Tank(ec: Out(1.0m)), usedA: 300m, activeB: false)).Pump!.Kind);
+        Assert.Equal(ControlContract.KindNutrientA, Decide(WithB(Tank(ec: Out(1.0m)), usedA: 300m, rejectedB: true)).Pump!.Kind);
+
+        var pumps = WithB(Tank(), rejectedA: true, rejectedB: true).Pumps;
+        Assert.NotNull(ChooseNutrient(pumps, 0.7m)); // la Pi rechazó las dos: se reintenta igual
+    }
+
+    [Fact]
+    public void El_agua_no_va_despues_de_una_dosis_de_B_y_A_y_B_no_se_oponen()
+    {
+        Assert.True(Opposes(ControlContract.KindNutrientB, ControlContract.KindWater));
+        Assert.True(Opposes(ControlContract.KindWater, ControlContract.KindNutrientA));
+        Assert.False(Opposes(ControlContract.KindNutrientA, ControlContract.KindNutrientB));
+        Assert.False(Opposes(ControlContract.KindPhUp, ControlContract.KindNutrientB));
     }
 
     [Fact]
@@ -239,7 +281,7 @@ public class ControlEngineTests
         Assert.Equal((Outcome.Paused, ControlContract.ParameterPh), (paused.Outcome, paused.Parameter));
 
         var other = Decide(Tank(ph: Out(6.9m) with { Paused = true }, ec: Out(1.0m)));
-        Assert.Equal(ControlContract.KindNutrient, other.Pump!.Kind);
+        Assert.Equal(ControlContract.KindNutrientA, other.Pump!.Kind);
     }
 
     [Fact]
@@ -362,6 +404,20 @@ public class ControlEngineTests
         Assert.Equal(Codes.PiSilent, decision.Code);
     }
 
+    /// <summary>El tanque con la Solución B (las demás pruebas usan solo la A, como antes de 2026-10-28).</summary>
+    private static Input WithB(Input input, decimal usedA = 0m, decimal usedB = 0m, bool activeB = true,
+        bool rejectedA = false, bool rejectedB = false) =>
+        input with
+        {
+            Pumps =
+            [
+                .. input.Pumps.Select(p => p.Kind == ControlContract.KindNutrientA
+                    ? p with { UsedLast24h = usedA, RecentlyRejected = rejectedA }
+                    : p),
+                new(5, ControlContract.KindNutrientB, "Solución B", ControlContract.UnitMl, 200m, 800m, activeB, usedB, 0.3m, rejectedB),
+            ],
+        };
+
     private static Input Tank(
         string mode = ControlContract.ModeAuto,
         Magnitude? ph = null,
@@ -386,7 +442,7 @@ public class ControlEngineTests
             [
                 new(1, ControlContract.KindPhUp, "pH Up", ControlContract.UnitMl, 50m, 250m, true, 0m, 2.5m),
                 new(2, ControlContract.KindPhDown, "pH Down", ControlContract.UnitMl, 50m, 250m, phDownActive, phDownUsed, 2.5m),
-                new(3, ControlContract.KindNutrient, "Nutrientes", ControlContract.UnitMl, 500m, 2_000m, true, 0m, 0.3m),
+                new(3, ControlContract.KindNutrientA, "Nutrientes", ControlContract.UnitMl, 500m, 2_000m, true, 0m, 0.3m),
                 new(4, ControlContract.KindWater, "Agua", ControlContract.UnitLiters, 50m, 150m, true, waterUsed, null),
             ],
             inFlight,

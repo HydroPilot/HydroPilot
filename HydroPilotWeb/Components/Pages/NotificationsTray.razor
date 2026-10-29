@@ -22,6 +22,23 @@
                     Marcar todas como leídas
                 </button>
             }
+            @if (_notifications.Count > 0)
+            {
+                @* No se puede deshacer: pide confirmar en el mismo lugar. *@
+                @if (_confirmDeleteAll)
+                {
+                    <button class="btn btn-danger" @onclick="DeleteAllAsync" disabled="@_busy">
+                        Eliminar las @_notifications.Count
+                    </button>
+                    <button class="btn btn-outline" @onclick="() => _confirmDeleteAll = false" disabled="@_busy">Cancelar</button>
+                }
+                else
+                {
+                    <button class="btn btn-outline btn-outline--danger" @onclick="() => _confirmDeleteAll = true" disabled="@_isLoading">
+                        Eliminar todas
+                    </button>
+                }
+            }
             <NavLink class="btn btn-outline" href="/settings/notifications">
                 <span>⚙</span> Ajustes
             </NavLink>
@@ -95,7 +112,7 @@
                             }
 
                             <span class="meta-tag">
-                                <span>Tipo:</span> @item.Type
+                                <span>Tipo:</span> @AlertLabels.Type(item.Type)
                             </span>
 
                             @if (item.IsResolved)
@@ -114,6 +131,10 @@
                                 Marcar leída
                             </button>
                         }
+                        <button class="btn btn-sm btn-subtle btn-subtle--danger" @onclick="() => DeleteAsync(item.Id)" disabled="@_busy"
+                                title="Eliminar de la bandeja (la alerta sigue para los demás)">
+                            Eliminar
+                        </button>
                     </div>
                 </div>
             }
@@ -355,6 +376,29 @@
         color: #ffffff;
     }
 
+    .btn-subtle--danger:hover,
+    .btn-outline--danger:hover {
+        background: rgba(224, 79, 43, 0.14);
+        border-color: #e04f2b;
+        color: #ff8a70;
+    }
+
+    .btn-danger {
+        background: #c2410c;
+        color: #ffffff;
+    }
+
+    .btn-danger:hover {
+        background: #9a3412;
+    }
+
+    .notification-card__actions {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+    }
+
     .empty-state {
         text-align: center;
         padding: 60px 20px;
@@ -400,6 +444,8 @@
     private List<NotificationItemDto> _notifications = new();
     private FilterMode _filter = FilterMode.All;
     private bool _isLoading = true;
+    private bool _busy;
+    private bool _confirmDeleteAll;
     private int _userId = 0;
 
     private List<NotificationItemDto> FilteredNotifications => _filter switch
@@ -458,5 +504,34 @@
     {
         await NotificationService.MarkAllAsReadAsync(_userId);
         _notifications = _notifications.Select(n => n with { IsRead = true }).ToList();
+    }
+
+    private async Task DeleteAsync(int deliveryId)
+    {
+        _busy = true;
+        try
+        {
+            await NotificationService.DeleteAsync(deliveryId, _userId);
+            _notifications.RemoveAll(n => n.Id == deliveryId);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAllAsync()
+    {
+        _busy = true;
+        try
+        {
+            await NotificationService.DeleteAllAsync(_userId);
+            _notifications.Clear();
+            _confirmDeleteAll = false;
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 }

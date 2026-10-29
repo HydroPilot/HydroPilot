@@ -37,7 +37,7 @@ public sealed class RecordingControlSink : IControlEventSink
 /// <summary>
 /// Fixture del control de pH/CE: base SQL limpia (drop + migrate con las MIGRACIONES REALES), un cultivo con
 /// pH 5,5–6,5 (obj. 6,0), la etapa "Crecimiento vegetativo" (CE 1,2–1,8, obj. 1,5) aplicada a un lote activo,
-/// un nodo asignado al lote con sus 4 bombas (seed real) y lecturas recientes de pH 6,8 y CE 1,48.
+/// un nodo asignado al lote con sus 5 bombas (seed real) y lecturas recientes de pH 6,8 y CE 1,48.
 /// Requiere SQL Server local (SETUP.md) o HYDROPILOT_TEST_SQL.
 /// </summary>
 public sealed class ControlSqlFixture : IAsyncLifetime

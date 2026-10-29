@@ -55,7 +55,10 @@ else
             </section>
 
             <section class="lot-card gh-list-card gh-list-card--half" aria-labelledby="gh-alerts-title">
-                <h3 class="gh-card__title" id="gh-alerts-title">Alertas</h3>
+                <div class="gh-card__head">
+                    <h3 class="gh-card__title" id="gh-alerts-title">Alertas</h3>
+                    <a class="lot-link" href="alertas">Ver todas</a>
+                </div>
                 @if (data.Alerts.Count == 0)
                 {
                     <p class="gh-empty">Sin alertas.</p>

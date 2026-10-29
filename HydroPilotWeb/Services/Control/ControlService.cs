@@ -979,7 +979,9 @@ public sealed class ControlService
                 a.Id, a.Kind, a.Name, a.Unit, a.MaxPerCommand, a.MaxPerDay, a.IsActive,
                 commands.Where(c => c.Command.ActuatorId == a.Id && c.Command.CreatedAtUtc >= day)
                     .Sum(c => ControlRules.UsedAmount(c.Command.Status, c.Command.Amount, c.Command.ExecutedAmount)),
-                a.EffectPerUnit))
+                a.EffectPerUnit,
+                commands.Where(c => c.Command.ActuatorId == a.Id).MaxBy(c => c.Command.CreatedAtUtc)?.Command.Status
+                    == ControlContract.StatusRejected))
             .ToList();
         var applied = commands
             .Where(c => c.Command.CompletedAtUtc is not null && WasApplied(c.Command))
@@ -999,7 +1001,9 @@ public sealed class ControlService
             commands.Any(c => ControlRules.IsInFlight(c.Command.Status)),
             applied,
             EngineSettings with { PollStaleMinutes = PiContactStaleMinutes(node) },
-            SensorIssuesFor(faults, phReadings, ecReadings, node, nowUtc));
+            SensorIssuesFor(faults, phReadings, ecReadings, node, nowUtc),
+            // A : B de la etapa: la de adultas en un circuito de Adultas, la de la ventana Baby Leaf en el denso.
+            HydroPilotWeb.Services.Simulation.NutrientConsumptionRules.SolutionAShare(circuit.Kind == CircuitKinds.Adult));
 
         return new CircuitSnapshot(circuit, node, lot, actuators, commands, input, recipe, ph, ec, faults);
     }

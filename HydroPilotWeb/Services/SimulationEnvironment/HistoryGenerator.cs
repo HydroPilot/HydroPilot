@@ -269,7 +269,7 @@ public sealed partial class HistoryGenerator
                 run.ArmedIncident = (ControlContract.KindPhDown, t.AddDays(9));
                 break;
             case Incident.NutrientEmpty:
-                run.ArmedIncident = (ControlContract.KindNutrient, t.AddDays(12));
+                run.ArmedIncident = (ControlContract.KindNutrientA, t.AddDays(12));
                 break;
         }
 

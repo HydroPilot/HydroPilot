@@ -48,21 +48,21 @@
                 @if (plan.Best is { } best)
                 {
                     <div class="mini-grid">
-                        <div class="mini-card plan-card--best">
+                        <div class="mini-card mini-card--good">
                             <span>Conviene</span>
                             <strong>@Layout(best.DenseCircuits, best.AdultCircuitsUsed)</strong>
-                            <small>@Money(best.MarginPerMonth) por mes</small>
+                            <small>@Money(best.MarginPerMonth) por mes · @Lots(best.LotsPerMonth)</small>
                         </div>
                         @if (plan.Current is { } current)
                         {
                             <div class="mini-card">
                                 <span>Hoy</span>
                                 <strong>@Layout(current.DenseCircuits, current.AdultCircuits)</strong>
-                                <small>@Money(current.MarginPerMonth) por mes</small>
+                                <small>@Money(current.MarginPerMonth) por mes · @Lots(current.LotsPerMonth)</small>
                             </div>
-                            <div class="mini-card">
+                            <div class="mini-card plan-card--diff">
                                 <span>Diferencia</span>
-                                <strong class="@(best.MarginPerMonth - current.MarginPerMonth > 0 ? "text-success" : null)">@SignedMoney(best.MarginPerMonth - current.MarginPerMonth)</strong>
+                                <strong class="@(best.MarginPerMonth - current.MarginPerMonth > 0 ? "plan-diff--up" : null)">@SignedMoney(best.MarginPerMonth - current.MarginPerMonth)</strong>
                                 <small>por mes</small>
                             </div>
                         }
@@ -110,6 +110,7 @@
                                 <tr>
                                     <th>Densos</th>
                                     <th title="Los que se llenan (de los que entran)">De Adultas</th>
+                                    <th title="Uno por ciclo de cada circuito denso">Lotes por mes</th>
                                     <th>Baby Leaf (kg/mes)</th>
                                     <th>Adultas (kg/mes)</th>
                                     <th title="No se venden como Baby Leaf (no llegan o pasan el tope) y no entran en Adultas">Descartadas por mes</th>
@@ -128,6 +129,7 @@
                                             }
                                         </td>
                                         <td>@option.AdultCircuitsUsed @(option.AdultCircuitsUsed < option.AdultCircuits ? $"(de {option.AdultCircuits})" : null)</td>
+                                        <td>@LotFormat.Num(option.LotsPerMonth)</td>
                                         <td>@Kg(option.BabyLeafPerMonth, plan.BabyLeafGrams)</td>
                                         <td>@Kg(option.AdultsPerMonth, plan.AdultGrams)</td>
                                         <td>@LotFormat.Num(option.UnplacedPerMonth)</td>
@@ -159,7 +161,8 @@
     .plan-form { display: flex; flex-direction: column; gap: 8px; }
     .plan-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #5b6b7b; margin-top: 4px; }
     .plan-results { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
-    .plan-card--best { border-color: var(--accent); }
+    .plan-card--diff strong { font-size: 1.75rem; }
+    .plan-card--diff strong.plan-diff--up { color: #4ade80; } /* verde más claro que text-success, para que destaque */
     .sim-section { margin: 22px 0 10px; font-size: 1rem; font-weight: 700; }
 </style>
 
@@ -198,6 +201,8 @@
     private string Money(decimal value) => LotFormat.Money(value, Currency);
 
     private string SignedMoney(decimal value) => value > 0 ? "+" + Money(value) : Money(value);
+
+    private static string Lots(decimal lots) => $"{LotFormat.Num(lots)} {(lots == 1m ? "lote" : "lotes")}";
 
     private static string Kg(decimal plants, decimal grams) =>
         Math.Round(plants * grams / 1000m, 1).ToString("#,##0.#", LotFormat.Culture);

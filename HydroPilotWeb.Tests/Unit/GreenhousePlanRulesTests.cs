@@ -31,6 +31,7 @@ public class GreenhousePlanRulesTests
         Assert.Equal(110_600m, option.MarginPerMonth);  // 120 × 600 + 40 × 1000 − 20 × 50 − 200 × 2
         Assert.Equal(2, option.AdultCircuitsUsed);
         Assert.Equal(2.87m, option.AreaM2);
+        Assert.Equal(1m, option.LotsPerMonth);          // un denso, un ciclo por mes
     }
 
     [Fact]
@@ -61,6 +62,7 @@ public class GreenhousePlanRulesTests
         var options = GreenhousePlanRules.Options(Cycle(), Circuits, 3m);
 
         Assert.Equal([(1, 2), (2, 1), (3, 0)], options.Select(o => (o.DenseCircuits, o.AdultCircuits)));
+        Assert.Equal([1m, 2m, 3m], options.Select(o => o.LotsPerMonth));
         Assert.Equal(3, GreenhousePlanRules.Best(options)!.DenseCircuits); // más densos: cada uno deja más que uno de Adultas
         Assert.Equal(68_600m, GreenhousePlanRules.DenseCircuitPerMonth(Cycle(), Circuits)); // 200 × (0,6 × 600 − 0,3 × 50 − 2)
         Assert.Equal(21_000m, GreenhousePlanRules.AdultCircuitPerMonth(Cycle(), Circuits)); // 20 × (1000 + 50)

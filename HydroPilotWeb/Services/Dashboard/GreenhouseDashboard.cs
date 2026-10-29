@@ -38,7 +38,7 @@ public sealed record GreenhouseDashboard(
     IReadOnlyList<DashboardStageCount> Stages,
     int TotalPlants,
     int ExpectedBabyLeafPlants,
-    IReadOnlyList<DashboardAlertItem> Alerts,
+    IReadOnlyList<DashboardAlertItem> Alerts, // las abiertas y las últimas resueltas (GreenhouseDashboardService.AlertsShown)
     IReadOnlyList<DashboardHarvestItem> Harvests,
     IReadOnlyList<DashboardVisitItem> RecentVisits,
     IReadOnlyList<DashboardSensorCheck> SensorChecks,

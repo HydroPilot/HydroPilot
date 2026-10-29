@@ -18,7 +18,8 @@ namespace HydroPilotWeb.Services.Dashboard;
 /// </summary>
 public class GreenhouseDashboardService
 {
-    public const int ListSize = 30;
+    /// <summary>Alertas del dashboard: todas las abiertas y, si queda lugar, las últimas resueltas hasta este total.</summary>
+    public const int AlertsShown = 5;
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly LotOverviewService _lots;
@@ -129,17 +130,22 @@ public class GreenhouseDashboardService
             hasIntervals);
     }
 
+    /// <summary>
+    /// Las abiertas siempre (aunque sean más de <see cref="AlertsShown"/>), más nuevas primero; si queda lugar, las últimas
+    /// resueltas hasta completar <see cref="AlertsShown"/>. Todas están en la bandeja de notificaciones.
+    /// </summary>
     private static async Task<IReadOnlyList<DashboardAlertItem>> AlertsAsync(
         HydroPilotDbContext context, Func<DateTime, DateTime> local, CancellationToken ct)
     {
-        var rows = await context.NotificationAlerts
+        var alerts = context.NotificationAlerts
             .AsNoTracking()
             .Where(a => a.Type != NotificationTypes.PruebaSistema)
             .OrderByDescending(a => a.CreatedAtUtc)
             .ThenByDescending(a => a.Id)
-            .Take(ListSize)
-            .Select(a => new { a.Id, a.Type, a.Severity, a.Title, a.LotId, a.Fingerprint, a.CreatedAtUtc, a.IsResolved })
-            .ToListAsync(ct);
+            .Select(a => new { a.Id, a.Type, a.Severity, a.Title, a.LotId, a.Fingerprint, a.CreatedAtUtc, a.IsResolved });
+        var rows = await alerts.Where(a => !a.IsResolved).ToListAsync(ct);
+        if (rows.Count < AlertsShown)
+            rows.AddRange(await alerts.Where(a => a.IsResolved).Take(AlertsShown - rows.Count).ToListAsync(ct));
 
         // Error de sensor de un circuito: el link va a Optimización con ese circuito (sale de la huella de la alerta).
         return rows

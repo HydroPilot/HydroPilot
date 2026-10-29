@@ -54,7 +54,7 @@ public sealed record CircuitResult(bool Succeeded, IReadOnlyList<string> Errors)
 
 /// <summary>
 /// Ajustes &gt; Circuitos: alta y edición de los circuitos de cada invernadero. Al crear uno se generan sus sensores
-/// de pH y CE y sus 4 bombas (<see cref="CircuitSetup"/>). Todos los ven; solo Administrador y Productor los editan.
+/// de pH y CE y sus 5 bombas (<see cref="CircuitSetup"/>). Todos los ven; solo Administrador y Productor los editan.
 /// </summary>
 public sealed class CircuitService
 {
@@ -122,7 +122,7 @@ public sealed class CircuitService
         return await CircuitSetup.NextNameAsync(context, greenhouseId, ct);
     }
 
-    /// <summary>Alta: el circuito en la Pi del invernadero, con sus sensores de pH y CE y sus 4 bombas.</summary>
+    /// <summary>Alta: el circuito en la Pi del invernadero, con sus sensores de pH y CE y sus 5 bombas.</summary>
     public async Task<CircuitResult> CreateAsync(int greenhouseId, string? name, decimal liters, ClaimsPrincipal user,
         string kind = CircuitKinds.Dense, int gridRows = Circuit.DefaultGridRows, int gridColumns = Circuit.DefaultGridColumns,
         CancellationToken ct = default)

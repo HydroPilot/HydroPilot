@@ -246,7 +246,7 @@ public class SimulationEnvironmentTests : IClassFixture<ShortHistory>
         tank.Step(600, Uptake.None);
         Assert.Equal(6.28, tank.Ph, 2);
 
-        tank.Dose(ControlContract.KindNutrient, 200); // 0,4 ml/L × 0,26 = +0,104 CE
+        tank.Dose(ControlContract.KindNutrientA, 200); // 0,4 ml/L × 0,26 = +0,104 CE
         tank.Step(600, Uptake.None);
         Assert.Equal(1.604, tank.Ec, 3);
 

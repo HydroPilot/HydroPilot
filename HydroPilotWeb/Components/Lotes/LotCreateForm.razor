@@ -59,8 +59,8 @@
     </div>
     <div class="lot-editor__field">
         <label class="form-label mb-1" for="new-lot-sowing">Fecha de siembra</label>
-        <input id="new-lot-sowing" type="date" class="form-control" max="@Today.ToString("yyyy-MM-dd")"
-               @bind="sowingDate" />
+        <HpDateInput Id="new-lot-sowing" Value="sowingDate" ValueChanged="d => sowingDate = d ?? Today" Max="Today"
+                     Clearable="false" />
     </div>
 </div>
 

@@ -1,0 +1,234 @@
+@page "/alertas"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@using HydroPilotWeb.Services.Notifications
+@inject AlertHistoryService AlertHistory
+
+<PageTitle>Alertas - HydroPilot</PageTitle>
+
+@* Historial de todas las alertas del invernadero (de los lotes, la Pi, los sensores y el control), abiertas y resueltas,
+   con filtros. Solo lectura: la bandeja de cada usuario (marcar leídas, eliminar) es /notifications.
+   Lógica: notas/ux/logica-vista-alertas.md *@
+<section class="settings-layout">
+    <div class="settings-stack">
+        @if (error is not null)
+        {
+            <div class="alert alert-danger">@error</div>
+        }
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Invernadero</span>
+                    <h3>Alertas</h3>
+                </div>
+                @if (result is { OpenCount: > 0 } open)
+                {
+                    <span class="lot-chip lot-chip--danger">@LotFormat.Count(open.OpenCount, "abierta", "abiertas")</span>
+                }
+            </div>
+
+            <div class="hp-grid-filters">
+                <input type="search" class="form-control form-control-sm" placeholder="Buscar en la alerta"
+                       aria-label="Buscar en el título o el mensaje" @bind="text" @bind:after="SearchAsync" />
+                <select class="form-select form-select-sm" aria-label="Tipo" @bind="type" @bind:after="SearchAsync">
+                    <option value="">Todos los tipos</option>
+                    @foreach (var kind in AlertLabels.Types)
+                    {
+                        <option value="@kind">@AlertLabels.Type(kind)</option>
+                    }
+                </select>
+                <select class="form-select form-select-sm" aria-label="Severidad" @bind="severity" @bind:after="SearchAsync">
+                    <option value="">Todas las severidades</option>
+                    @foreach (var level in AlertLabels.Severities)
+                    {
+                        <option value="@level">@AlertLabels.Severity(level)</option>
+                    }
+                </select>
+                <select class="form-select form-select-sm" aria-label="Estado" @bind="state" @bind:after="SearchAsync">
+                    <option value="">Abiertas y resueltas</option>
+                    <option value="open">Abiertas</option>
+                    <option value="resolved">Resueltas</option>
+                </select>
+                <select class="form-select form-select-sm" aria-label="Lote" @bind="lotId" @bind:after="SearchAsync">
+                    <option value="">Todos los lotes</option>
+                    @foreach (var lot in lots)
+                    {
+                        <option value="@lot.Id">@lot.Name</option>
+                    }
+                </select>
+                <HpDateInput @bind-Value="from" @bind-Value:after="SearchAsync" Max="to" Small="true"
+                             Placeholder="Desde" AriaLabel="Desde" />
+                <HpDateInput @bind-Value="to" @bind-Value:after="SearchAsync" Min="from" Small="true"
+                             Placeholder="Hasta" AriaLabel="Hasta" />
+            </div>
+
+            @if (result is null)
+            {
+                <div class="text-muted small">Cargando…</div>
+            }
+            else if (result.Total == 0)
+            {
+                <div class="text-muted small">Ninguna alerta con esos filtros.</div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-sm hp-table mb-0 alerts-table">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Alerta</th>
+                                <th>Tipo</th>
+                                <th>Severidad</th>
+                                <th>Lote</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var alert in result.Rows)
+                            {
+                                <tr class="@(alert.IsResolved ? "alerts-table__resolved" : null)">
+                                    <td class="text-nowrap">@alert.CreatedAtLocal.ToString("dd/MM/yy HH:mm", LotFormat.Culture)</td>
+                                    <td title="@alert.Message"><a class="alerts-table__title" href="@alert.Link">@alert.Title</a></td>
+                                    <td class="text-nowrap">@AlertLabels.Type(alert.Type)</td>
+                                    <td class="text-nowrap">
+                                        <span class="gh-dot gh-dot--@SeverityClass(alert.Severity)" aria-hidden="true"></span>
+                                        @AlertLabels.Severity(alert.Severity)
+                                    </td>
+                                    <td class="text-nowrap">@(alert.LotName ?? "—")</td>
+                                    <td class="text-nowrap">
+                                        @if (alert.IsResolved)
+                                        {
+                                            <span class="lot-chip lot-chip--muted"
+                                                  title="@(alert.ResolvedAtLocal is { } at ? $"Resuelta el {at.ToString("dd/MM/yy HH:mm", LotFormat.Culture)}" : null)">Resuelta</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="lot-chip lot-chip--danger">Abierta</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="alerts-pager">
+                    <span class="text-muted small">
+                        @LotFormat.Count(result.Total, "alerta", "alertas") · página @result.Page de @result.Pages
+                    </span>
+                    <button type="button" class="btn btn-sm hp-btn-secondary" disabled="@(result.Page <= 1 || loading)"
+                            @onclick="() => GoAsync(result.Page - 1)">← Anterior</button>
+                    <button type="button" class="btn btn-sm hp-btn-secondary" disabled="@(result.Page >= result.Pages || loading)"
+                            @onclick="() => GoAsync(result.Page + 1)">Siguiente →</button>
+                </div>
+            }
+        </article>
+    </div>
+</section>
+
+<style>
+    .alerts-table td {
+        vertical-align: middle;
+    }
+
+    .alerts-table__resolved {
+        opacity: 0.7;
+    }
+
+    .alerts-table .gh-dot {
+        display: inline-block;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+
+    .alerts-table__title {
+        color: var(--text-primary);
+        font-weight: 650;
+        text-decoration: none;
+    }
+
+    .alerts-table__title:hover {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+
+    .alerts-pager {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+    }
+
+    .alerts-pager .text-muted {
+        margin-right: auto;
+    }
+</style>
+
+@code {
+    private IReadOnlyList<AlertLotOption> lots = [];
+    private AlertHistoryPage? result;
+    private string? error;
+    private bool loading;
+
+    private string text = "";
+    private string type = "";
+    private string severity = "";
+    private string state = "";
+    private string lotId = "";
+    private DateOnly? from;
+    private DateOnly? to;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            lots = await AlertHistory.LotsAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar los lotes: {ex.Message}";
+        }
+        await LoadAsync(1);
+    }
+
+    /// <summary>Cambió un filtro: vuelve a la primera página.</summary>
+    private Task SearchAsync() => LoadAsync(1);
+
+    private Task GoAsync(int page) => LoadAsync(page);
+
+    private async Task LoadAsync(int page)
+    {
+        loading = true;
+        try
+        {
+            result = await AlertHistory.SearchAsync(new AlertFilter(
+                Type: type == "" ? null : type,
+                Severity: severity == "" ? null : severity,
+                Open: state switch { "open" => true, "resolved" => false, _ => null },
+                LotId: int.TryParse(lotId, out var id) ? id : null,
+                From: from,
+                To: to,
+                Text: text,
+                Page: page));
+            error = null;
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar las alertas: {ex.Message}";
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private static string SeverityClass(string severity) => severity switch
+    {
+        Models.Notifications.NotificationSeverities.Critica => "critical",
+        Models.Notifications.NotificationSeverities.Alta => "high",
+        Models.Notifications.NotificationSeverities.Media => "medium",
+        _ => "info"
+    };
+}

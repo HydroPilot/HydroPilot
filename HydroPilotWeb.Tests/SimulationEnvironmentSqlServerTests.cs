@@ -211,7 +211,7 @@ public class SimulationEnvironmentSqlServerTests
         Assert.NotNull(view!.LotId);
         Assert.NotNull(view.Recipe);
         Assert.True(view.Ph.Band.IsDefined && view.Ec.Band.IsDefined);
-        Assert.Equal(4, view.Actuators.Count);
+        Assert.Equal(5, view.Actuators.Count);
         Assert.Contains(view.Actuators, a => a.EffectSamples > 0); // las bombas se calibraron con el historial
 
         // Tendencia de las últimas 24 h: lecturas promediadas, banda del lote y de acción, dosis del motor.

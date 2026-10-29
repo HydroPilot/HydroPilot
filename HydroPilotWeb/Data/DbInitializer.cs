@@ -74,7 +74,7 @@ public static class DbInitializer
 
         var node = context.IotNodes.OrderBy(n => n.Id).First();
 
-        // --- Circuitos: la Pi del invernadero maneja todos (dos para la demo), cada uno con su pH, CE y 4 bombas;
+        // --- Circuitos: la Pi del invernadero maneja todos (dos para la demo), cada uno con su pH, CE y 5 bombas;
         // temperatura y humedad son del invernadero ---
         if (!context.Circuits.Any())
         {
@@ -363,13 +363,17 @@ public static class DbInitializer
     }
 
     /// <summary>
-    /// Las 4 bombas de cada circuito (subir pH, bajar pH, nutrientes, agua) con límites para un tanque de 500 L.
-    /// Solo agrega las que faltan: no pisa límites editados. Las claves técnicas son únicas en la Pi (el primer
-    /// circuito de la Pi usa la clave base y los demás llevan sufijo, como CircuitSetup).
+    /// Las 5 bombas de cada circuito (subir pH, bajar pH, Solución A, Solución B, agua) con límites para un tanque de
+    /// 500 L. Solo agrega las que faltan: no pisa límites editados (así los circuitos de antes de 2026-10-28 reciben su
+    /// Solución B). Las claves técnicas son únicas en la Pi (el primer circuito de la Pi usa la clave base y los demás
+    /// llevan sufijo, como CircuitSetup). La bomba "Nutrientes" de cuando había una sola pasa a llamarse "Solución A".
     /// </summary>
     public static void SeedActuators(HydroPilotDbContext context)
     {
         context.SaveChanges(); // circuitos recién agregados en este arranque necesitan su Id
+
+        foreach (var single in context.Actuators.Where(a => a.Kind == ControlContract.KindNutrientA && a.Name == "Nutrientes").ToList())
+            single.Name = ControlContract.DefaultFor(ControlContract.KindNutrientA)!.Name;
 
         var circuits = context.Circuits.OrderBy(c => c.Id).Select(c => new { c.Id, c.NodeId }).ToList();
         var existing = context.Actuators.Select(a => new { a.CircuitId, a.NodeId, a.Kind, a.TechnicalKey }).ToList();

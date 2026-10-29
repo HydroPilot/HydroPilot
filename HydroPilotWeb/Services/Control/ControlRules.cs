@@ -12,9 +12,11 @@ public static class ControlRules
     /// <summary>Tolerancia sobre la cantidad pedida al informar lo ejecutado (redondeo de la bomba).</summary>
     public const decimal ExecutedTolerance = 1.05m;
 
-    /// <summary>Magnitud que corrige cada actuador: nutrientes y agua mueven la CE; pH Up y pH Down, el pH.</summary>
+    /// <summary>Magnitud que corrige cada actuador: las soluciones A y B y el agua mueven la CE; pH Up y pH Down, el pH.</summary>
     public static string ParameterFor(string kind) =>
-        kind is ControlContract.KindNutrient or ControlContract.KindWater ? ControlContract.ParameterEc : ControlContract.ParameterPh;
+        kind is ControlContract.KindNutrientA or ControlContract.KindNutrientB or ControlContract.KindWater
+            ? ControlContract.ParameterEc
+            : ControlContract.ParameterPh;
 
     /// <summary>Pendiente o entregado: la bomba puede estar por actuar.</summary>
     public static bool IsInFlight(string status) =>

@@ -47,7 +47,7 @@
             @foreach (var dose in Series.Doses)
             {
                 var x = X(dose.AtUtc);
-                var raise = dose.Kind is ControlContract.KindPhUp or ControlContract.KindNutrient;
+                var raise = ControlEngine.Raises(dose.Kind);
                 var y = raise ? H - Bottom - 2 : Top + 2;
                 var applied = dose.Status is ControlContract.StatusExecuted or ControlContract.StatusFailed or ControlContract.StatusUnconfirmed;
                 <g class="ctl-trend__dose @(applied ? null : "ctl-trend__dose--missed")" style="--dose: @Color(dose.Kind)">
@@ -129,7 +129,8 @@
     {
         ControlContract.KindPhUp => "#7c3aed",
         ControlContract.KindPhDown => "#e04f2b",
-        ControlContract.KindNutrient => "#0e9384",
+        ControlContract.KindNutrientA => "#0e9384",
+        ControlContract.KindNutrientB => "#0b6b8a",
         ControlContract.KindWater => "#2f7dd1",
         _ => "#94a3b8",
     };

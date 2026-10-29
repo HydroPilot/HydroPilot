@@ -19,7 +19,7 @@ public static class CircuitKinds
 
 /// <summary>
 /// Circuito hidropónico de un invernadero: tanque y canales físicos, independientes de los otros circuitos, con sus
-/// sensores de pH y CE y sus 4 bombas. Los maneja la Pi del invernadero (<see cref="NodeId"/>). Tiene un solo lote en
+/// sensores de pH y CE y sus 5 bombas. Los maneja la Pi del invernadero (<see cref="NodeId"/>). Tiene un solo lote en
 /// curso por vez (<see cref="CircuitAssignment"/>). La temperatura y la humedad no son del circuito: son del
 /// invernadero (sensores sin circuito).
 /// </summary>

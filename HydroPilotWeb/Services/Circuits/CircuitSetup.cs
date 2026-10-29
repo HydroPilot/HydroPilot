@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace HydroPilotWeb.Services.Circuits;
 
 /// <summary>
-/// Alta de la infraestructura de un circuito: el circuito, sus sensores de pH y CE y sus 4 bombas. Las claves técnicas
+/// Alta de la infraestructura de un circuito: el circuito, sus sensores de pH y CE y sus 5 bombas. Las claves técnicas
 /// son únicas en la Pi, que maneja todos los circuitos: el primero usa las claves base ("ph-solucion", "ph-up") y los
 /// siguientes llevan sufijo ("ph-solucion-2", "ph-up-2"). También asegura los sensores de temperatura y humedad del
 /// invernadero (uno de cada uno, sin circuito). La usan el arranque, el entorno de simulación y Ajustes &gt; Circuitos.
@@ -42,7 +42,7 @@ public static class CircuitSetup
         return $"Circuito {n}";
     }
 
-    /// <summary>Crea el circuito (denso o de Adultas, con su grilla) con sus sensores de pH y CE y sus 4 bombas (guarda los cambios).</summary>
+    /// <summary>Crea el circuito (denso o de Adultas, con su grilla) con sus sensores de pH y CE y sus 5 bombas (guarda los cambios).</summary>
     public static async Task<Circuit> CreateAsync(
         HydroPilotDbContext context, int greenhouseId, int nodeId, string name, decimal reservoirLiters, CancellationToken ct,
         string kind = CircuitKinds.Dense, int gridRows = Circuit.DefaultGridRows, int gridColumns = Circuit.DefaultGridColumns)

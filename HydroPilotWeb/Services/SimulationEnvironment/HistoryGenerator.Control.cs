@@ -18,7 +18,8 @@ public sealed partial class HistoryGenerator
     {
         [ControlContract.KindPhUp] = 5,
         [ControlContract.KindPhDown] = 5,
-        [ControlContract.KindNutrient] = 25,
+        [ControlContract.KindNutrientA] = 25,
+        [ControlContract.KindNutrientB] = 25,
         [ControlContract.KindWater] = 2,
     };
 
@@ -95,7 +96,8 @@ public sealed partial class HistoryGenerator
                 .Where(c => c.Command.CompletedAtUtc is { } done && done >= t.AddHours(-24) && WasApplied(c.Command))
                 .Select(c => new ControlEngine.AppliedDose(c.Kind, c.Command.CompletedAtUtc!.Value))
                 .ToList(),
-            EngineSettings);
+            EngineSettings,
+            NutrientShareA: SolutionAShare(bench));
 
         var decision = ControlEngine.Decide(input);
         if (decision.Outcome != ControlEngine.Outcome.Dose)
@@ -112,6 +114,10 @@ public sealed partial class HistoryGenerator
                 p.Actuator.Id, p.Actuator.Kind, p.Actuator.Name, p.Actuator.Unit, p.Actuator.MaxPerCommand, p.Actuator.MaxPerDay,
                 p.Actuator.IsActive, Used24h(bench, p.Actuator.Id, t), p.Effect))
             .ToList();
+
+    /// <summary>A : B de la etapa, como ControlService: la de adultas en Adultas, la de la ventana Baby Leaf en el denso.</summary>
+    private static decimal SolutionAShare(BenchRun bench) =>
+        HydroPilotWeb.Services.Simulation.NutrientConsumptionRules.SolutionAShare(bench.IsAdult);
 
     private static decimal Used24h(BenchRun bench, int actuatorId, DateTime t) =>
         bench.Commands
@@ -154,15 +160,28 @@ public sealed partial class HistoryGenerator
 
         var kind = isPh
             ? value > aim ? ControlContract.KindPhDown : ControlContract.KindPhUp
-            : value < aim ? ControlContract.KindNutrient : ControlContract.KindWater;
+            : value < aim ? ControlContract.KindNutrientA : ControlContract.KindWater;
+
+        // Nutrientes: como el motor, la Solución A o la B (la que quedó atrás de su parte), con la dosis de la mezcla.
+        ControlEngine.NutrientChoice? nutrient = null;
+        if (kind == ControlContract.KindNutrientA)
+        {
+            nutrient = ControlEngine.ChooseNutrient(Pumps(bench, t), SolutionAShare(bench));
+            if (nutrient is null)
+                return;
+            kind = nutrient.Pump.Kind;
+        }
         var pump = bench.Pumps[kind];
-        var effect = pump.Effect ?? ControlContract.DefaultFor(kind)?.Effect ?? 1m;
+        var effect = nutrient?.MixEffect ?? pump.Effect ?? ControlContract.DefaultFor(kind)?.Effect ?? 1m;
         if (ControlEngine.RawDose(kind, value, aim, ControlContract.DefaultReservoirLiters, effect, ControlContract.DefaultSourceWaterEc) is not { } raw
             || raw <= 0m)
             return;
 
         var step = ControlEngine.Step(pump.Actuator.Unit);
-        var amount = Math.Round(raw * (decimal)(0.75 + _rng.NextDouble() * 0.3) / (step * 5), MidpointRounding.AwayFromZero) * step * 5;
+        var guess = raw * (decimal)(0.75 + _rng.NextDouble() * 0.3);
+        if (nutrient is not null)
+            guess = nutrient.Part(guess);
+        var amount = Math.Round(guess / (step * 5), MidpointRounding.AwayFromZero) * step * 5;
         amount = Math.Min(Math.Max(step, amount), pump.Actuator.MaxPerCommand);
         amount = Math.Min(amount, Math.Floor((pump.Actuator.MaxPerDay - Used24h(bench, pump.Actuator.Id, t)) / step) * step);
         if (amount < step)
