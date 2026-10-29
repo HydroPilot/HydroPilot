@@ -28,7 +28,7 @@
                     <option value="">— Escenario libre por cultivo —</option>
                     @foreach (var lot in options.Lots)
                     {
-                        <option value="@lot.Id">@lot.Name (@lot.CropTypeName — @StatusLabel(lot.StatusName))</option>
+                        <option value="@lot.Id">@lot.Name (@lot.CropTypeName)</option>
                     }
                 </select>
 
@@ -57,12 +57,8 @@
                     </div>
                     <div class="small text-muted">La siembra puede ser futura, para planificar.</div>
                 }
-                else
-                {
-                    <div class="small text-muted mt-1 mb-2">
-                        La grilla, plantas, GDD base y etapa se toman del lote (solo lectura).
-                    </div>
-                }
+
+                <hr />
 
                 <label class="sim-label">Clima del escenario</label>
                 <div class="sim-mode-row">
@@ -102,7 +98,8 @@
                     </div>
                     <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.AllConventional)" @onchange="() => strategy = SimulationStrategyKind.AllConventional" /> Todo adulta</label>
                 </div>
-                <div class="small text-muted">@StrategyHint</div>
+
+                <hr />
 
                 <label class="sim-label">Pesos y precios</label>
                 <div class="sim-row">
@@ -207,18 +204,6 @@
                 @if (result.Timeline is { } timeline)
                 {
                     <LotCycleTimeline Timeline="timeline" />
-                    <div class="small text-muted mt-2">
-                        @if (result.Context.SowingDate > result.Today)
-                        {
-                            <text>Todavía no se sembró (Tbase @LotFormat.Num(result.Gdd.BaseTemperature) °C).</text>
-                        }
-                        else
-                        {
-                            <text>GDD hoy: <strong>@LotFormat.Num(result.Gdd.Accumulated)</strong> (Tbase @LotFormat.Num(result.Gdd.BaseTemperature) °C).</text>
-                        }
-                        Baby Leaf: ventana @LotFormat.Num(timeline.BabyLeafOpens.Gdd)–@LotFormat.Num(timeline.BabyLeafCloses.Gdd), óptimo @LotFormat.Num(timeline.BabyLeafOptimum.Gdd).
-                        Adulta: óptimo @LotFormat.Num(timeline.ConventionalOptimum.Gdd), sobremadurez @LotFormat.Num(timeline.Overmaturity.Gdd).
-                    </div>
                 }
                 else
                 {
@@ -234,7 +219,6 @@
                         <div class="mini-card"><span>Pérdidas hasta el corte Baby Leaf</span><strong>@LossRate(outlook.RemainingEarlyLossRate, outlook.History.EarlyLossRate)</strong></div>
                         <div class="mini-card"><span>Pérdidas esperando a adulta</span><strong>@LossRate(outlook.RemainingLateLossRate, outlook.History.LateLossRate)</strong></div>
                     </div>
-                    <div class="small text-muted my-2">@OutlookText(outlook, result.Lot is not null)</div>
                     @if (outlook.History.Lots.Count > 0)
                     {
                         <details class="sim-details">
@@ -276,55 +260,22 @@
                 @if (Chosen is { } chosen)
                 {
                     <h4 class="sim-section">Estrategia elegida: @chosen.Name</h4>
-                    <div class="small text-muted">@PlantsText(chosen) · @(chosen.Available ? Days(chosen.Costs.CycleDays) + " de ciclo" : "sin fecha")</div>
                     @if (!chosen.Available)
                     {
                         <div class="alert alert-warning small mt-2 mb-0">No se puede calcular: @string.Join(" ", chosen.Warnings)</div>
                     }
                     <div class="mini-grid">
-                        <div class="mini-card"><span>Corte Baby Leaf</span><strong>@CutText(chosen.BabyLeafCut)</strong></div>
-                        <div class="mini-card"><span>Corte adultas</span><strong>@CutText(chosen.ConventionalCut)</strong></div>
                         <div class="mini-card"><span>Kg</span><strong>@(chosen.TotalKg is { } kg ? LotFormat.KgFine(kg) : "—")</strong></div>
                         <div class="mini-card"><span>Ingresos</span><strong>@Money(chosen.Revenue, result.Reference.Prices.Currency)</strong></div>
-                        <div class="mini-card"><span>Gastos del sistema</span><strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong></div>
+                        <div class="mini-card">
+                            <div class="sim-card__head">
+                                <span>Gastos del sistema</span>
+                                <button type="button" class="btn btn-sm hp-btn-secondary sim-card__btn" @onclick="OpenCosts"
+                                        aria-label="Ver el detalle de los gastos del sistema">Ver</button>
+                            </div>
+                            <strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong>
+                        </div>
                         <div class="mini-card" title="Ingresos − gastos del sistema"><span>Margen</span><strong class="@(chosen.Margin < 0 ? "text-danger" : null)">@Money(chosen.Margin, result.Reference.Prices.Currency)</strong></div>
-                    </div>
-                    <div class="small text-muted mt-2">
-                        Pesos y precios: Baby Leaf @Grams(result.Reference.Weights.BabyLeafGramsPerPlant) · @PricePerKg(result.Reference.Prices.BabyLeafPerKg) ·
-                        Adulta @Grams(result.Reference.Weights.ConventionalGramsPerPlant) · @PricePerKg(result.Reference.Prices.ConventionalPerKg)
-                        (@(result.Reference.HasScenarioOverrides ? "con cambios del escenario" : "de Ajustes > Parámetros")).
-                    </div>
-
-                    <div class="table-responsive hp-table-card mt-3">
-                        <table class="table table-sm hp-table">
-                            <thead>
-                                <tr>
-                                    <th>Gasto del sistema</th>
-                                    <th>Fórmula</th>
-                                    <th>Monto</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var component in chosen.Costs.Components)
-                                {
-                                    <tr>
-                                        <td>@component.Name</td>
-                                        <td class="small text-muted">@CostFormula(component, chosen.Costs)</td>
-                                        <td title="@component.NotCalculableReason">@Money(component.Amount, chosen.Costs.CurrencyCode)</td>
-                                    </tr>
-                                }
-                                <tr class="hp-table__total">
-                                    <td><strong>Total</strong></td>
-                                    <td class="small text-muted">días del ciclo: de la siembra al último corte</td>
-                                    <td><strong>@Money(chosen.Costs.Total, chosen.Costs.CurrencyCode)</strong></td>
-                                </tr>
-                                <tr>
-                                    <td>Costo por kg</td>
-                                    <td class="small text-muted">total / kg cosechados</td>
-                                    <td>@(chosen.CostPerKg is { } perKg ? $"{LotFormat.Money(perKg, chosen.Costs.CurrencyCode)}/kg" : "—")</td>
-                                </tr>
-                            </tbody>
-                        </table>
                     </div>
                 }
 
@@ -340,7 +291,11 @@
                                     <th>Corte adultas</th>
                                     <th>Días de ciclo</th>
                                     <th>Kg</th>
-                                    <th title="Ingresos − gastos del sistema − lugar ocupado por las Adultas">Margen</th>
+                                    <th title="Ingresos − gastos del sistema">Margen</th>
+                                    @if (HasSameSpace)
+                                    {
+                                        <th title="El margen si la estrategia se repite en el lugar y el tiempo que ocupa la que más usa">En el mismo lugar y tiempo</th>
+                                    }
                                 </tr>
                             </thead>
                             <tbody>
@@ -357,6 +312,10 @@
                                             {
                                                 <span class="badge text-bg-success ms-1">mejor margen</span>
                                             }
+                                            @if (strategy == BestSpaceStrategy)
+                                            {
+                                                <span class="badge text-bg-info ms-1">mejor uso del lugar</span>
+                                            }
                                             <div class="small text-muted">@PlantsText(strategy)</div>
                                         </td>
                                         <td>@CutText(strategy.BabyLeafCut)</td>
@@ -364,20 +323,28 @@
                                         <td>@(strategy.Available ? strategy.Costs.CycleDays.ToString() : "—")</td>
                                         <td>@(strategy.TotalKg is { } kg ? LotFormat.KgFine(kg) : "—")</td>
                                         <td class="@(strategy.Margin < 0 ? "text-danger" : null)">@Money(strategy.Margin, result.Reference.Prices.Currency)</td>
+                                        @if (HasSameSpace)
+                                        {
+                                            <td title="@SpaceTitle(strategy)">
+                                                @if (strategy.Space is { SameSpaceMargin: { } same, SameSpaceTimes: { } times })
+                                                {
+                                                    <span class="@(same < 0 ? "text-danger" : null)">@Money(same, result.Reference.Prices.Currency)</span>
+                                                    @if (times > 1.005m)
+                                                    {
+                                                        <div class="small text-muted">entra @LotFormat.Num(times) veces</div>
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    <text>—</text>
+                                                }
+                                            </td>
+                                        }
                                     </tr>
                                 }
                             </tbody>
                         </table>
                     </div>
-                }
-
-                @if (result.Curve is { } curve && result.Timeline is { } curveTimeline)
-                {
-                    <h4 class="sim-section">GDD acumulado</h4>
-                    <LotGddChart Curve="curve" Timeline="curveTimeline"
-                                 MeasuredLabel="@(result.Lot is null ? $"{ProviderLabel(result.Gdd.ProviderName)} hasta hoy" : "medido")"
-                                 MeasuredSourceLabel="@(result.Lot is null ? ProviderLabel(result.Gdd.ProviderName) : null)"
-                                 ProjectedSourceLabel="@ProviderLabel(result.Gdd.ProviderName)" />
                 }
 
                 @if (result.Gdd.ForecastFetchedAtUtc is { } fetched)
@@ -394,12 +361,7 @@
                     </div>
                     <div class="small text-muted my-2">
                         Cosechadas: @lot.HarvestedPlants · Descartadas: @lot.DiscardedPlants.
-                        El escenario usa las plantas activas; la grilla muestra el estado actual del lote.
                     </div>
-                    @if (lot.GridRows > 0 && lot.GridColumns > 0)
-                    {
-                        <LotMap Rows="@lot.GridRows" Columns="@lot.GridColumns" Cells="@lot.Grid" />
-                    }
                 }
 
                 @if (result.Warnings.Count > 0)
@@ -428,6 +390,43 @@
     </div>
 </section>
 
+@if (showCosts && Chosen is { } costsOf)
+{
+    <LotModal Title="@($"Gastos del sistema · {costsOf.Name}")" OnClose="CloseCosts">
+        <div class="table-responsive hp-table-card">
+            <table class="table table-sm hp-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Gasto del sistema</th>
+                        <th>Fórmula</th>
+                        <th>Monto</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var component in costsOf.Costs.Components)
+                    {
+                        <tr>
+                            <td>@component.Name</td>
+                            <td class="small text-muted">@CostFormula(component, costsOf.Costs)</td>
+                            <td title="@component.NotCalculableReason">@Money(component.Amount, costsOf.Costs.CurrencyCode)</td>
+                        </tr>
+                    }
+                    <tr class="hp-table__total">
+                        <td><strong>Total</strong></td>
+                        <td class="small text-muted">días del ciclo: de la siembra al último corte</td>
+                        <td><strong>@Money(costsOf.Costs.Total, costsOf.Costs.CurrencyCode)</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Costo por kg</td>
+                        <td class="small text-muted">total / kg cosechados</td>
+                        <td>@(costsOf.CostPerKg is { } perKg ? $"{LotFormat.Money(perKg, costsOf.Costs.CurrencyCode)}/kg" : "—")</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </LotModal>
+}
+
 <style>
     .sim-form { display: flex; flex-direction: column; gap: 10px; }
     .sim-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #5b6b7b; margin-top: 4px; }
@@ -439,6 +438,8 @@
     .sim-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
     .sim-results-col { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
     .sim-section { margin: 22px 0 10px; font-size: 1rem; font-weight: 700; }
+    .sim-card__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .btn.sim-card__btn { --bs-btn-padding-y: 0; --bs-btn-padding-x: 8px; --bs-btn-font-size: 0.75rem; }
     .sim-strategy { display: flex; flex-direction: column; gap: 6px; }
     .sim-strategy__goal { display: flex; align-items: center; gap: 8px; }
     .sim-strategy__goal .sim-radio { flex: none; white-space: nowrap; }
@@ -480,6 +481,7 @@
     private decimal? solutionBPrice;
 
     private bool running;
+    private bool showCosts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -524,6 +526,7 @@
     private async Task Simulate()
     {
         running = true;
+        showCosts = false;
         try
         {
             preview = await SimulationSvc.PreviewAsync(BuildRequest());
@@ -565,15 +568,37 @@
         }
     }
 
+    /// <summary>La estrategia que más deja en el mismo lugar y tiempo (si hay al menos dos medidas).</summary>
+    private SimulationStrategyOutcome? BestSpaceStrategy
+    {
+        get
+        {
+            var measured = result?.Strategies.Where(s => s.Space?.SameSpaceMargin is not null).ToList() ?? [];
+            return measured.Count > 1 ? measured.MaxBy(s => s.Space!.SameSpaceMargin) : null;
+        }
+    }
+
+    private bool HasSameSpace => result?.Strategies.Count(s => s.Space?.SameSpaceMargin is not null) > 1;
+
+    /// <summary>"Ocupa 66 m²·día (denso 13 + Adultas 53); en 151 m²·día entra 2,3 veces: 2,3 × $204.456".</summary>
+    private string SpaceTitle(SimulationStrategyOutcome strategy)
+    {
+        if (strategy.Space is not { } space || result is null)
+            return string.Empty;
+        var most = result.Strategies.Where(s => s.Space is not null).Max(s => s.Space!.TotalM2Days);
+        var text = $"Ocupa {LotFormat.Num(space.TotalM2Days)} m²·día (denso {LotFormat.Num(space.DenseM2Days)} + Adultas {LotFormat.Num(space.AdultM2Days)}).";
+        return space.SameSpaceTimes is { } times && strategy.Margin is { } margin
+            ? $"{text} En {LotFormat.Num(most)} m²·día (lo que ocupa la que más usa) entra {LotFormat.Num(times)} veces: " +
+              $"{LotFormat.Num(times)} × {LotFormat.Money(margin, result.Reference.Prices.Currency)}."
+            : text;
+    }
+
     private SimulationStrategyOutcome? Chosen =>
         result?.Strategies.FirstOrDefault(s => s.Kind == result.Request.Harvest.Strategy);
 
-    private string StrategyHint => strategy switch
-    {
-        SimulationStrategyKind.MaxBabyLeaf => "Corta como Baby Leaf todas las que se prevén Baby Leaf en el óptimo; el resto sigue hasta el corte de adultas.",
-        SimulationStrategyKind.BabyLeafGoal => "Corta como Baby Leaf hasta ese % de las plantas (por más de que haya más Baby Leafs); el resto sigue hasta el corte de adultas.",
-        _ => "Todas siguen hasta el corte de adultas."
-    };
+    private void OpenCosts() => showCosts = true;
+
+    private void CloseCosts() => showCosts = false;
 
     /// <summary>"12 Baby Leafs + 6 adultas · 1 pérdida prevista".</summary>
     private static string PlantsText(SimulationStrategyOutcome s)
@@ -595,8 +620,6 @@
     private static string LossRate(decimal remaining, decimal? history) =>
         history is null ? "sin historial" : LotFormat.Pct1(remaining * 100m);
 
-    private static string Days(int days) => LotFormat.Days(days);
-
     /// <summary>Fórmula con las cantidades que calculó el sistema (semillas, litros, días).</summary>
     private static string CostFormula(SimulationCostComponent component, SimulationCostBreakdown costs) => component.Name switch
     {
@@ -609,33 +632,6 @@
             $"{usage.SolutionBLiters.ToString("0.###", LotFormat.Culture)} L × precio por litro",
         _ => component.Formula
     };
-
-    /// <summary>De dónde sale la previsión: estado actual del lote, histórico de lotes parecidos o nada.</summary>
-    private static string OutlookText(BabyLeafOutlook outlook, bool withLot)
-    {
-        var history = outlook.History;
-        var lots = history.UsedAllLots
-            ? $"los {history.Lots.Count} lotes cerrados (ninguno de temporada o clima parecido)"
-            : LotFormat.Count(history.Lots.Count, "lote parecido", "lotes parecidos");
-        var noEvaluations = withLot && !outlook.LotHasEvaluations
-            ? " El lote no tiene evaluaciones de plantas: no se usa su estado actual."
-            : string.Empty;
-
-        if (outlook.CurrentAptRate is { } current && outlook.CurrentWeight > 0)
-        {
-            return history.AptRate is { } past
-                ? $"Combina el estado actual del lote ({Rate(current)} de las activas Baby Leaf o candidatas, pesa {Rate(outlook.CurrentWeight)}) con el histórico de {lots} ({Rate(past)})."
-                : $"Según el estado actual del lote ({Rate(current)} de las activas Baby Leaf o candidatas); no hay lotes cerrados con datos.";
-        }
-        if (history.AptRate is not null)
-        {
-            var notYet = outlook.CurrentAptRate is not null
-                ? " El lote todavía no llegó al fin del establecimiento: su estado actual no pesa."
-                : noEvaluations;
-            return $"Según el histórico de {lots}.{notYet} Las pérdidas son las que faltan según la etapa.";
-        }
-        return "Sin lotes cerrados con datos ni evaluaciones del lote: se asume que todas llegan a Baby Leaf y sin pérdidas." + noEvaluations;
-    }
 
     private string CutText(SimulationCut? cut)
     {
@@ -652,25 +648,10 @@
     private static string Money(decimal? value, string currency) =>
         value is { } v ? LotFormat.Money(v, currency) : "—";
 
-    private string PricePerKg(decimal? value) =>
-        value is { } v ? $"{LotFormat.Money(v, result!.Reference.Prices.Currency)}/kg" : "sin precio";
-
-    private static string Grams(decimal? grams) =>
-        grams is { } g ? g.ToString("0.#", LotFormat.Culture) + " g" : "sin peso";
-
     private static string ProviderLabel(string provider) => provider switch
     {
         "manual" => "clima manual",
         "pronostico" => "pronóstico del clima",
         _ => provider
-    };
-
-    private static string StatusLabel(string? status) => status switch
-    {
-        "ACTIVO" => "Activo",
-        "EN_PAUSA" => "En pausa",
-        "COSECHADO" => "Cosechado",
-        "DESCARTADO" => "Descartado",
-        _ => status ?? "Sin estado"
     };
 }

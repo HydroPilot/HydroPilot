@@ -3057,6 +3057,16 @@ button.lot-chip[aria-pressed="true"] {
     background: var(--chip-bg);
 }
 
+/* Barra vacía (0 %): el % igual se ve, a la izquierda. */
+.lot-stack__empty {
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 0.78rem;
+    font-weight: 750;
+    color: var(--text-secondary);
+}
+
 /* Rótulo único sobre varios tramos (todas las plantas activas, en riesgo incluidas). */
 .lot-stack__over {
     position: absolute;
@@ -4160,18 +4170,22 @@ button.lot-chip[aria-pressed="true"] {
 
 /* ===================================================================
    Dashboard del invernadero (vista Invernadero, "/")
-   Izquierda: 3 cards de números, los 2 gráficos y 2 listas; derecha: 3 listas.
-   Cada lista tiene su propio scroll para no estirar la pantalla.
+   Izquierda: 3 cards de números, los 2 gráficos y 2 listas; derecha: 2 listas.
+   Ocupa todo el alto de la pantalla (menos la barra de arriba y los márgenes): Alertas y Próximos
+   chequeos se estiran hasta abajo. Cada lista tiene su propio scroll para no estirar la pantalla.
    =================================================================== */
 .gh-dash {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
     gap: 16px;
+    height: calc(100dvh - 106px);
+    min-height: 680px;
 }
 
 .gh-dash__main {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: auto auto minmax(240px, 1fr);
     gap: 16px;
 }
 
@@ -4246,6 +4260,13 @@ button.lot-chip[aria-pressed="true"] {
 
 .gh-list-card--half {
     grid-column: span 3;
+    min-height: 0;
+}
+
+.gh-list-card--half .gh-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
 }
 
 /* --- Barras verticales de plantas por estado ---
@@ -4253,7 +4274,7 @@ button.lot-chip[aria-pressed="true"] {
 .gh-bars {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-rows: 150px auto;
+    grid-template-rows: 190px auto;
     column-gap: 8px;
     row-gap: 6px;
 }
@@ -4272,7 +4293,7 @@ button.lot-chip[aria-pressed="true"] {
     justify-content: flex-end;
     align-items: center;
     width: 100%;
-    height: 150px;
+    height: 190px;
     border-bottom: 1px solid var(--border-input);
 }
 
@@ -4309,8 +4330,8 @@ button.lot-chip[aria-pressed="true"] {
 /* --- Dona de Baby Leaf esperado --- */
 .gh-donut {
     position: relative;
-    width: 150px;
-    height: 150px;
+    width: 180px;
+    height: 180px;
 }
 
 .gh-donut__chart {
@@ -4540,6 +4561,16 @@ a.gh-row:focus-visible {
 @media (max-width: 1200px) {
     .gh-dash {
         grid-template-columns: minmax(0, 1fr);
+        height: auto;
+        min-height: 0;
+    }
+
+    .gh-dash__main {
+        grid-template-rows: none;
+    }
+
+    .gh-list-card--half .gh-list {
+        max-height: 248px;
     }
 
     /* Abajo de todo: las listas vuelven a su alto fijo. */
@@ -4655,4 +4686,24 @@ a.gh-row:focus-visible {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+}
+
+/* Filtros arriba de una grilla (Circuitos, Sensores): en una fila; en pantallas chicas bajan de línea. */
+.hp-grid-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.hp-grid-filters .form-select,
+.hp-grid-filters .form-control {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 150px;
+}
+
+.hp-grid-filters input[type="search"] {
+    flex: 1 1 200px;
+    max-width: 280px;
 }

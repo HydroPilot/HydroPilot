@@ -18,6 +18,10 @@
     <div>
         <div class="lot-goalbar">
             <div class="lot-stack" role="img" aria-label="@AriaLabel">
+                @if (Layout.Count == 0)
+                {
+                    <span class="lot-stack__empty">0%</span>
+                }
                 @foreach (var item in Layout)
                 {
                     var pct = LotFormat.Pct1(item.Shown);
@@ -45,14 +49,14 @@
     </div>
 
     <div class="lot-legend">
-        @if (Plants.HarvestedAsBabyLeaf > 0 || Overview.IsClosed)
+        @if (Plants.HarvestedAsBabyLeaf > 0 || Overview.IsClosed || DenseDone)
         {
             <span class="lot-legend__item">
                 <span class="lot-legend__dot lot-seg--striped" style="background-color: @AptaColor;"></span>
                 @LotFormat.Count(Plants.HarvestedAsBabyLeaf, "cosechada", "cosechadas")
             </span>
         }
-        @if (!Overview.IsClosed)
+        @if (!Overview.IsClosed && !DenseDone)
         {
             <span class="lot-legend__item">
                 <span class="lot-legend__dot" style="background: @AptaColor;"></span>
@@ -89,6 +93,9 @@
     private LotGoalsRules.Result Goals => Overview.Goals;
     private LotPlantBreakdown Plants => Overview.Plants;
     private decimal? Goal => Overview.Objectives.BabyLeafGoalPercent;
+
+    /// <summary>En el denso ya no queda ninguna planta que pueda ser Baby Leaf (cosechadas, trasplantadas o descartadas).</summary>
+    private bool DenseDone => Plants.Apta + Plants.Candidate + Plants.DenseDeveloping == 0;
 
     // Mismo orden que la barra del mapa: cosechadas + Baby Leafs es lo logrado; sumando candidatas, el potencial.
     private IReadOnlyList<PlacedSegment> Layout

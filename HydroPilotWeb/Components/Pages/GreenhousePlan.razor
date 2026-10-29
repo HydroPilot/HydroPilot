@@ -1,0 +1,209 @@
+@page "/plan-invernadero"
+@attribute [Authorize(Policy = "RequireAssigned")]
+
+@using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Services.Simulation
+
+<PageTitle>Plan del invernadero</PageTitle>
+
+@* Cuántos circuitos densos y cuántos de Adultas conviene tener en la misma superficie, con el histórico de los lotes
+   cerrados y los precios de Ajustes > Parámetros. Solo lectura: no cambia los circuitos. *@
+<section class="simulation-grid">
+    <article class="panel">
+        <div class="panel__header">
+            <div>
+                <h3>Escenario</h3>
+            </div>
+        </div>
+        <div class="plan-form">
+            <label class="plan-label" for="plan-area">Superficie de circuitos (m²)</label>
+            <input id="plan-area" type="number" step="0.1" min="0" class="form-control" @bind="area" />
+            <label class="plan-label" for="plan-seed">Precio por semilla</label>
+            <input id="plan-seed" type="number" step="0.01" min="0" class="form-control" @bind="seedPrice" />
+            <label class="plan-label" for="plan-cap">Baby Leaf que podés vender (kg/mes)</label>
+            <input id="plan-cap" type="number" step="0.1" min="0" class="form-control" @bind="babyLeafKg" />
+            <button class="btn btn-success mt-2" @onclick="CalculateAsync" disabled="@running">
+                @if (running)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                }
+                Calcular
+            </button>
+        </div>
+    </article>
+
+    <div class="sim-results-col plan-results">
+        @if (plan is null)
+        {
+            <article class="panel">
+                <div class="panel__callout">
+                    <h3>Distribución de circuitos</h3>
+                    <p>Cargá la superficie y presioná <strong>Calcular</strong>.</p>
+                </div>
+            </article>
+        }
+        else
+        {
+            <article class="panel">
+                @if (plan.Best is { } best)
+                {
+                    <div class="mini-grid">
+                        <div class="mini-card plan-card--best">
+                            <span>Conviene</span>
+                            <strong>@Layout(best.DenseCircuits, best.AdultCircuitsUsed)</strong>
+                            <small>@Money(best.MarginPerMonth) por mes</small>
+                        </div>
+                        @if (plan.Current is { } current)
+                        {
+                            <div class="mini-card">
+                                <span>Hoy</span>
+                                <strong>@Layout(current.DenseCircuits, current.AdultCircuits)</strong>
+                                <small>@Money(current.MarginPerMonth) por mes</small>
+                            </div>
+                            <div class="mini-card">
+                                <span>Diferencia</span>
+                                <strong class="@(best.MarginPerMonth - current.MarginPerMonth > 0 ? "text-success" : null)">@SignedMoney(best.MarginPerMonth - current.MarginPerMonth)</strong>
+                                <small>por mes</small>
+                            </div>
+                        }
+                    </div>
+                    @if (best.AdultCircuitsUsed < best.AdultCircuits)
+                    {
+                        <p class="lot-muted mt-2 mb-0">
+                            Sobra lugar para @(best.AdultCircuits - best.AdultCircuitsUsed) circuitos de Adultas que no se llenarían:
+                            no hay más plantas para mandarles.
+                        </p>
+                    }
+                }
+
+                @if (plan.DenseCircuitPerMonth is { } densePerMonth && plan.AdultCircuitPerMonth is { } adultPerMonth)
+                {
+                    <h4 class="sim-section">Lo que deja cada circuito por mes</h4>
+                    <div class="mini-grid">
+                        <div class="mini-card" title="Hasta el tope de Baby Leaf. Sembrado otra vez apenas sale la última planta; las que no llegan a Baby Leaf se descartan">
+                            <span>Circuito denso</span>
+                            <strong>@Money(densePerMonth)</strong>
+                            <small>@Money(PerM2(densePerMonth, plan.Circuits.DenseM2)) por m²</small>
+                        </div>
+                        <div class="mini-card" title="Lleno con plantas que no llegan a Baby Leaf y, si no, se descartan">
+                            <span>Circuito de Adultas lleno</span>
+                            <strong>@Money(adultPerMonth)</strong>
+                            <small>@Money(PerM2(adultPerMonth, plan.Circuits.AdultM2)) por m²</small>
+                        </div>
+                        @if (plan.BabyLeafCapKg is { } capKg && plan.DenseCircuitsForCap is { } forCap)
+                        {
+                            <div class="mini-card" title="Más densos solo sirven para mandar plantas a Adultas; si no entran, se descartan">
+                                <span>Tope de Baby Leaf</span>
+                                <strong>@LotFormat.Num(capKg) kg/mes</strong>
+                                <small>lo cubren @LotFormat.Num(forCap) densos</small>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (plan.Options.Count > 0)
+                {
+                    <h4 class="sim-section">Distribuciones en @LotFormat.Num(plan.AreaM2) m²</h4>
+                    <div class="table-responsive hp-table-card">
+                        <table class="table table-sm hp-table">
+                            <thead>
+                                <tr>
+                                    <th>Densos</th>
+                                    <th title="Los que se llenan (de los que entran)">De Adultas</th>
+                                    <th>Baby Leaf (kg/mes)</th>
+                                    <th>Adultas (kg/mes)</th>
+                                    <th title="No se venden como Baby Leaf (no llegan o pasan el tope) y no entran en Adultas">Descartadas por mes</th>
+                                    <th>Margen por mes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var option in plan.Options)
+                                {
+                                    <tr class="@(option == plan.Best ? "hp-table__row--selected" : null)">
+                                        <td>
+                                            @option.DenseCircuits
+                                            @if (option == plan.Best)
+                                            {
+                                                <span class="badge text-bg-success ms-1">conviene</span>
+                                            }
+                                        </td>
+                                        <td>@option.AdultCircuitsUsed @(option.AdultCircuitsUsed < option.AdultCircuits ? $"(de {option.AdultCircuits})" : null)</td>
+                                        <td>@Kg(option.BabyLeafPerMonth, plan.BabyLeafGrams)</td>
+                                        <td>@Kg(option.AdultsPerMonth, plan.AdultGrams)</td>
+                                        <td>@LotFormat.Num(option.UnplacedPerMonth)</td>
+                                        <td class="@(option.MarginPerMonth < 0 ? "text-danger" : null)">@Money(option.MarginPerMonth)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @if (plan.Warnings.Count > 0)
+                {
+                    <div class="alert alert-warning small mt-3 mb-0">
+                        <ul class="mb-0">
+                            @foreach (var warning in plan.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </article>
+        }
+    </div>
+</section>
+
+<style>
+    .plan-form { display: flex; flex-direction: column; gap: 8px; }
+    .plan-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #5b6b7b; margin-top: 4px; }
+    .plan-results { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+    .plan-card--best { border-color: var(--accent); }
+    .sim-section { margin: 22px 0 10px; font-size: 1rem; font-weight: 700; }
+</style>
+
+@code {
+    [Inject] private GreenhousePlanService PlanService { get; set; } = null!;
+
+    private GreenhousePlanResult? plan;
+    private decimal? area;
+    private decimal? seedPrice = GreenhousePlanService.DefaultSeedPrice;
+    private decimal? babyLeafKg;
+    private bool running;
+
+    // Precarga la superficie de hoy y lo vendido de Baby Leaf; el plan se calcula recién con "Calcular".
+    protected override async Task OnInitializedAsync()
+    {
+        var defaults = await PlanService.DefaultsAsync();
+        area = defaults.AreaM2;
+        babyLeafKg = defaults.SoldBabyLeafKgPerMonth;
+    }
+
+    private async Task CalculateAsync()
+    {
+        running = true;
+        try
+        {
+            plan = await PlanService.PlanAsync(new GreenhousePlanRequest(area, seedPrice, babyLeafKg));
+        }
+        finally
+        {
+            running = false;
+        }
+    }
+
+    private string Currency => plan?.Currency ?? "ARS";
+
+    private string Money(decimal value) => LotFormat.Money(value, Currency);
+
+    private string SignedMoney(decimal value) => value > 0 ? "+" + Money(value) : Money(value);
+
+    private static string Kg(decimal plants, decimal grams) =>
+        Math.Round(plants * grams / 1000m, 1).ToString("#,##0.#", LotFormat.Culture);
+
+    private static decimal PerM2(decimal value, decimal m2) => m2 > 0 ? Math.Round(value / m2, 0) : 0m;
+
+    private static string Layout(int dense, int adult) =>
+        $"{LotFormat.Count(dense, "denso", "densos")} + {LotFormat.Count(adult, "de Adultas", "de Adultas")}";
+}

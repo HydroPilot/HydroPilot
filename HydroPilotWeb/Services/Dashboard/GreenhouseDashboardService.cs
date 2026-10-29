@@ -5,6 +5,7 @@ using HydroPilotWeb.Models.Notifications;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.SensorFaults;
+using HydroPilotWeb.Services.Sensors;
 using Microsoft.EntityFrameworkCore;
 
 namespace HydroPilotWeb.Services.Dashboard;
@@ -12,7 +13,8 @@ namespace HydroPilotWeb.Services.Dashboard;
 /// <summary>
 /// Dashboard del invernadero (vista Invernadero): resume todos los lotes activos con la misma lógica
 /// de la vista Lotes (LotOverviewService: plantas, rendimiento actual y esperado, ventanas de cosecha)
-/// y suma las alertas, los últimos accedidos del usuario y los próximos chequeos de sensores.
+/// y suma las alertas, los últimos accedidos del usuario y los chequeos de sensores vencidos o que vencen en 7 días o menos
+/// (<see cref="SensorService"/>).
 /// </summary>
 public class GreenhouseDashboardService
 {
@@ -20,26 +22,23 @@ public class GreenhouseDashboardService
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly LotOverviewService _lots;
-    private readonly SystemParametersService _parameters;
     private readonly RecentVisitService _visits;
+    private readonly SensorService _sensors;
     private readonly ILogger<GreenhouseDashboardService> _logger;
 
     public GreenhouseDashboardService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         LotOverviewService lots,
-        SystemParametersService parameters,
         RecentVisitService visits,
+        SensorService sensors,
         ILogger<GreenhouseDashboardService> logger)
     {
         _dbFactory = dbFactory;
         _lots = lots;
-        _parameters = parameters;
         _visits = visits;
+        _sensors = sensors;
         _logger = logger;
     }
-
-    /// <summary>Registran un chequeo de sensor todos los roles asignados (el que calibra suele ser el operario).</summary>
-    public static bool CanRegisterCalibration(ClaimsPrincipal user) => LotCommentRules.CommenterRoles.Any(user.IsInRole);
 
     public async Task<GreenhouseDashboard> GetAsync(ClaimsPrincipal user, CancellationToken ct = default)
     {
@@ -112,7 +111,7 @@ public class GreenhouseDashboardService
             new("Riesgo", risk, CommercialStageNames.RiesgoFueraDeVentana),
         };
 
-        var (sensorChecks, hasIntervals) = await SensorChecksAsync(context, Local, today, ct);
+        var (sensorChecks, hasIntervals) = await SensorChecksAsync(today, ct);
 
         return new GreenhouseDashboard(
             today,
@@ -128,23 +127,6 @@ public class GreenhouseDashboardService
             await VisitsAsync(user, Local, ct),
             sensorChecks,
             hasIntervals);
-    }
-
-    /// <summary>Anota hoy como fecha de calibración del sensor (chequeo hecho).</summary>
-    public async Task<bool> RegisterCalibrationAsync(int sensorId, ClaimsPrincipal user, CancellationToken ct = default)
-    {
-        if (!CanRegisterCalibration(user))
-            return false;
-
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var sensor = await context.Sensors.FirstOrDefaultAsync(s => s.Id == sensorId, ct);
-        if (sensor is null)
-            return false;
-
-        sensor.LastCalibrationDate = DateTime.UtcNow;
-        await context.SaveChangesAsync(ct);
-        _logger.LogInformation("Chequeo del sensor {SensorId} ({Sensor}) registrado por {User}", sensorId, sensor.Name, user.Identity?.Name);
-        return true;
     }
 
     private static async Task<IReadOnlyList<DashboardAlertItem>> AlertsAsync(
@@ -186,39 +168,16 @@ public class GreenhouseDashboardService
             .ToList();
     }
 
+    /// <summary>Los sensores activos con chequeo vencido o que vence en 7 días o menos (los más cercanos arriba).</summary>
     private async Task<(IReadOnlyList<DashboardSensorCheck> Checks, bool HasIntervals)> SensorChecksAsync(
-        HydroPilotDbContext context, Func<DateTime, DateTime> local, DateOnly today, CancellationToken ct)
+        DateOnly today, CancellationToken ct)
     {
-        var intervals = (await _parameters.GetSensorCheckIntervalsAsync(ct))
-            .Where(i => i.Days is not null)
-            .ToDictionary(i => i.SensorType, i => i.Days!.Value);
-
-        var sensors = await context.Sensors
-            .AsNoTracking()
-            .Where(s => s.IsActive)
-            .Select(s => new
-            {
-                s.Id,
-                // pH y CE: el circuito; temperatura y humedad: el invernadero.
-                Place = s.Circuit != null ? s.Circuit.Name : s.Node!.Greenhouse!.Name,
-                Type = s.SensorType!.Name,
-                s.LastCalibrationDate,
-            })
-            .ToListAsync(ct);
-
-        var checks = sensors
-            .Where(s => intervals.ContainsKey(s.Type))
-            .Select(s =>
-            {
-                DateOnly? last = s.LastCalibrationDate is { } calibrated ? DateOnly.FromDateTime(local(calibrated)) : null;
-                var days = intervals[s.Type];
-                return new DashboardSensorCheck(s.Id, s.Place, s.Type, last, days, GreenhouseDashboardRules.NextCheck(last, days, today));
-            })
-            .OrderBy(c => c.DueDate)
-            .ThenBy(c => c.Place)
-            .ThenBy(c => c.SensorType)
+        var list = await _sensors.ListAsync(ct);
+        var checks = list.Sensors
+            .Where(s => s is { IntervalDays: not null, DueDate: { } due } && GreenhouseDashboardRules.DueSoon(due, today))
+            .Select(s => new DashboardSensorCheck(s.SensorId, s.Place, s.SensorType, s.LastCalibration, s.IntervalDays!.Value, s.DueDate!.Value))
             .ToList();
-        return (checks, intervals.Count > 0);
+        return (checks, list.HasIntervals);
     }
 
 }

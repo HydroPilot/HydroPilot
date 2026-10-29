@@ -144,6 +144,14 @@
                         <label class="form-label mb-1" for="param-max-size">Tamaño máximo Baby Leaf (× ideal)</label>
                         <input id="param-max-size" type="number" class="form-control" min="1" step="0.05" @bind="transplant.MaxSizeFactor" disabled="@(!canEdit)" />
                     </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-dense-spacing">Separación entre huecos denso (cm)</label>
+                        <input id="param-dense-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.DenseSpacingCm" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-adult-spacing">Separación entre huecos Adultas (cm)</label>
+                        <input id="param-adult-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.AdultSpacingCm" disabled="@(!canEdit)" />
+                    </div>
                 </div>
                 <p class="lot-muted mt-2 mb-0">
                     Trasplante: @LotFormat.Money(TransplantRow.ToParameters(transplant).CostPerPlant, current?.Currency ?? "ARS") por planta.
@@ -402,16 +410,18 @@
         public decimal LaborCostPerHour { get; set; }
         public int StressDays { get; set; }
         public decimal MaxSizeFactor { get; set; }
+        public decimal DenseSpacingCm { get; set; }
+        public decimal AdultSpacingCm { get; set; }
 
         public static TransplantRow From(TransplantParameters p) => new()
         {
             DecisionGdd = p.DecisionGdd,
             PlantsPerHour = p.PlantsPerHour, LaborCostPerHour = p.LaborCostPerHour, StressDays = p.StressDays,
-            MaxSizeFactor = p.MaxSizeFactor,
+            MaxSizeFactor = p.MaxSizeFactor, DenseSpacingCm = p.DenseSpacingCm, AdultSpacingCm = p.AdultSpacingCm,
         };
 
         public static TransplantParameters ToParameters(TransplantRow r) => new(
-            r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor);
+            r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor, r.DenseSpacingCm, r.AdultSpacingCm);
     }
 
     private TransplantRow? transplant;

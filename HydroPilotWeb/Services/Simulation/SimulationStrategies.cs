@@ -39,13 +39,19 @@ public static class SimulationStrategies
         TransplantScenario? Transplant = null);
 
     /// <summary>
-    /// Trasplante del escenario: costo por planta trasplantada, huecos libres de Adultas (null = sin límite) y las ya
-    /// trasplantadas (activas), que son Adultas en todas las estrategias.
+    /// Trasplante del escenario: costo por planta trasplantada, huecos libres de Adultas (null = sin límite), las ya
+    /// trasplantadas (activas), que son Adultas en todas las estrategias, y el lugar de un hueco del denso y de uno de
+    /// Adultas (m²) para medir el lugar y el tiempo que ocupa cada estrategia.
     /// </summary>
     public sealed record TransplantScenario(
         decimal CostPerPlant,
         int? AdultCapacity,
-        int FixedAdults);
+        int FixedAdults,
+        decimal DenseHoleM2 = 0m,
+        decimal AdultHoleM2 = 0m);
+
+    /// <summary>Días de limpieza del circuito denso entre un lote y el siguiente (los del entorno de simulación).</summary>
+    public const int DenseCleaningDays = 3;
 
     /// <summary>
     /// Reparto de plantas de una estrategia: Baby Leaf, adultas y pérdidas previstas (tempranas, tardías y las que no
@@ -71,7 +77,31 @@ public static class SimulationStrategies
                 input, babyLeafCut, conventionalCut));
         }
         strategies.Add(Strategy(SimulationStrategyKind.AllConventional, "Todo adulta", input, babyLeafCut, conventionalCut));
-        return strategies;
+        return SameSpace(strategies);
+    }
+
+    /// <summary>
+    /// Cada estrategia llevada al lugar y el tiempo de la que más ocupa: si ocupa menos, ese lugar se vuelve a sembrar
+    /// con la misma estrategia (ciclos más cortos y huecos más chicos rinden más veces). Necesita al menos dos medibles.
+    /// </summary>
+    private static IReadOnlyList<SimulationStrategyOutcome> SameSpace(List<SimulationStrategyOutcome> strategies)
+    {
+        var measured = strategies.Where(s => s.Space is { TotalM2Days: > 0 } && s.Margin is not null).ToList();
+        if (measured.Count < 2)
+            return strategies;
+        var most = measured.Max(s => s.Space!.TotalM2Days);
+        return strategies
+            .Select(s => s.Space is { TotalM2Days: > 0 } space && s.Margin is { } margin
+                ? s with
+                {
+                    Space = space with
+                    {
+                        SameSpaceTimes = Math.Round(most / space.TotalM2Days, 2),
+                        SameSpaceMargin = Math.Round(margin * most / space.TotalM2Days, 0),
+                    },
+                }
+                : s)
+            .ToList();
     }
 
     /// <summary>
@@ -210,6 +240,8 @@ public static class SimulationStrategies
             ? Math.Round(income - total, 2)
             : null;
 
+        var space = available ? SpaceUse(input, allocation, babyLeafCut, conventionalCut) : null;
+
         return new SimulationStrategyOutcome(
             kind,
             name,
@@ -225,7 +257,40 @@ public static class SimulationStrategies
             costs,
             margin,
             available ? CostCalculator.CostPerKg(costs.Total, totalKg) : null,
-            warnings);
+            warnings,
+            space);
+    }
+
+    /// <summary>
+    /// Lugar y tiempo de la estrategia: el denso (sus huecos) desde la siembra hasta que sale la última planta (el corte
+    /// Baby Leaf, el trasplante o, las que no entran en Adultas, el cierre de la ventana) más la limpieza, y cada
+    /// trasplantada en su hueco de Adultas desde el trasplante hasta el corte. Null sin trasplante o sin fechas.
+    /// </summary>
+    private static SimulationSpaceUse? SpaceUse(Input input, PlantAllocation allocation, SimulationCut babyLeafCut, SimulationCut conventionalCut)
+    {
+        if (input.Transplant is not { DenseHoleM2: > 0 } transplant)
+            return null;
+        var timeline = input.Timeline;
+        var decision = timeline.Transplant?.Date;
+        var adults = allocation.Transplanted + transplant.FixedAdults;
+
+        var exits = new List<DateOnly?>();
+        if (allocation.BabyLeaf > 0)
+            exits.Add(babyLeafCut.Date);
+        if (allocation.Transplanted > 0)
+            exits.Add(decision);
+        if (allocation.NoRoom > 0)
+            exits.Add(timeline.BabyLeafCloses.Date);
+        if (exits.Count == 0 || exits.Any(d => d is null))
+            return null;
+        if (adults > 0 && (decision is null || conventionalCut.Date is null))
+            return null;
+
+        var denseDays = Math.Max(0, exits.Max(d => d!.Value).DayNumber - input.SowingDate.DayNumber) + DenseCleaningDays;
+        var adultDays = adults > 0 ? Math.Max(0, conventionalCut.Date!.Value.DayNumber - decision!.Value.DayNumber) : 0;
+        return new SimulationSpaceUse(
+            Math.Round(input.Seeds * transplant.DenseHoleM2 * denseDays, 2),
+            Math.Round(adults * transplant.AdultHoleM2 * adultDays, 2));
     }
 
     /// <summary>Kg totales; null si a un destino con plantas le falta el peso.</summary>

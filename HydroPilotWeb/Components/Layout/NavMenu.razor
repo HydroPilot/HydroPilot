@@ -36,12 +36,31 @@
             <span class="sidebar-nav__text">Simulación</span>
         </NavLink>
 
+        <NavLink class="sidebar-nav__item" href="plan-invernadero">
+            <NavIcon Name="plan-invernadero" Class="sidebar-nav__icon" />
+            <span class="sidebar-nav__text">Plan del invernadero</span>
+        </NavLink>
+
         @* Informes: oculta desde 2026-10-26 hasta decidir si se conserva (ver Pages/Reports.razor).
         <NavLink class="sidebar-nav__item" href="reports">
             <NavIcon Name="reports" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Informes</span>
         </NavLink>
         *@
+    </div>
+
+    <div class="sidebar-nav__section">
+        <span class="sidebar-nav__label">Infraestructura</span>
+
+        <NavLink class="sidebar-nav__item" href="settings/circuitos">
+            <NavIcon Name="settings/circuitos" Class="sidebar-nav__icon" />
+            <span class="sidebar-nav__text">Circuitos</span>
+        </NavLink>
+
+        <NavLink class="sidebar-nav__item" href="settings/sensores">
+            <NavIcon Name="settings/sensores" Class="sidebar-nav__icon" />
+            <span class="sidebar-nav__text">Sensores</span>
+        </NavLink>
     </div>
 
     <div class="sidebar-nav__section">
@@ -60,11 +79,6 @@
         <NavLink class="sidebar-nav__item" href="settings/parametros">
             <NavIcon Name="settings/parametros" Class="sidebar-nav__icon" />
             <span class="sidebar-nav__text">Parámetros</span>
-        </NavLink>
-
-        <NavLink class="sidebar-nav__item" href="settings/circuitos">
-            <NavIcon Name="settings/circuitos" Class="sidebar-nav__icon" />
-            <span class="sidebar-nav__text">Circuitos</span>
         </NavLink>
 
         <AuthorizeView>

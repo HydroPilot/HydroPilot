@@ -1,0 +1,216 @@
+@page "/settings/sensores"
+@attribute [Authorize(Policy = "RequireAssigned")]
+@using HydroPilotWeb.Services
+@using HydroPilotWeb.Services.Sensors
+@inject SensorService SensorService
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Sensores - HydroPilot</PageTitle>
+
+@* Todos los sensores: pH y CE de cada circuito, temperatura y humedad del invernadero, con su última calibración y el
+   próximo chequeo (días por tipo en Ajustes > Parámetros). "Calibrado hoy" lo registran todos los roles asignados.
+   Lógica: notas/ux/logica-vista-sensores.md *@
+<section class="settings-layout">
+    <div class="settings-stack">
+        @if (error is not null)
+        {
+            <div class="alert alert-danger">@error</div>
+        }
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
+                    <span class="settings-eyebrow">Invernadero</span>
+                    <h3>Sensores</h3>
+                </div>
+            </div>
+
+            @if (list is null)
+            {
+                <div class="text-muted small">Cargando…</div>
+            }
+            else if (list.Sensors.Count == 0)
+            {
+                <div class="text-muted small">Todavía no hay sensores.</div>
+            }
+            else
+            {
+                <div class="hp-grid-filters">
+                    <select class="form-select form-select-sm" aria-label="Tipo de sensor" @bind="typeFilter">
+                        <option value="">Todos los tipos</option>
+                        @foreach (var type in list.Sensors.Select(s => s.SensorType).Distinct().Order())
+                        {
+                            <option value="@type">@type</option>
+                        }
+                    </select>
+                    <select class="form-select form-select-sm" aria-label="Lugar" @bind="placeFilter">
+                        <option value="">Todos los lugares</option>
+                        @foreach (var place in list.Sensors.Select(s => s.Place).Distinct().Order(NaturalStringComparer.Instance))
+                        {
+                            <option value="@place">@place</option>
+                        }
+                    </select>
+                    <select class="form-select form-select-sm" aria-label="Chequeo" @bind="checkFilter">
+                        <option value="">Todos los chequeos</option>
+                        <option value="@SensorCheckState.Overdue">Vencidos</option>
+                        <option value="@SensorCheckState.DueSoon">Vencen en 7 días o menos</option>
+                        <option value="@SensorCheckState.UpToDate">Al día</option>
+                        <option value="@SensorCheckState.NotScheduled">Sin chequeo programado</option>
+                    </select>
+                    <select class="form-select form-select-sm" aria-label="Estado" @bind="stateFilter">
+                        <option value="">Activos e inactivos</option>
+                        <option value="active">Activos</option>
+                        <option value="inactive">Inactivos</option>
+                    </select>
+                </div>
+
+                @if (!list.HasIntervals)
+                {
+                    <p class="lot-muted mt-0">Sin chequeos programados: definí cada cuántos días en Parámetros.</p>
+                }
+
+                @if (Filtered.Count == 0)
+                {
+                    <div class="text-muted small">Ningún sensor con esos filtros.</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm hp-table mb-0 sensors-table">
+                            <thead>
+                                <tr>
+                                    <th>Tipo</th>
+                                    <th>Lugar</th>
+                                    <th>Estado</th>
+                                    <th>Última calibración</th>
+                                    <th>Próximo chequeo</th>
+                                    @if (canCalibrate)
+                                    {
+                                        <th></th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var sensor in Filtered)
+                                {
+                                    var state = SensorCheckRules.State(sensor.DueDate, list.Today);
+                                    <tr class="@(sensor.IsActive ? null : "sensors-table__inactive")" title="@sensor.Name">
+                                        <td><strong>@sensor.SensorType</strong></td>
+                                        <td>@sensor.Place</td>
+                                        <td>
+                                            <span class="lot-chip lot-chip--@(sensor.IsActive ? "success" : "muted")">@(sensor.IsActive ? "Activo" : "Inactivo")</span>
+                                        </td>
+                                        <td>@(sensor.LastCalibration is { } last ? last.ToString("dd/MM/yyyy", LotFormat.Culture) : "Sin registrar")</td>
+                                        <td class="@(state == SensorCheckState.Overdue ? "text-danger fw-semibold" : null)"
+                                            title="@(sensor.IntervalDays is { } every ? $"Cada {LotFormat.Days(every)}" : null)">
+                                            @CheckText(sensor)
+                                        </td>
+                                        @if (canCalibrate)
+                                        {
+                                            <td class="text-end">
+                                                <button type="button" class="btn btn-sm hp-btn-secondary text-nowrap"
+                                                        disabled="@(calibrating is not null || sensor.LastCalibration == list.Today)"
+                                                        title="@(sensor.LastCalibration == list.Today ? "Ya se calibró hoy" : "Anota hoy como fecha de calibración")"
+                                                        @onclick="() => CalibrateAsync(sensor.SensorId)">
+                                                    @(calibrating == sensor.SensorId ? "Guardando…" : "Calibrado hoy")
+                                                </button>
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+        </article>
+    </div>
+</section>
+
+<style>
+    .sensors-table td {
+        vertical-align: middle;
+    }
+
+    .sensors-table__inactive {
+        opacity: 0.55;
+    }
+</style>
+
+@code {
+    private System.Security.Claims.ClaimsPrincipal user = new();
+    private bool canCalibrate;
+    private int? calibrating;
+    private string? error;
+    private SensorCheckList? list;
+
+    private string typeFilter = "";
+    private string placeFilter = "";
+    private string checkFilter = "";
+    private string stateFilter = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            user = (await AuthState.GetAuthenticationStateAsync()).User;
+            canCalibrate = SensorService.CanRegisterCalibration(user);
+            list = await SensorService.ListAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar los sensores: {ex.Message}";
+        }
+    }
+
+    private IReadOnlyList<SensorCheckRow> Filtered
+    {
+        get
+        {
+            if (list is not { } current)
+                return [];
+            return current.Sensors
+                .Where(s => typeFilter == "" || s.SensorType == typeFilter)
+                .Where(s => placeFilter == "" || s.Place == placeFilter)
+                .Where(s => checkFilter == "" || SensorCheckRules.State(s.DueDate, current.Today).ToString() == checkFilter)
+                .Where(s => stateFilter == "" || s.IsActive == (stateFilter == "active"))
+                .ToList();
+        }
+    }
+
+    private async Task CalibrateAsync(int sensorId)
+    {
+        calibrating = sensorId;
+        try
+        {
+            if (!await SensorService.RegisterCalibrationAsync(sensorId, user))
+                error = "No se pudo registrar el chequeo del sensor.";
+            else
+                error = null;
+            list = await SensorService.ListAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo registrar el chequeo del sensor: {ex.Message}";
+        }
+        finally
+        {
+            calibrating = null;
+        }
+    }
+
+    private string CheckText(SensorCheckRow sensor)
+    {
+        if (sensor.DueDate is not { } due)
+            return sensor.IsActive ? "Sin chequeo programado" : "—";
+        if (sensor.LastCalibration is null)
+            return "Sin calibración registrada";
+        var days = due.DayNumber - list!.Today.DayNumber;
+        return days switch
+        {
+            < 0 => $"{LotFormat.Short(due)} · vencido hace {LotFormat.Days(-days)}",
+            0 => "Vence hoy",
+            _ => $"{LotFormat.Short(due)} · en {LotFormat.Days(days)}"
+        };
+    }
+}

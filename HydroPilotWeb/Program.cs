@@ -48,6 +48,7 @@ builder.Services.AddScoped<LotOverviewService>();
 builder.Services.AddScoped<LotCreationService>();
 builder.Services.AddScoped<LotCommentService>();
 builder.Services.AddScoped<RecentVisitService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Sensors.SensorService>();
 builder.Services.AddScoped<GreenhouseDashboardService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<BabyLeafOutlookService>();
@@ -74,6 +75,7 @@ builder.Services.AddScoped<HydroPilotWeb.Services.Reports.ReportQueryService>();
 // invoca hardware (SIM-07), y el test de aislamiento lo verifica con un adaptador falso.
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.ClimateScenarioProvider>();
 builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.SimulationService>();
+builder.Services.AddScoped<HydroPilotWeb.Services.Simulation.GreenhousePlanService>();
 
 // --- Control de pH y CE (dosis manual + motor automático) ---
 // La Pi pide sus comandos por /api/nodos/{nodeId}/comandos y responde el resultado. Al llegar lecturas de pH/CE

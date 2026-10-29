@@ -30,6 +30,8 @@ public sealed record SensorCheckInterval(string SensorType, int? Days);
 /// <item>Rendimiento laboral (plantas por hora por operario) y costo de la hora: costo por planta trasplantada.</item>
 /// <item>Días de estrés: la Adulta frena después del trasplante y su corte se corre esos días.</item>
 /// <item>Tamaño máximo de Baby Leaf (× el ideal): más grande, se pasó y ya no es Baby Leaf.</item>
+/// <item>Separación entre huecos del circuito denso y del de Adultas: el lugar que ocupa cada planta (Simulación: uso
+/// del lugar de cada estrategia y plan del invernadero).</item>
 /// </list>
 /// </summary>
 public sealed record TransplantParameters(
@@ -37,13 +39,21 @@ public sealed record TransplantParameters(
     int PlantsPerHour,
     decimal LaborCostPerHour,
     int StressDays,
-    decimal MaxSizeFactor)
+    decimal MaxSizeFactor,
+    decimal DenseSpacingCm = 6.5m,
+    decimal AdultSpacingCm = 22.5m)
 {
     /// <summary>
     /// De fábrica (los de Ajustes &gt; Parámetros del 2026-10-28): decisión al abrir la ventana Baby Leaf (250 GDD), 800
-    /// plantas por hora, $8.000 la hora, 3 días de estrés y 1,3 veces el tamaño ideal (provisorio hasta definirlo).
+    /// plantas por hora, $8.000 la hora, 3 días de estrés, 1,3 veces el tamaño ideal (provisorio hasta definirlo) y huecos
+    /// a 6,5 cm en el denso y 22,5 cm en Adultas.
     /// </summary>
-    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m);
+    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m, 6.5m, 22.5m);
+
+    /// <summary>Lugar de un hueco del denso y de uno de Adultas (m²): separación².</summary>
+    public decimal DenseHoleM2 => DenseSpacingCm / 100m * (DenseSpacingCm / 100m);
+
+    public decimal AdultHoleM2 => AdultSpacingCm / 100m * (AdultSpacingCm / 100m);
 
     /// <summary>Costo de mano de obra por planta trasplantada: costo de la hora ÷ plantas por hora.</summary>
     public decimal CostPerPlant => PlantsPerHour > 0 ? Math.Round(LaborCostPerHour / PlantsPerHour, 2) : 0m;
@@ -119,6 +129,8 @@ public class SystemParametersService
     public const string LaborCostPerHourKey = "Transplant:LaborCostPerHour";
     public const string StressDaysKey = "Transplant:StressDays";
     public const string MaxSizeFactorKey = "BabyLeaf:MaxSizeFactor";
+    public const string DenseSpacingKey = "Transplant:DenseSpacingCm";
+    public const string AdultSpacingKey = "Transplant:AdultSpacingCm";
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
@@ -369,7 +381,7 @@ public class SystemParametersService
     /// <summary>Lo mismo con un contexto propio (flujo diario, trasplante, entorno de simulación).</summary>
     public static async Task<TransplantParameters> LoadTransplantAsync(HydroPilotDbContext context, CancellationToken ct = default)
     {
-        string[] keys = [DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey];
+        string[] keys = [DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey, DenseSpacingKey, AdultSpacingKey];
         var values = await context.AppSettings.AsNoTracking()
             .Where(s => keys.Contains(s.Key))
             .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
@@ -385,7 +397,9 @@ public class SystemParametersService
             (int)Value(PlantsPerHourKey, d.PlantsPerHour),
             Value(LaborCostPerHourKey, d.LaborCostPerHour),
             (int)Value(StressDaysKey, d.StressDays),
-            Value(MaxSizeFactorKey, d.MaxSizeFactor));
+            Value(MaxSizeFactorKey, d.MaxSizeFactor),
+            Value(DenseSpacingKey, d.DenseSpacingCm),
+            Value(AdultSpacingKey, d.AdultSpacingCm));
     }
 
     public static IReadOnlyList<string> ValidateTransplant(TransplantParameters p)
@@ -401,6 +415,10 @@ public class SystemParametersService
             errors.Add("Los días de estrés tienen que estar entre 0 y 30.");
         if (p.MaxSizeFactor is < 1m or > 3m)
             errors.Add("El tamaño máximo de Baby Leaf tiene que estar entre 1 y 3 veces el ideal.");
+        if (p.DenseSpacingCm is <= 0m or > 100m || p.AdultSpacingCm is <= 0m or > 100m)
+            errors.Add("Las separaciones entre huecos tienen que estar entre 0 y 100 cm.");
+        else if (p.AdultSpacingCm <= p.DenseSpacingCm)
+            errors.Add("La separación de Adultas tiene que ser mayor que la del denso.");
         return errors;
     }
 
@@ -419,6 +437,8 @@ public class SystemParametersService
         await _settings.SetDecimalAsync(LaborCostPerHourKey, input.LaborCostPerHour, ct);
         await _settings.SetDecimalAsync(StressDaysKey, input.StressDays, ct);
         await _settings.SetDecimalAsync(MaxSizeFactorKey, input.MaxSizeFactor, ct);
+        await _settings.SetDecimalAsync(DenseSpacingKey, input.DenseSpacingCm, ct);
+        await _settings.SetDecimalAsync(AdultSpacingKey, input.AdultSpacingCm, ct);
         _logger.LogInformation("Trasplante actualizado por {User}: {Parameters}", user.Identity?.Name, input);
         return new ParametersUpdateResult(true, []);
     }

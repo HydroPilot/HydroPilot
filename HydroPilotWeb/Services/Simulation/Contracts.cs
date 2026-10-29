@@ -211,7 +211,19 @@ public sealed record SimulationStrategyOutcome(
     SimulationCostBreakdown Costs,
     decimal? Margin,       // ingresos − gastos del sistema
     decimal? CostPerKg,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    SimulationSpaceUse? Space = null); // lugar y tiempo que ocupa (con trasplante)
+
+/// <summary>
+/// Lugar y tiempo que ocupa una estrategia (m²·día): el denso desde la siembra hasta que sale la última planta, más la
+/// limpieza, y cada trasplantada en su hueco de Adultas desde el trasplante hasta el corte. SameSpaceTimes = cuántas
+/// veces entra en el lugar y el tiempo de la estrategia que más ocupa (el lugar que libera se vuelve a sembrar);
+/// SameSpaceMargin = su margen × esas veces. Null = una sola estrategia medible.
+/// </summary>
+public sealed record SimulationSpaceUse(decimal DenseM2Days, decimal AdultM2Days, decimal? SameSpaceTimes = null, decimal? SameSpaceMargin = null)
+{
+    public decimal TotalM2Days => DenseM2Days + AdultM2Days;
+}
 
 /// <summary>Resultado completo de una simulación preview (SIM-02: un único resultado por corrida).</summary>
 public sealed record SimulationResult(

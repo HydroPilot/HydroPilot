@@ -100,6 +100,16 @@ public class GreenhouseDashboardRulesTests
     }
 
     [Fact]
+    public void En_El_Dashboard_Van_Los_Vencidos_Y_Los_Que_Vencen_En_7_Dias_O_Menos()
+    {
+        var today = new DateOnly(2026, 10, 28);
+        Assert.True(GreenhouseDashboardRules.DueSoon(today.AddDays(-3), today));
+        Assert.True(GreenhouseDashboardRules.DueSoon(today, today));
+        Assert.True(GreenhouseDashboardRules.DueSoon(today.AddDays(7), today));
+        Assert.False(GreenhouseDashboardRules.DueSoon(today.AddDays(8), today));
+    }
+
+    [Fact]
     public void Total_Solo_Si_Estan_Todos_Los_Lotes()
     {
         Assert.Equal(300m, GreenhouseDashboardRules.Total([100m, 200m]));

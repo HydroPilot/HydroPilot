@@ -162,7 +162,7 @@ else
                                     <button type="button" class="btn btn-sm lot-select-bar__btn" @onclick="() => picked.Clear()">Limpiar</button>
                                 }
                                 <span class="lot-select-bar__actions">
-                                    @if (transplantPlan is { IsDue: true } && canTransplant)
+                                    @if (transplantPlan is not null && canTransplant && HasDensePlants)
                                     {
                                         <button type="button" class="btn btn-sm lot-select-bar__btn" disabled="@(!CanTransplantPicked || operating)"
                                                 title="@TransplantHint" @onclick="() => AskBatch(BatchAction.Transplant)">Trasplantar</button>
@@ -705,9 +705,20 @@ else
         && overview is not null
         && overview.State.Cells.Count(c => c.PlantId is { } id && picked.Contains(id) && IsSelectable(c) && !c.IsAdultRoute) == picked.Count;
 
-    private string TransplantHint => transplantPlan is { } plan && picked.Count > plan.Capacity
-        ? $"No entran: hay {plan.Capacity} huecos libres en Adultas."
-        : "Pasan a Adultas las marcadas del circuito denso.";
+    /// <summary>Quedan plantas activas en el circuito denso (las que se pueden trasplantar).</summary>
+    private bool HasDensePlants => overview?.State.Cells.Any(c => IsSelectable(c) && !c.IsAdultRoute) == true;
+
+    /// <summary>Por qué "Trasplantar" está deshabilitado (o qué hace): fuera de la ventana, sin lugar o no entran.</summary>
+    private string TransplantHint => transplantPlan switch
+    {
+        null => string.Empty,
+        { IsDue: false } plan when overview is not null && overview.State.GddAccumulated < plan.DecisionGdd =>
+            $"Se trasplanta desde {LotFormat.Num(plan.DecisionGdd)} GDD (hoy {LotFormat.Num(overview.State.GddAccumulated)}) hasta que cierra la ventana Baby Leaf.",
+        { IsDue: false } => "La ventana Baby Leaf ya cerró: no se trasplanta.",
+        { Capacity: 0 } => "No hay huecos libres en circuitos de Adultas.",
+        { } plan when picked.Count > plan.Capacity => $"No entran: hay {plan.Capacity} huecos libres en Adultas.",
+        _ => "Pasan a Adultas las marcadas del circuito denso."
+    };
 
     /// <summary>Card de trasplante: marca en el mapa las que propone el sistema para revisarlas y confirmar.</summary>
     private void ReviewTransplant()

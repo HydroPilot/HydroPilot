@@ -3,6 +3,7 @@ using HydroPilotWeb.Models;
 using HydroPilotWeb.Services;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Lotes;
+using HydroPilotWeb.Services.Sensors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -31,8 +32,10 @@ public class GreenhouseDashboardSqlServerTests
     private LotOverviewService Lots() => new(
         _fixture.Factory, _fixture.Aggregate, _fixture.Forecast, _fixture.Gdd, Parameters(), NullLogger<LotOverviewService>.Instance);
 
+    private SensorService Sensors() => new(_fixture.Factory, Parameters(), NullLogger<SensorService>.Instance);
+
     private GreenhouseDashboardService Dashboard() => new(
-        _fixture.Factory, Lots(), Parameters(), Visits(), NullLogger<GreenhouseDashboardService>.Instance);
+        _fixture.Factory, Lots(), Visits(), Sensors(), NullLogger<GreenhouseDashboardService>.Instance);
 
     private static ClaimsPrincipal Principal(int userId, string role) => new(new ClaimsIdentity(
         [new Claim(ClaimTypes.Role, role), new Claim("user_id", userId.ToString())], "test"));
@@ -132,16 +135,25 @@ public class GreenhouseDashboardSqlServerTests
         try
         {
             await parameters.UpdateSensorCheckIntervalsAsync([new SensorCheckInterval(type, 14)], Principal(1, "Administrador"));
-            var dashboard = Dashboard();
+            var sensors = Sensors();
 
-            Assert.False(await dashboard.RegisterCalibrationAsync(sensorId, Principal(1, "no-asignado")));
-            Assert.True(await dashboard.RegisterCalibrationAsync(sensorId, Principal(1, "Operador")));
+            Assert.False(await sensors.RegisterCalibrationAsync(sensorId, Principal(1, "no-asignado")));
+            Assert.True(await sensors.RegisterCalibrationAsync(sensorId, Principal(1, "Operador")));
 
-            var data = await dashboard.GetAsync(Principal(1, "Operador"));
-            var check = data.SensorChecks.Single(c => c.SensorId == sensorId);
-            Assert.Equal(data.Today, check.LastCalibration);
-            Assert.Equal(data.Today.AddDays(14), check.DueDate);
+            var list = await sensors.ListAsync();
+            var row = list.Sensors.Single(s => s.SensorId == sensorId);
+            Assert.Equal(list.Today, row.LastCalibration);
+            Assert.Equal(list.Today.AddDays(14), row.DueDate);
+            Assert.True(list.HasIntervals);
+
+            // El dashboard solo trae los vencidos y los que vencen en 7 días o menos: a 14 días no está; a 7, sí.
+            var data = await Dashboard().GetAsync(Principal(1, "Operador"));
+            Assert.DoesNotContain(data.SensorChecks, c => c.SensorId == sensorId);
             Assert.True(data.HasSensorIntervals);
+
+            await parameters.UpdateSensorCheckIntervalsAsync([new SensorCheckInterval(type, 7)], Principal(1, "Administrador"));
+            data = await Dashboard().GetAsync(Principal(1, "Operador"));
+            Assert.Equal(data.Today.AddDays(7), data.SensorChecks.Single(c => c.SensorId == sensorId).DueDate);
         }
         finally
         {
