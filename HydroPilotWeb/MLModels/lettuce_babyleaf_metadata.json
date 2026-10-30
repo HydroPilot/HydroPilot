@@ -1,0 +1,51 @@
+{
+  "model_name": "HydroPilotBabyLeafMultiHead",
+  "architecture": "MobileNetV3-Small-MultiHead",
+  "version": "2.0.0",
+  "input_shape": [
+    1,
+    3,
+    224,
+    224
+  ],
+  "input_name": "input",
+  "outputs": {
+    "npk_logits": [
+      "FN",
+      "-N",
+      "-P",
+      "-K"
+    ],
+    "health_logits": [
+      "Healthy",
+      "DownyMildew",
+      "PowderyMildew",
+      "Septoria",
+      "Aphids"
+    ],
+    "morph_metrics": [
+      "leaf_length_cm",
+      "leaf_area_cm2"
+    ]
+  },
+  "normalization": {
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "phenology_defaults": {
+    "t_base_celsius": 4.0,
+    "gdd_min_babyleaf": 140.0,
+    "gdd_max_babyleaf": 310.0,
+    "optimal_leaf_length_cm": 10.0,
+    "optimal_leaf_area_cm2": 65.0
+  },
+  "val_combined_accuracy": 0.9663324854107437
+}

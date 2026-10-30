@@ -71,7 +71,12 @@ public sealed record PlantDetailDto(
     string? LastImagePath,
     string? LastImageFileName,
     IReadOnlyList<PlantHistoryEntryDto> History,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    string? VisionPredominantClass = null,
+    decimal? VisionConfidence = null,
+    string? VisionHealthClass = null,
+    decimal? VisionFoliarArea = null,
+    decimal? VisionLeafLength = null);
 
 /// <summary>
 /// Regla híbrida de cosecha del lote: entrada en la ventana GDD Baby Leaf

@@ -105,6 +105,37 @@
                             <dd>Sin imagen</dd>
                         }
                     </div>
+                    @if (!string.IsNullOrEmpty(Detail.VisionPredominantClass) || !string.IsNullOrEmpty(Detail.VisionHealthClass))
+                    {
+                        <div>
+                            <dt>Nutrición NPK</dt>
+                            <dd>
+                                <span class="badge @GetVisionBadgeClass(Detail.VisionPredominantClass)">
+                                    @(Detail.VisionPredominantClass ?? "—")
+                                    @(Detail.VisionConfidence.HasValue ? $" ({Detail.VisionConfidence.Value:P0})" : "")
+                                </span>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Sanidad</dt>
+                            <dd>
+                                <span class="badge @(Detail.VisionHealthClass == "Healthy" ? "bg-success text-white" : "bg-danger text-white")">
+                                    @(Detail.VisionHealthClass ?? "—")
+                                </span>
+                            </dd>
+                        </div>
+                    }
+                    @if (Detail.VisionFoliarArea.HasValue || Detail.VisionLeafLength.HasValue)
+                    {
+                        <div>
+                            <dt>Área foliar</dt>
+                            <dd>@(Detail.VisionFoliarArea.HasValue ? $"{Detail.VisionFoliarArea.Value:0.##} cm²" : "—")</dd>
+                        </div>
+                        <div>
+                            <dt>Longitud hoja</dt>
+                            <dd>@(Detail.VisionLeafLength.HasValue ? $"{Detail.VisionLeafLength.Value:0.##} cm" : "—")</dd>
+                        </div>
+                    }
                 </dl>
 
                 @if (Detail.History.Count > 0)
@@ -202,4 +233,13 @@
     };
 
     private static string When(DateOnly? date) => date is { } d ? $" · {LotFormat.Day(d)}" : string.Empty;
+
+    private static string GetVisionBadgeClass(string? predClass) => predClass switch
+    {
+        "FN" => "bg-success text-white",
+        "-N" => "bg-warning text-dark",
+        "-P" => "bg-primary text-white",
+        "-K" => "bg-danger text-white",
+        _ => "bg-secondary text-white"
+    };
 }

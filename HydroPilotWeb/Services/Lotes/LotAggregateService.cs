@@ -273,9 +273,9 @@ public class LotAggregateService
             .FirstOrDefaultAsync(ct);
 
         var lastImage = await context.PlantImages
+            .Include(i => i.Analysis)
             .Where(i => i.PlantId == plantId)
             .OrderByDescending(i => i.CapturedAtUtc)
-            .Select(i => new { i.Path, i.FileName })
             .FirstOrDefaultAsync(ct);
 
         var stageNames = await context.CommercialStages
@@ -295,6 +295,8 @@ public class LotAggregateService
             warnings.Add("Sin evaluaciones registradas: BabyLeafScore y GrowthRate solo provienen de evaluaciones persistidas (no se inventan).");
         if (lastImage is null)
             warnings.Add("Sin imagen disponible.");
+
+        var analysis = lastImage?.Analysis;
 
         return new PlantDetailDto(
             plant.Id,
@@ -317,7 +319,12 @@ public class LotAggregateService
             lastImage?.Path,
             lastImage?.FileName,
             history,
-            warnings);
+            warnings,
+            analysis?.PredominantClass,
+            analysis?.Confidence,
+            analysis?.HealthClass,
+            analysis?.FoliarArea,
+            analysis?.LeafLength);
     }
 
     /// <summary>

@@ -4,6 +4,7 @@
 @using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Notifications
 @using HydroPilotWeb.Services.SimulationEnvironment
+@using HydroPilotWeb.Services.Vision
 @inject AdminMaintenanceService MaintenanceService
 @inject SimulationEnvironmentService SimulationEnvironment
 @inject NotificationService NotificationService
@@ -11,6 +12,7 @@
 @inject LotDailyFlowService DailyFlow
 @inject SettingsService Settings
 @inject WeatherService Weather
+@inject BabyLeafPipelineService BabyLeafPipeline
 @inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Mantenimiento de base de datos - HydroPilot</PageTitle>
@@ -315,6 +317,246 @@
                         Enviar email de prueba
                     </button>
                 }
+            </div>
+        </div>
+
+        <!-- Panel de Diagnóstico de Visión Artificial y Baby Leaf Score (ONNX Multi-Head) -->
+        <div class="action-card action-card--vision" style="grid-column: 1 / -1;">
+            <div class="action-card__body">
+                <div class="action-card__icon">🔬</div>
+                <div style="width: 100%;">
+                    <h4>Diagnóstico de Visión Artificial & Baby Leaf Score (ONNX Multi-Head)</h4>
+                    <p>
+                        Prueba manual del árbol de decisión completo en 6 etapas: Compuerta GDD, Nitidez y Calidad Laplaciana,
+                        Segmentación Morfológica (ExG), Tasa de Crecimiento (GrowthRate), Inferencia Multi-Head ONNX
+                        (Nutrición NPK + Sanidad Bremia/Oídio/Septoria/Áfidos) y cálculo del Baby Leaf Score (BLS 0-100).
+                    </p>
+
+                    <div class="vision-test-controls">
+                        <div class="vision-upload-box">
+                            <InputFile OnChange="HandleVisionFileSelected" accept="image/png,image/jpeg,image/webp" class="vision-file-input" id="vision-file-input" />
+                            <label for="vision-file-input" class="btn btn-secondary btn-sm">
+                                📁 Seleccionar fotografía de planta
+                            </label>
+                            @if (!string.IsNullOrEmpty(_visionFileName))
+                            {
+                                <span class="vision-filename text-muted small ms-2">@_visionFileName</span>
+                            }
+                        </div>
+
+                        <div class="vision-param-grid mt-2">
+                            <label class="param-item">
+                                <span class="small text-muted">GDD acumulado:</span>
+                                <input type="number" step="0.1" class="form-control form-control-sm" @bind="_testGdd" />
+                            </label>
+                            <label class="param-item">
+                                <span class="small text-muted">Ventana GDD Min:</span>
+                                <input type="number" step="1" class="form-control form-control-sm" @bind="_testGddMin" />
+                            </label>
+                            <label class="param-item">
+                                <span class="small text-muted">Ventana GDD Max:</span>
+                                <input type="number" step="1" class="form-control form-control-sm" @bind="_testGddMax" />
+                            </label>
+                            <label class="param-item">
+                                <span class="small text-muted">Escala cm/px:</span>
+                                <input type="number" step="0.005" class="form-control form-control-sm" @bind="_testCmPerPx" />
+                            </label>
+                            <label class="param-item">
+                                <span class="small text-muted">Área previa cm² (opcional):</span>
+                                <input type="number" step="0.1" class="form-control form-control-sm" @bind="_testPrevArea" placeholder="Ej: 35.0" />
+                            </label>
+                            <label class="param-item">
+                                <span class="small text-muted">GDD previo (opcional):</span>
+                                <input type="number" step="1" class="form-control form-control-sm" @bind="_testPrevGdd" placeholder="Ej: 220" />
+                            </label>
+                        </div>
+
+                        <div class="mt-2">
+                            <button class="btn btn-primary btn-sm" @onclick="ExecuteVisionEvaluationAsync" disabled="@(_isVisionProcessing || _visionFileBytes == null)">
+                                ⚡ Evaluar imagen en el pipeline Baby Leaf
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (_isVisionProcessing)
+                    {
+                        <div class="vision-loading mt-3">
+                            <div class="spinner spinner-sm"></div>
+                            <span>Ejecutando inferencia ONNX Multi-Head y validación geométrica...</span>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(_visionError))
+                    {
+                        <div class="alert alert-danger mt-3 mb-0">
+                            <span>@_visionError</span>
+                        </div>
+                    }
+
+                    @if (_visionEvalResult != null && !_isVisionProcessing)
+                    {
+                        <div class="vision-result mt-3 p-3 rounded border">
+                            <!-- Previsualización y Dictamen General -->
+                            <div class="vision-result__top">
+                                @if (!string.IsNullOrEmpty(_visionPreviewDataUrl))
+                                {
+                                    <div class="vision-result__preview">
+                                        <img src="@_visionPreviewDataUrl" alt="Previsualización" class="vision-img rounded border" />
+                                    </div>
+                                }
+                                <div class="vision-result__summary">
+                                    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                        <span class="badge @GetBabyLeafStatusBadgeClass(_visionEvalResult.Status)" style="font-size: 15px; padding: 6px 12px;">
+                                            @GetBabyLeafStatusLabel(_visionEvalResult.Status)
+                                        </span>
+                                        <span class="fs-5 fw-bold text-white">Score: @_visionEvalResult.BabyLeafScore.ToString("F1")/100</span>
+                                    </div>
+                                    <div class="progress mb-2" style="height: 10px; max-width: 320px;">
+                                        <div class="progress-bar @GetProgressBarClass(_visionEvalResult.BabyLeafScore)"
+                                             style="width: @Math.Min(100.0, _visionEvalResult.BabyLeafScore).ToString("F0")%"></div>
+                                    </div>
+                                    <p class="mb-1 text-light small">
+                                        <strong>Recomendación agronómica:</strong> @_visionEvalResult.Recommendation
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- Desglose de las 6 etapas del Árbol de Decisión -->
+                            <div class="stages-breakdown mt-3 pt-3 border-top">
+                                <h6 class="small text-uppercase text-muted mb-2">Desglose del Árbol de Decisión (6 Etapas):</h6>
+                                <div class="stages-grid">
+                                    <!-- Etapa 1: Ventana GDD -->
+                                    <div class="stage-card">
+                                        <div class="stage-card__header">
+                                            <strong>Etapa 1: Ventana GDD</strong>
+                                            <span class="badge @(_visionEvalResult.IsInTemporalWindow ? "badge-success" : "badge-danger")">
+                                                @(_visionEvalResult.IsInTemporalWindow ? "En ventana" : "Fuera de ventana")
+                                            </span>
+                                        </div>
+                                        <div class="stage-card__body small">
+                                            <div>GDD evaluado: <strong>@_visionEvalResult.AccumulatedGdd.ToString("F1")</strong></div>
+                                            <div>Ventana Baby Leaf: <strong>@_testGddMin - @_testGddMax GDD</strong></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Etapa 2: Calidad de Imagen -->
+                                    <div class="stage-card">
+                                        <div class="stage-card__header">
+                                            <strong>Etapa 2: Confiabilidad Imagen</strong>
+                                            @if (_visionEvalResult.ImageQuality != null)
+                                            {
+                                                <span class="badge @(_visionEvalResult.ImageQuality.IsReliable ? "badge-success" : "badge-danger")">
+                                                    @(_visionEvalResult.ImageQuality.IsReliable ? "Confiable" : "Rechazada")
+                                                </span>
+                                            }
+                                        </div>
+                                        <div class="stage-card__body small">
+                                            @if (_visionEvalResult.ImageQuality != null)
+                                            {
+                                                <div>Nitidez Laplaciana: <strong>@_visionEvalResult.ImageQuality.LaplacianVariance.ToString("F1")</strong> (mín 65.0)</div>
+                                                <div>Brillo medio: <strong>@_visionEvalResult.ImageQuality.MeanBrightness.ToString("F0")</strong> (35-235)</div>
+                                                <div>Saturados: <strong>@((_visionEvalResult.ImageQuality.SaturatedPixelRatio * 100).ToString("F1"))%</strong> (máx 18%)</div>
+                                                <div>Cobertura ExG: <strong>@((_visionEvalResult.ImageQuality.VegetationCoverageRatio * 100).ToString("F2"))%</strong> (mín 2%)</div>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">No evaluada</span>
+                                            }
+                                        </div>
+                                    </div>
+
+                                    <!-- Etapa 3: Morfología Foliar -->
+                                    <div class="stage-card">
+                                        <div class="stage-card__header">
+                                            <strong>Etapa 3: Morfología Foliar</strong>
+                                        </div>
+                                        <div class="stage-card__body small">
+                                            @if (_visionEvalResult.Morphology != null)
+                                            {
+                                                <div>Área foliar: <strong>@_visionEvalResult.Morphology.LeafAreaCm2.ToString("F1") cm²</strong> (ideal: 65)</div>
+                                                <div>Longitud hoja: <strong>@_visionEvalResult.Morphology.MaxLeafLengthCm.ToString("F1") cm</strong> (ideal: 10)</div>
+                                                <div>Roseta: <strong>@_visionEvalResult.Morphology.RosetteDiameterCm.ToString("F1") cm</strong></div>
+                                                <div>Solidez dosel: <strong>@_visionEvalResult.Morphology.CanopySolidity.ToString("F2")</strong></div>
+                                                <div>SizeRatio: <strong>@(_visionEvalResult.Morphology.SizeRatio?.ToString("F2") ?? "—")</strong></div>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">Sin datos morfológicos</span>
+                                            }
+                                        </div>
+                                    </div>
+
+                                    <!-- Etapa 4: GrowthRate -->
+                                    <div class="stage-card">
+                                        <div class="stage-card__header">
+                                            <strong>Etapa 4: Crecimiento</strong>
+                                        </div>
+                                        <div class="stage-card__body small">
+                                            <div>Tasa: <strong>@(_visionEvalResult.GrowthRateCm2PerGdd.HasValue ? $"{_visionEvalResult.GrowthRateCm2PerGdd.Value:F3} cm²/GDD" : "—")</strong></div>
+                                            <div>Factor vigor: <strong>@(_visionEvalResult.GrowthFactor.HasValue ? _visionEvalResult.GrowthFactor.Value.ToString("F2") : "0.85 (neutro)")</strong></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Etapa 5: Inferencia Multi-Head ONNX -->
+                                @if (_visionEvalResult.VisualState != null)
+                                {
+                                    <div class="mt-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <strong class="small text-white">Etapa 5: Diagnóstico Visual Multi-Head (ONNX)</strong>
+                                            <span class="small text-info">
+                                                Aptitud visual combinada S_visual: <strong>@((_visionEvalResult.VisualState.CombinedVisualAptitude * 100).ToString("F1"))%</strong>
+                                            </span>
+                                        </div>
+                                        <div class="multihead-grid">
+                                            <!-- Cabeza 1: Nutrición NPK -->
+                                            <div class="head-col p-2 rounded bg-dark border">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <span class="small fw-bold">Nutrición NPK</span>
+                                                    <span class="badge @GetNpkBadgeClass(_visionEvalResult.VisualState.TopNpkClass)">
+                                                        @_visionEvalResult.VisualState.TopNpkClass
+                                                    </span>
+                                                </div>
+                                                @foreach (var (cls, prob) in _visionEvalResult.VisualState.NpkProbabilities)
+                                                {
+                                                    <div class="prob-row">
+                                                        <span class="prob-name @(cls == _visionEvalResult.VisualState.TopNpkClass ? "fw-bold text-white" : "text-muted")">@cls</span>
+                                                        <div class="prob-bar-track">
+                                                            <div class="prob-bar-fill @(cls == _visionEvalResult.VisualState.TopNpkClass ? "active-npk" : "")"
+                                                                 style="width: @Math.Round(prob * 100)%"></div>
+                                                        </div>
+                                                        <span class="prob-val @(cls == _visionEvalResult.VisualState.TopNpkClass ? "fw-bold text-white" : "text-muted")">@((prob * 100).ToString("F1"))%</span>
+                                                    </div>
+                                                }
+                                            </div>
+
+                                            <!-- Cabeza 2: Sanidad / Plagas y Hongos -->
+                                            <div class="head-col p-2 rounded bg-dark border">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <span class="small fw-bold">Sanidad / Plagas y Hongos</span>
+                                                    <span class="badge @GetHealthBadgeClass(_visionEvalResult.VisualState.TopHealthClass)">
+                                                        @_visionEvalResult.VisualState.TopHealthClass
+                                                    </span>
+                                                </div>
+                                                @foreach (var (cls, prob) in _visionEvalResult.VisualState.HealthProbabilities)
+                                                {
+                                                    <div class="prob-row">
+                                                        <span class="prob-name @(cls == _visionEvalResult.VisualState.TopHealthClass ? "fw-bold text-white" : "text-muted")">@cls</span>
+                                                        <div class="prob-bar-track">
+                                                            <div class="prob-bar-fill @(cls == _visionEvalResult.VisualState.TopHealthClass ? (cls == "Healthy" ? "active-healthy" : "active-pathogen") : "")"
+                                                                 style="width: @Math.Round(prob * 100)%"></div>
+                                                        </div>
+                                                        <span class="prob-val @(cls == _visionEvalResult.VisualState.TopHealthClass ? "fw-bold text-white" : "text-muted")">@((prob * 100).ToString("F1"))%</span>
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
             </div>
         </div>
     </div>
@@ -651,9 +893,139 @@
         animation: spin 0.8s linear infinite;
         margin: 0 auto 12px;
     }
+    .action-card--vision {
+        border-left: 4px solid #8b5cf6;
+    }
 
-    @@keyframes spin {
-        to { transform: rotate(360deg); }
+    .vision-file-input {
+        display: none;
+    }
+
+    .vision-param-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        background: rgba(0, 0, 0, 0.2);
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--border-inner, #29384e);
+    }
+
+    .param-item {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .vision-result {
+        background: var(--card-inner-bg, #1e2b3d);
+        border-color: var(--border-inner, #29384e) !important;
+    }
+
+    .vision-result__top {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .vision-img {
+        max-width: 140px;
+        max-height: 140px;
+        object-fit: cover;
+    }
+
+    .stages-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+    }
+
+    .stage-card {
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px solid var(--border-inner, #29384e);
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .stage-card__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding-bottom: 4px;
+    }
+
+    .multihead-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+    }
+
+    .prob-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+        font-size: 12px;
+    }
+
+    .prob-name {
+        width: 110px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .prob-bar-track {
+        flex: 1;
+        height: 6px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    .prob-bar-fill {
+        height: 100%;
+        background: #475467;
+        border-radius: 3px;
+        transition: width 0.3s ease;
+    }
+
+    .prob-bar-fill.active-npk {
+        background: #2e90fa;
+    }
+
+    .prob-bar-fill.active-healthy {
+        background: #12b76a;
+    }
+
+    .prob-bar-fill.active-pathogen {
+        background: #f04438;
+    }
+
+    .prob-val {
+        width: 45px;
+        text-align: right;
+    }
+
+    .spinner-sm {
+        width: 18px;
+        height: 18px;
+        border-width: 2px;
+        display: inline-block;
+        vertical-align: middle;
+        margin: 0 8px 0 0;
+    }
+
+    .vision-loading {
+        display: flex;
+        align-items: center;
+        color: var(--text-muted, #8ea1b4);
+        font-size: 13px;
     }
 </style>
 
@@ -865,4 +1237,122 @@
             _isProcessing = false;
         }
     }
+
+    // Diagnóstico de Visión Artificial y Baby Leaf Score
+    private string? _visionFileName;
+    private byte[]? _visionFileBytes;
+    private string? _visionPreviewDataUrl;
+    private bool _isVisionProcessing = false;
+    private string? _visionError;
+    private BabyLeafEvaluationResult? _visionEvalResult;
+
+    private double _testGdd = 280.0;
+    private double _testGddMin = 250.0;
+    private double _testGddMax = 450.0;
+    private double _testCmPerPx = 0.045;
+    private double? _testPrevArea;
+    private double? _testPrevGdd;
+
+    private async Task HandleVisionFileSelected(InputFileChangeEventArgs e)
+    {
+        _visionError = null;
+        _visionEvalResult = null;
+        var file = e.File;
+        if (file == null) return;
+
+        if (file.Size > 25 * 1024 * 1024)
+        {
+            _visionError = "La imagen supera el límite permitido de 25 MB.";
+            return;
+        }
+
+        try
+        {
+            _visionFileName = file.Name;
+            using var stream = file.OpenReadStream(maxAllowedSize: 25 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            _visionFileBytes = ms.ToArray();
+
+            var base64 = Convert.ToBase64String(_visionFileBytes);
+            _visionPreviewDataUrl = $"data:{file.ContentType};base64,{base64}";
+        }
+        catch (Exception ex)
+        {
+            _visionError = $"Error al leer el archivo: {ex.Message}";
+        }
+    }
+
+    private async Task ExecuteVisionEvaluationAsync()
+    {
+        if (_visionFileBytes == null || _visionFileBytes.Length == 0)
+        {
+            _visionError = "Seleccione una imagen primero.";
+            return;
+        }
+
+        _isVisionProcessing = true;
+        _visionError = null;
+
+        try
+        {
+            using var ms = new MemoryStream(_visionFileBytes);
+            _visionEvalResult = await BabyLeafPipeline.EvaluatePlantAsync(
+                imageStream: ms,
+                accumulatedGdd: _testGdd,
+                gddMin: _testGddMin,
+                gddMax: _testGddMax,
+                cmPerPixel: _testCmPerPx,
+                previousAreaCm2: _testPrevArea,
+                previousGdd: _testPrevGdd);
+        }
+        catch (Exception ex)
+        {
+            _visionError = $"Error en la evaluación: {ex.Message}";
+        }
+        finally
+        {
+            _isVisionProcessing = false;
+        }
+    }
+
+    private static string GetBabyLeafStatusBadgeClass(BabyLeafStageStatus status) => status switch
+    {
+        BabyLeafStageStatus.Apta => "badge-success text-white",
+        BabyLeafStageStatus.Candidata => "badge-warning text-dark",
+        BabyLeafStageStatus.NoApta => "badge-danger text-white",
+        BabyLeafStageStatus.NoBabyLeaf => "badge-secondary text-white",
+        _ => "badge-info text-white"
+    };
+
+    private static string GetBabyLeafStatusLabel(BabyLeafStageStatus status) => status switch
+    {
+        BabyLeafStageStatus.Apta => "Apta Baby Leaf",
+        BabyLeafStageStatus.Candidata => "Candidata",
+        BabyLeafStageStatus.NoApta => "No Apta",
+        BabyLeafStageStatus.NoBabyLeaf => "No Baby Leaf (Fuera de ventana)",
+        _ => "Sin decisión (Repetir captura)"
+    };
+
+    private static string GetProgressBarClass(double score)
+    {
+        if (score >= 78.0) return "bg-success";
+        if (score >= 50.0) return "bg-warning";
+        return "bg-danger";
+    }
+
+    private static string GetNpkBadgeClass(string? npkClass) => npkClass switch
+    {
+        "FN" => "badge-success text-white",
+        "-N" => "badge-warning text-dark",
+        "-P" => "badge-info text-white",
+        "-K" => "badge-danger text-white",
+        _ => "badge-secondary text-white"
+    };
+
+    private static string GetHealthBadgeClass(string? healthClass) => healthClass switch
+    {
+        "Healthy" => "badge-success text-white",
+        _ => "badge-danger text-white"
+    };
 }

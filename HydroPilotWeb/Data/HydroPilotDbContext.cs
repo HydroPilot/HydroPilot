@@ -842,6 +842,16 @@ public class HydroPilotDbContext : DbContext
             entity.Property(e => e.DamagePercent).HasColumnType("decimal(8,2)");
             entity.Property(e => e.GrowthRate).HasColumnType("decimal(8,2)");
             entity.Property(e => e.ImageQuality).HasColumnType("decimal(8,4)");
+            entity.Property(e => e.PredominantClass).HasMaxLength(50);
+            entity.Property(e => e.Confidence).HasColumnType("decimal(6,4)");
+            entity.Property(e => e.HealthClass).HasMaxLength(50);
+            entity.Property(e => e.HealthConfidence).HasColumnType("decimal(6,4)");
+            entity.Property(e => e.LaplacianVariance).HasColumnType("decimal(10,2)");
+            entity.Property(e => e.VegetationCoverageRatio).HasColumnType("decimal(8,4)");
+            entity.Property(e => e.CanopySolidity).HasColumnType("decimal(8,4)");
+            entity.Property(e => e.SizeRatio).HasColumnType("decimal(8,4)");
+            entity.Property(e => e.BabyLeafScore).HasColumnType("decimal(5,2)");
+            entity.Property(e => e.BabyLeafStatus).HasMaxLength(50);
             entity.Property(e => e.ModelVersion).IsRequired().HasMaxLength(50);
 
             entity.HasOne(e => e.PlantImage)
