@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -8,134 +8,90 @@ namespace HydroPilotWeb.Migrations
     public partial class AddBabyLeafVisionPipeline : Migration
     {
         /// <inheritdoc />
+        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<decimal>(
-                name: "BabyLeafScore",
-                table: "PlantImageAnalyses",
-                type: "decimal(5,2)",
-                nullable: true);
+            migrationBuilder.Sql(@"
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'BabyLeafScore')
+    ALTER TABLE [PlantImageAnalyses] ADD [BabyLeafScore] decimal(5,2) NULL;
 
-            migrationBuilder.AddColumn<string>(
-                name: "BabyLeafStatus",
-                table: "PlantImageAnalyses",
-                type: "nvarchar(50)",
-                maxLength: 50,
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'BabyLeafStatus')
+    ALTER TABLE [PlantImageAnalyses] ADD [BabyLeafStatus] nvarchar(50) NULL;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "CanopySolidity",
-                table: "PlantImageAnalyses",
-                type: "decimal(8,4)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'CanopySolidity')
+    ALTER TABLE [PlantImageAnalyses] ADD [CanopySolidity] decimal(8,4) NULL;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "Confidence",
-                table: "PlantImageAnalyses",
-                type: "decimal(6,4)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'Confidence')
+    ALTER TABLE [PlantImageAnalyses] ADD [Confidence] decimal(6,4) NULL;
+ELSE
+    ALTER TABLE [PlantImageAnalyses] ALTER COLUMN [Confidence] decimal(6,4) NULL;
 
-            migrationBuilder.AddColumn<string>(
-                name: "HealthClass",
-                table: "PlantImageAnalyses",
-                type: "nvarchar(50)",
-                maxLength: 50,
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'HealthClass')
+    ALTER TABLE [PlantImageAnalyses] ADD [HealthClass] nvarchar(50) NULL;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "HealthConfidence",
-                table: "PlantImageAnalyses",
-                type: "decimal(6,4)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'HealthConfidence')
+    ALTER TABLE [PlantImageAnalyses] ADD [HealthConfidence] decimal(6,4) NULL;
 
-            migrationBuilder.AddColumn<string>(
-                name: "HealthProbabilitiesJson",
-                table: "PlantImageAnalyses",
-                type: "nvarchar(max)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'HealthProbabilitiesJson')
+    ALTER TABLE [PlantImageAnalyses] ADD [HealthProbabilitiesJson] nvarchar(max) NULL;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "LaplacianVariance",
-                table: "PlantImageAnalyses",
-                type: "decimal(10,2)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'LaplacianVariance')
+    ALTER TABLE [PlantImageAnalyses] ADD [LaplacianVariance] decimal(10,2) NULL;
 
-            migrationBuilder.AddColumn<string>(
-                name: "PredominantClass",
-                table: "PlantImageAnalyses",
-                type: "nvarchar(50)",
-                maxLength: 50,
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'PredominantClass')
+    ALTER TABLE [PlantImageAnalyses] ADD [PredominantClass] nvarchar(50) NULL;
 
-            migrationBuilder.AddColumn<string>(
-                name: "ProbabilitiesJson",
-                table: "PlantImageAnalyses",
-                type: "nvarchar(max)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'ProbabilitiesJson')
+    ALTER TABLE [PlantImageAnalyses] ADD [ProbabilitiesJson] nvarchar(max) NULL;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "SizeRatio",
-                table: "PlantImageAnalyses",
-                type: "decimal(8,4)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'SizeRatio')
+    ALTER TABLE [PlantImageAnalyses] ADD [SizeRatio] decimal(8,4) NULL;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "VegetationCoverageRatio",
-                table: "PlantImageAnalyses",
-                type: "decimal(8,4)",
-                nullable: true);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'VegetationCoverageRatio')
+    ALTER TABLE [PlantImageAnalyses] ADD [VegetationCoverageRatio] decimal(8,4) NULL;
+");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "BabyLeafScore",
-                table: "PlantImageAnalyses");
+            migrationBuilder.Sql(@"
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'BabyLeafScore')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [BabyLeafScore];
 
-            migrationBuilder.DropColumn(
-                name: "BabyLeafStatus",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'BabyLeafStatus')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [BabyLeafStatus];
 
-            migrationBuilder.DropColumn(
-                name: "CanopySolidity",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'CanopySolidity')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [CanopySolidity];
 
-            migrationBuilder.DropColumn(
-                name: "Confidence",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'Confidence')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [Confidence];
 
-            migrationBuilder.DropColumn(
-                name: "HealthClass",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'HealthClass')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [HealthClass];
 
-            migrationBuilder.DropColumn(
-                name: "HealthConfidence",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'HealthConfidence')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [HealthConfidence];
 
-            migrationBuilder.DropColumn(
-                name: "HealthProbabilitiesJson",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'HealthProbabilitiesJson')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [HealthProbabilitiesJson];
 
-            migrationBuilder.DropColumn(
-                name: "LaplacianVariance",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'LaplacianVariance')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [LaplacianVariance];
 
-            migrationBuilder.DropColumn(
-                name: "PredominantClass",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'PredominantClass')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [PredominantClass];
 
-            migrationBuilder.DropColumn(
-                name: "ProbabilitiesJson",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'ProbabilitiesJson')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [ProbabilitiesJson];
 
-            migrationBuilder.DropColumn(
-                name: "SizeRatio",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'SizeRatio')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [SizeRatio];
 
-            migrationBuilder.DropColumn(
-                name: "VegetationCoverageRatio",
-                table: "PlantImageAnalyses");
+IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('PlantImageAnalyses') AND name = 'VegetationCoverageRatio')
+    ALTER TABLE [PlantImageAnalyses] DROP COLUMN [VegetationCoverageRatio];
+");
         }
     }
 }
