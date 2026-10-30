@@ -8,13 +8,14 @@ namespace HydroPilotWeb.Services.Notifications;
 
 /// <summary>
 /// Filtros del historial de alertas: tipo y severidad (NotificationTypes / NotificationSeverities), abiertas o resueltas
-/// (null = las dos), lote, fechas (del invernadero, "hasta" incluido), texto en el título o el mensaje, y la página.
+/// (null = las dos), texto en el nombre del lote, fechas (del invernadero, "hasta" incluido), texto en el título o el
+/// mensaje, y la página.
 /// </summary>
 public sealed record AlertFilter(
     string? Type = null,
     string? Severity = null,
     bool? Open = null,
-    int? LotId = null,
+    string? LotText = null,
     DateOnly? From = null,
     DateOnly? To = null,
     string? Text = null,
@@ -38,8 +39,6 @@ public sealed record AlertHistoryPage(IReadOnlyList<AlertHistoryRow> Rows, int T
 {
     public int Pages => PageSize <= 0 ? 0 : (int)Math.Ceiling(Total / (double)PageSize);
 }
-
-public sealed record AlertLotOption(int Id, string Name);
 
 /// <summary>Nombre de cada tipo y severidad de alerta en la vista.</summary>
 public static class AlertLabels
@@ -98,21 +97,6 @@ public sealed class AlertHistoryService
         _dbFactory = dbFactory;
     }
 
-    /// <summary>Lotes que tienen alguna alerta, para el filtro (en orden natural del nombre).</summary>
-    public async Task<IReadOnlyList<AlertLotOption>> LotsAsync(CancellationToken ct = default)
-    {
-        await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        var lots = await context.NotificationAlerts.AsNoTracking()
-            .Where(a => a.LotId != null && a.Type != NotificationTypes.PruebaSistema)
-            .Select(a => new { Id = a.LotId!.Value, a.Lot!.Name })
-            .Distinct()
-            .ToListAsync(ct);
-        return lots
-            .Select(l => new AlertLotOption(l.Id, string.IsNullOrWhiteSpace(l.Name) ? $"Lote {l.Id}" : l.Name))
-            .OrderBy(l => l.Name, NaturalStringComparer.Instance)
-            .ToList();
-    }
-
     public async Task<AlertHistoryPage> SearchAsync(AlertFilter filter, CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
@@ -130,8 +114,8 @@ public sealed class AlertHistoryService
             query = query.Where(a => a.Severity == filter.Severity);
         if (filter.Open is { } open)
             query = query.Where(a => a.IsResolved != open);
-        if (filter.LotId is { } lotId)
-            query = query.Where(a => a.LotId == lotId);
+        if (filter.LotText?.Trim() is { Length: > 0 } lotText)
+            query = query.Where(a => a.Lot != null && a.Lot.Name != null && a.Lot.Name.Contains(lotText));
         if (filter.From is { } from)
         {
             var fromUtc = Utc(from);

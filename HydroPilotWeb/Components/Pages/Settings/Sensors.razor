@@ -23,6 +23,24 @@
                     <span class="settings-eyebrow">Invernadero</span>
                     <h3>Sensores</h3>
                 </div>
+                <InfoTip Title="Cómo funciona Sensores" Wide="true">
+                    <span class="hp-info__text">
+                        Todos los sensores del invernadero: pH y CE de cada circuito, temperatura y humedad del invernadero, con
+                        su última calibración y su próximo chequeo.
+                    </span>
+                    <span class="hp-info__list">
+                        <span><b>Próximo chequeo</b> = última calibración + los días de su tipo (Ajustes &gt; Parámetros &gt;
+                            Chequeo de sensores; de fábrica pH 14, CE 30, temperatura y humedad 90). Sin calibración registrada,
+                            vence hoy. Vencido o de hoy, en <b class="hp-info__bad">rojo</b>.</span>
+                        <span><b>Calibrado hoy:</b> tildá la casilla cuando calibrás el sensor y queda anotado hoy; tildada en
+                            <b class="hp-info__good">verde</b> = ya se calibró hoy. La usan todos los roles asignados.</span>
+                        <span><b>Filtros:</b> tipo, lugar, chequeo (vencidos, vencen en 7 días o menos, al día o sin programar)
+                            y activos o inactivos.</span>
+                        <span>El dashboard muestra los vencidos y los que vencen en 7 días o menos.</span>
+                        <span>Los <b>errores de sensores</b> (rango normal y salto máximo) también se definen en Parámetros:
+                            frenan el control y se ven en Optimización &gt; Episodios.</span>
+                    </span>
+                </InfoTip>
             </div>
 
             @if (list is null)
@@ -108,12 +126,8 @@
                                         @if (canCalibrate)
                                         {
                                             <td class="text-end">
-                                                <button type="button" class="btn btn-sm hp-btn-secondary text-nowrap"
-                                                        disabled="@(calibrating is not null || sensor.LastCalibration == list.Today)"
-                                                        title="@(sensor.LastCalibration == list.Today ? "Ya se calibró hoy" : "Anota hoy como fecha de calibración")"
-                                                        @onclick="() => CalibrateAsync(sensor.SensorId)">
-                                                    @(calibrating == sensor.SensorId ? "Guardando…" : "Calibrado hoy")
-                                                </button>
+                                                <CalibrationCheck Checked="@(sensor.LastCalibration == list.Today)" Busy="@(calibrating == sensor.SensorId)"
+                                                                  Disabled="@(calibrating is not null)" OnCheck="() => CalibrateAsync(sensor.SensorId)" />
                                             </td>
                                         }
                                     </tr>

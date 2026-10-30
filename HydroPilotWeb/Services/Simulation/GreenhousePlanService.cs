@@ -238,14 +238,13 @@ public sealed class GreenhousePlanService
         }
 
         var cycle = new GreenhouseCycle(
-            DenseCycleDays: Math.Round(denseDays + SimulationStrategies.DenseCleaningDays, 1),
+            DenseCycleDays: Math.Round(denseDays + transplant.DenseCleaningDays, 1),
             AdultDays: Math.Round(adultDays, 1),
             BabyLeafShare: Math.Round((decimal)cut / total, 4),
             RescueShare: Math.Round(Math.Max(0m, (decimal)(total - cut - early) / total), 4),
             AdultLossRate: Math.Round(lossRate, 4),
             BabyLeafValue: Math.Round(blGrams / 1000m * blPrice - Nutrients(babyLeafDays), 2),
-            AdultValue: Math.Round((1m - lossRate) * adultGrams / 1000m * adultPrice - Nutrients(decisionDay + adultDays)
-                                   - transplant.CostPerPlant, 2),
+            AdultValue: Math.Round((1m - lossRate) * adultGrams / 1000m * adultPrice - Nutrients(decisionDay + adultDays), 2),
             UnplacedCost: Math.Round(Nutrients(closesDay), 2),
             SeedCost: seedPrice);
 

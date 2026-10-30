@@ -14,6 +14,27 @@
             <div>
                 <h3>Escenario</h3>
             </div>
+            <InfoTip Title="Qué se carga para calcular" Wide="true" Start="true">
+                <span class="hp-info__text">
+                    Proyecta, por mes, cuánto dejaría el invernadero con distintas cantidades de circuitos densos y de Adultas
+                    en la misma superficie. Es solo una cuenta: no cambia los circuitos.
+                </span>
+                <span class="hp-info__list">
+                    <span><b>Superficie de circuitos (m²):</b> el lugar a repartir; vacío = la de los circuitos activos de hoy.
+                        Un circuito ocupa sus huecos × la separación² (6,5 cm el denso y 22,5 cm el de Adultas): 200 huecos ≈
+                        0,85 m² y 20 huecos ≈ 1 m².</span>
+                    <span><b>Precio por semilla:</b> lo que cuesta cada planta sembrada.</span>
+                    <span><b>Baby Leaf que podés vender (kg/mes):</b> el tope del mercado; vacío = lo vendido por mes en los
+                        últimos 12 meses. Las <span class="hp-info__swatch" style="background: #2d7dd2;"></span>Baby Leaf que
+                        pasan el tope van a Adultas si hay lugar o se descartan. Las
+                        <span class="hp-info__swatch" style="background: #8a4fd3;"></span>adultas no tienen tope.</span>
+                    <span><b>Del histórico</b> (lotes cerrados de los últimos 12 meses): cuántos días ocupa un lote el denso
+                        (más los días de limpieza de Parámetros), cuántos días una adulta su hueco, qué % se corta como Baby Leaf, qué % puede ir
+                        a Adultas y qué % de las adultas se pierde.</span>
+                    <span><b>Desde Ajustes &gt; Parámetros:</b> los pesos por planta y los precios por kg, los precios de la
+                        Solución A y B, las separaciones entre huecos y los días de limpieza del denso.</span>
+                </span>
+            </InfoTip>
         </div>
         <div class="plan-form">
             <label class="plan-label" for="plan-area">Superficie de circuitos (m²)</label>
@@ -36,6 +57,7 @@
         @if (plan is null)
         {
             <article class="panel">
+                <div class="plan-results__info">@ResultsInfo</div>
                 <div class="panel__callout">
                     <h3>Distribución de circuitos</h3>
                     <p>Cargá la superficie y presioná <strong>Calcular</strong>.</p>
@@ -45,6 +67,12 @@
         else
         {
             <article class="panel">
+                <div class="panel__header">
+                    <div>
+                        <h3>Distribución de circuitos</h3>
+                    </div>
+                    @ResultsInfo
+                </div>
                 @if (plan.Best is { } best)
                 {
                     <div class="mini-grid">
@@ -162,6 +190,7 @@
     .plan-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #5b6b7b; margin-top: 4px; }
     .plan-results { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
     .plan-card--diff strong { font-size: 1.75rem; }
+    .plan-results__info { display: flex; justify-content: flex-end; }
     .plan-card--diff strong.plan-diff--up { color: #4ade80; } /* verde más claro que text-success, para que destaque */
     .sim-section { margin: 22px 0 10px; font-size: 1rem; font-weight: 700; }
 </style>
@@ -201,6 +230,38 @@
     private string Money(decimal value) => LotFormat.Money(value, Currency);
 
     private string SignedMoney(decimal value) => value > 0 ? "+" + Money(value) : Money(value);
+
+    /// <summary>Cómo funciona el plan, en síntesis: la "i" de arriba a la derecha de los resultados.</summary>
+    private static RenderFragment ResultsInfo => __builder =>
+    {
+        <InfoTip Title="Cómo funciona el plan" Wide="true">
+            <span class="hp-info__text">
+                Cada distribución se evalúa <b>por mes, en régimen</b>: el denso se vuelve a sembrar apenas se libera y cada
+                hueco de Adultas recibe una tanda tras otra.
+            </span>
+            <span class="hp-info__list">
+                <span><b>Sembradas</b> = densos × huecos × 30,4 ÷ días que ocupa un lote el denso. <b>Lotes por mes</b> =
+                    densos × 30,4 ÷ esos días.</span>
+                <span><span class="hp-info__swatch" style="background: #2d7dd2;"></span><b>Baby Leaf</b> = las aptas (% del
+                    histórico), hasta el tope de venta. <span class="hp-info__swatch" style="background: #8a4fd3;"></span><b>A
+                    Adultas</b> = las que no llegan a Baby Leaf (o pasan el tope) hasta llenar los huecos (circuitos × huecos
+                    × 30,4 ÷ días de la adulta). Si con tus precios una adulta deja más que una Baby Leaf, los huecos que
+                    sobran se llenan con Baby Leafs. Las que no entran se descartan.</span>
+                <span><b>Valor por planta:</b> Baby Leaf = g × $/kg − nutrientes hasta el corte; adulta = (1 − pérdida) × g
+                    × $/kg − nutrientes de toda su vida; descartada = sus nutrientes. La semilla, aparte.</span>
+                <span><b>Margen por mes</b> = Baby Leaf × su valor + adultas × su valor − descartadas × sus nutrientes −
+                    sembradas × semilla.</span>
+                <span><b class="hp-info__good">Conviene:</b> la distribución de más margen (a igual margen, la de menos
+                    circuitos). <b>Hoy:</b> tus circuitos activos. <b>Diferencia:</b> lo que ganarías por mes.</span>
+                <span><b>Lo que deja cada circuito:</b> un denso (hasta el tope de Baby Leaf) y uno de Adultas lleno, por mes
+                    y por m²; <b>Tope de Baby Leaf</b>: cuántos densos lo cubren.</span>
+                <span><b>Tabla:</b> todas las distribuciones que entran en la superficie (de 1 denso hasta los que entren, con
+                    el resto en circuitos de Adultas); la que conviene, marcada.</span>
+                <span><b>No incluye</b> costos fijos por circuito (bombas, energía) y es un promedio del año (no separa
+                    épocas).</span>
+            </span>
+        </InfoTip>
+    };
 
     private static string Lots(decimal lots) => $"{LotFormat.Num(lots)} {(lots == 1m ? "lote" : "lotes")}";
 

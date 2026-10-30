@@ -5,6 +5,7 @@
 @using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Dashboard
+@using HydroPilotWeb.Components.Dashboard
 @inject LotOverviewService LotOverview
 @inject RecentVisitService RecentVisits
 @inject LotCreationService LotCreation
@@ -93,6 +94,33 @@ else
                 <LotComments LotId="commentsLotId" LotName="@(lots.FirstOrDefault(l => l.Id == commentsLotId)?.Name ?? "Lote")" User="user" />
             }
 
+            @* Cómo funciona la vista, en síntesis (a la derecha de todo). *@
+            <span class="lot-page-info">
+                <InfoTip Title="Cómo funciona Lotes" Wide="true">
+                    <span class="hp-info__text">
+                        Un <b>lote</b> es una siembra en un circuito denso: cada hueco es una planta. La vista lo sigue de la
+                        siembra a la cosecha y dice qué cortar, cuándo y cuánto va a dar.
+                    </span>
+                    <span class="hp-info__list">
+                        <span><b>Calor acumulado (GDD):</b> de acá sale casi todo (fase, ventanas, fechas, etapa). Cada día suma
+                            (mín(Tmáx, 30) + Tmín) ÷ 2 − 4,5 °C, con el sensor de temperatura del invernadero; para adelante usa
+                            el pronóstico de 7 días corregido a la temperatura de adentro (≈ = estimado).</span>
+                        <span><b>Estado de cada planta:</b> lo decide el flujo diario con el GDD del lote y el <b>score Baby
+                            Leaf</b> de su última evaluación (tamaño, color, crecimiento): apta con 80 o más, candidata con 60 o
+                            más. Una anomalía abierta de pH o CE pone en riesgo a las activas.</span>
+                        <span><b>Datos del lote:</b> sus plantas y evaluaciones, sus circuitos (denso y de Adultas), sus metas,
+                            sus lecturas de temperatura y sus anomalías.</span>
+                        <span><b>Datos históricos:</b> los lotes cerrados del mismo cultivo e invernadero (de la misma época del
+                            año si hay al menos 3) para el óptimo de corte Baby Leaf y el rendimiento esperado.</span>
+                        <span><b>Qué se hace acá:</b> cosechar (como Baby Leaf o adulta), descartar y trasplantar a Adultas desde
+                            <b>Seleccionar</b> en el mapa; editar las metas; comentar el lote (💬).</span>
+                        <span><b>Desde Ajustes &gt; Parámetros:</b> los pesos por planta y los precios por kg, y del trasplante
+                            el GDD de decisión, los días de estrés, el tamaño máximo Baby Leaf, las separaciones y los
+                            días de limpieza del denso. La ventana Baby Leaf (250–450 GDD) y los scores son del cultivo.</span>
+                    </span>
+                </InfoTip>
+            </span>
+
             @* "Ver al" (fecha simulada): oculto por ahora, quizás vuelva. Mezclaba el GDD de esa fecha con el
                estado de hoy de las plantas y confundía. La lógica sigue (simDate); para volver a mostrarlo,
                descomentar este bloque.
@@ -133,7 +161,38 @@ else
                     <section class="panel">
                         @* Título con el botón Seleccionar / Cancelar a la derecha; los filtros siempre en la línea de abajo. *@
                         <div class="lot-panel-head">
-                            <h3 class="lot-panel-title">Mapa del lote</h3>
+                            <span class="lot-head-title">
+                                <h3 class="lot-panel-title">Mapa del lote</h3>
+                                <InfoTip Title="Cómo leer el mapa" Start="true">
+                                    <span class="hp-info__text">
+                                        Cada cuadrado es un hueco del circuito con su planta, del color de su estado de hoy (lo
+                                        actualiza el flujo diario):
+                                    </span>
+                                    <span class="hp-info__chips">
+                                <span class="hp-info__pump"><span style="background: #2e9e4f;"></span>En desarrollo</span>
+                                <span class="hp-info__pump"><span style="background: #2d7dd2;"></span>Baby Leaf</span>
+                                <span class="hp-info__pump"><span style="background: #e8a33d;"></span>Candidata</span>
+                                <span class="hp-info__pump"><span style="background: #8a4fd3;"></span>Adulta</span>
+                                <span class="hp-info__pump"><span style="background: #d64545;"></span>Riesgo</span>
+                                <span class="hp-info__pump"><span style="background: #8a94a0;"></span>Descartada</span>
+                            </span>
+                                    <span class="hp-info__list">
+                                        <span>Un hueco con <b>AD punteado</b> es una planta que se trasplantó a Adultas; un
+                                            <b>·</b> es un hueco sin planta. Debajo van los <b>circuitos de Adultas</b> con las
+                                            trasplantadas del lote.</span>
+                                        <span><b>Filtros:</b> resaltan las de un estado (con Seleccionar, "Seleccionar todas"
+                                            toma solo esas).</span>
+                                        <span><b>Tocar una planta:</b> su detalle, con el score Baby Leaf, la etapa, el
+                                            crecimiento, la imagen y su historial.</span>
+                                        <span><b>Seleccionar:</b> marcás plantas y las <b>cosechás</b> (Baby Leaf o adulta; viene
+                                            elegido lo que corresponde por su estado), las <b>descartás</b> con un motivo o las
+                                            <b>trasplantás</b> a Adultas (durante la ventana Baby Leaf, eligiendo los circuitos y
+                                            su orden). No se puede deshacer.</span>
+                                        <span>Cuando no quedan plantas activas, el lote se cierra solo (Cosechado o
+                                            Descartado).</span>
+                                    </span>
+                                </InfoTip>
+                            </span>
                             @if (!overview.IsClosed)
                             {
                                 @if (!selecting)
@@ -167,8 +226,8 @@ else
                                         <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--transplant" disabled="@(!CanTransplantPicked || operating)"
                                                 title="@TransplantHint" @onclick="() => AskBatch(BatchAction.Transplant)">Trasplantar</button>
                                     }
-                                    <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--harvest" disabled="@(picked.Count == 0 || operating)"
-                                            @onclick="() => AskBatch(BatchAction.Harvest)">Cosechar</button>
+                                    <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--harvest"
+                                            disabled="@(picked.Count == 0 || operating)" @onclick="() => AskBatch(BatchAction.Harvest)">Cosechar</button>
                                     <button type="button" class="btn btn-sm lot-batch-btn lot-batch-btn--discard" disabled="@(picked.Count == 0 || operating)"
                                             @onclick="() => AskBatch(BatchAction.Discard)">Descartar</button>
                                 </span>
@@ -212,17 +271,6 @@ else
                                 }
                             </div>
                         }
-                        @* Estado de todas las plantas del lote, a todo el ancho debajo del mapa. *@
-                        <div class="mt-3">
-                            <LotStatusBar Plants="overview.Plants" />
-                        </div>
-                        <div class="lot-map-foot">
-                            <p class="lot-muted mb-0">
-                                @(overview.IsClosed ? "Tocá una planta del mapa para ver su detalle."
-                                    : selecting ? "Tocá las plantas activas para marcarlas o desmarcarlas."
-                                    : "Tocá una planta para ver su detalle, o usá Seleccionar para cosechar o descartar varias.")
-                            </p>
-                        </div>
                     </section>
 
                     <LotTechnicalDetails Overview="overview" />
@@ -230,19 +278,67 @@ else
 
                 <div class="lot-layout__side">
                     <LotWindowCard Overview="overview" />
-                    @if (transplantPlan is { IsDue: true } plan)
-                    {
-                        <LotTransplantCard Plan="plan" Currency="@Currency" CanTransplant="canTransplant" Busy="operating" OnReview="ReviewTransplant" />
-                    }
-                    <LotBabyLeafCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
-                    <LotActiveCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
+                    @* Pesos y precios: parámetros del sistema, se cargan en Ajustes > Parámetros. *@
+                    <LotYieldCard Overview="overview" CanEdit="canEditParameters" />
+                    @* Las metas del lote juntas, bajo "Metas" con una bandera a cuadros. *@
+                    <section class="lot-goals" aria-labelledby="lot-goals-title">
+                        <h3 class="lot-goals__title" id="lot-goals-title">
+                            <svg class="lot-goals__icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path class="lot-goals__pole" d="M5 21V3.5" />
+                                <path class="lot-goals__flag" d="M5 4h14v9H5" />
+                                <rect x="5" y="4" width="3.5" height="3" />
+                                <rect x="12" y="4" width="3.5" height="3" />
+                                <rect x="8.5" y="7" width="3.5" height="3" />
+                                <rect x="15.5" y="7" width="3.5" height="3" />
+                                <rect x="5" y="10" width="3.5" height="3" />
+                                <rect x="12" y="10" width="3.5" height="3" />
+                            </svg>
+                            Metas
+                            @* Un solo lápiz para las dos metas: abre el modal de metas del lote. *@
+                            @if (canEdit)
+                            {
+                                <button type="button" class="lot-icon-btn lot-goals__edit" @onclick="OpenEditor"
+                                        title="Editar metas del lote" aria-label="Editar metas del lote">✎</button>
+                            }
+                            <span class="lot-goals__info">
+                                <InfoTip Title="Las metas del lote">
+                                    <span class="hp-info__list">
+                                        <span><b>Meta Baby Leaf:</b> qué % de las plantas del lote querés cosechar como Baby Leaf. En la
+                                            barra, las <span class="hp-info__swatch" style="background: #2d7dd2;"></span><b>cosechadas como
+                                            Baby Leaf</b> + las <b>Baby Leafs</b> de hoy son lo logrado; sumando las
+                                            <span class="hp-info__swatch" style="background: #e8a33d;"></span><b>candidatas</b>, lo que se
+                                            espera lograr.</span>
+                                        <span><b>Meta Plantas activas:</b> qué % querés que llegue al final sin descartarse (las
+                                            cosechadas cuentan). La barra va <b class="hp-info__good">verde</b> si llega y
+                                            <b class="hp-info__bad">roja</b> si no; las en riesgo, rayadas en rojo al final.</span>
+                                        <span>Miden cómo sale el ciclo: no frenan el corte.</span>
+                                    </span>
+                                </InfoTip>
+                            </span>
+                        </h3>
+                        <LotBabyLeafCard Overview="overview" />
+                        <LotActiveCard Overview="overview" />
+                    </section>
+                    @* Estado de todas las plantas del lote, debajo de las metas (antes debajo de los mapas). *@
+                    <section class="lot-card" aria-labelledby="lot-states-title">
+                        <header class="lot-card__head">
+                            <h3 class="lot-card__title" id="lot-states-title">Plantas por estado</h3>
+                        </header>
+                        <DashboardStageChart Stages="@StageCounts(overview.Plants)" Compact="true" Description="Plantas del lote por estado" />
+                        @if (overview.Plants.Harvested > 0)
+                        {
+                            <div class="lot-legend">
+                                <span class="lot-legend__item">
+                                    <span class="lot-legend__dot lot-seg--striped" style="background-color: #8a94a0;"></span>
+                                    Cosechadas
+                                </span>
+                            </div>
+                        }
+                    </section>
 
                     @* Umbral de cosecha (% de Baby Leafs para cortar el lote): oculto por ahora, en revisión si aporta valor.
                     <LotThresholdCard Overview="overview" CanEdit="canEdit" OnEditObjectives="OpenEditor" />
                     *@
-
-                    @* Pesos y precios: parámetros del sistema, se cargan en Ajustes > Parámetros. *@
-                    <LotYieldCard Overview="overview" CanEdit="canEditParameters" />
                 </div>
             </div>
 
@@ -269,20 +365,61 @@ else
     var transplantAction = action == BatchAction.Transplant;
     var count = LotFormat.Plants(picked.Count);
     <LotModal Title="@(transplantAction ? "Trasplantar a Adultas" : harvest ? "Cosechar plantas" : "Descartar plantas")" Busy="operating" OnClose="CloseBatch">
-        @if (transplantAction)
+        @if (transplantAction && transplantPlan is { } plan)
         {
+            @* Se eligen los circuitos de Adultas y su orden (1, 2, …): se llenan hueco por hueco, el 1 primero. Solo los que
+               hacen falta: cuando los elegidos ya alcanzan para las plantas, no se puede agregar otro. *@
             <p class="mt-0">
-                Pasan <strong>@count</strong> a @string.Join(", ", transplantPlan?.Room.Select(r => r.CircuitName) ?? [])
-                (en ese orden, hueco por hueco). Mano de obra: @LotFormat.Money((transplantPlan?.CostPerPlant ?? 0m) * picked.Count, Currency).
+                Elegí a qué circuitos de Adultas pasan las <strong>@count</strong>, en orden.
+            </p>
+            <div class="lot-transplant-pick" role="group" aria-label="Circuitos de Adultas">
+                @foreach (var room in plan.Room)
+                {
+                    var position = transplantOrder.IndexOf(room.CircuitId);
+                    var chosen = position >= 0;
+                    var enough = !chosen && ChosenHoles >= picked.Count;
+                    <button type="button" class="lot-transplant-pick__item @(chosen ? "is-chosen" : null)"
+                            aria-pressed="@(chosen ? "true" : "false")" disabled="@(enough || operating)"
+                            title="@(enough ? "Los elegidos ya alcanzan para las plantas" : null)"
+                            @onclick="() => ToggleTransplantCircuit(room.CircuitId)">
+                        <span class="lot-transplant-pick__order">@(chosen ? (position + 1).ToString() : null)</span>
+                        <span class="lot-transplant-pick__text">
+                            <span class="lot-transplant-pick__name">@room.CircuitName</span>
+                            <span class="lot-transplant-pick__holes">@LotFormat.Count(room.FreeHoles, "hueco libre", "huecos libres")</span>
+                        </span>
+                    </button>
+                }
+            </div>
+            <p class="lot-muted mt-2 mb-0">
+                <span class="@(ChosenHoles < picked.Count ? "text-danger fw-semibold" : null)">
+                    @LotFormat.Count(ChosenHoles, "hueco elegido", "huecos elegidos") para @count.
+                </span>
                 No se puede deshacer.
             </p>
         }
         else if (harvest)
         {
             <p class="mt-0">
-                Se van a cosechar <strong>@count</strong>: @SplitText(HarvestSplit()).
+                Se van a cosechar <strong>@count</strong>: @SplitText(ChosenSplit()).
                 La fecha de cosecha es hoy (@LotFormat.Day(DateOnly.FromDateTime(DateTime.UtcNow))) y no se puede deshacer.
             </p>
+            @* Cómo cosecharlas: viene elegido lo que corresponde por su estado; se puede cambiar (las trasplantadas siempre
+               son adultas). Con plantas de los dos destinos, además "Según su estado". *@
+            var mixed = HarvestSplit() is { BabyLeaf: > 0, Adult: > 0 };
+            <div class="lot-choices" role="radiogroup" aria-label="Cosechar como">
+                <span class="plant-detail__label">Cosechar como</span>
+                @if (mixed)
+                {
+                    <button type="button" role="radio" aria-checked="@(harvestAs is null ? "true" : "false")"
+                            class="lot-choice @(harvestAs is null ? "is-on" : null)" @onclick="() => harvestAs = null">Según su estado</button>
+                }
+                <button type="button" role="radio" aria-checked="@(harvestAs == HarvestDestination.BabyLeaf ? "true" : "false")"
+                        class="lot-choice @(harvestAs == HarvestDestination.BabyLeaf ? "is-on" : null)"
+                        @onclick="() => harvestAs = HarvestDestination.BabyLeaf">Baby Leaf</button>
+                <button type="button" role="radio" aria-checked="@(harvestAs == HarvestDestination.Convencional ? "true" : "false")"
+                        class="lot-choice @(harvestAs == HarvestDestination.Convencional ? "is-on" : null)"
+                        @onclick="() => harvestAs = HarvestDestination.Convencional">Adulta</button>
+            </div>
         }
         else
         {
@@ -301,7 +438,8 @@ else
         }
         <div class="lot-editor__actions">
             <button class="btn btn-outline-secondary btn-sm" @onclick="CloseBatch" disabled="@operating">Cancelar</button>
-            <button class="btn btn-sm @(transplantAction || harvest ? "btn-success" : "btn-danger")" @onclick="ConfirmBatchAsync" disabled="@operating">
+            <button class="btn btn-sm @(transplantAction || harvest ? "btn-success" : "btn-danger")" @onclick="ConfirmBatchAsync"
+                    disabled="@(operating || (transplantAction && ChosenHoles < picked.Count))">
                 @(operating ? (transplantAction ? "Trasplantando…" : harvest ? "Cosechando…" : "Descartando…")
                     : $"{(transplantAction ? "Trasplantar" : harvest ? "Cosechar" : "Descartar")} {count}")
             </button>
@@ -485,9 +623,8 @@ else
         <div class="lot-popover @popover.Css" style="@popover.Style" role="dialog"
              aria-label="@($"Detalle de la posición F{detail!.Row}-C{detail.Column}")"
              tabindex="-1" @ref="popoverRef" @onkeydown="OnPopoverKeyDown">
-            <PlantDetailCard Detail="detail" AllowActions="!(overview?.IsClosed ?? true)" Busy="operating"
-                             OnHarvest="HarvestSelectedAsync" OnDiscard="DiscardSelectedAsync"
-                             OnClose="ClosePopover" />
+            @* Solo información: cosechar, descartar y trasplantar se hacen desde "Seleccionar". *@
+            <PlantDetailCard Detail="detail" OnClose="ClosePopover" />
         </div>
     };
 
@@ -678,14 +815,6 @@ else
         }
     }
 
-    private async Task HarvestSelectedAsync()
-    {
-        if (detail is not { PlantId: > 0 } plant)
-            return;
-
-        await OperateAsync(() => PlantLifecycle.HarvestPlantAsync(plant.PlantId), "No se pudo cosechar");
-    }
-
     // --- Selección de plantas: cosechar o descartar varias ---
 
     private static bool IsSelectable(PlantCellDto cell) =>
@@ -720,19 +849,19 @@ else
         _ => "Pasan a Adultas las marcadas del circuito denso."
     };
 
-    /// <summary>Card de trasplante: marca en el mapa las que propone el sistema para revisarlas y confirmar.</summary>
-    private void ReviewTransplant()
-    {
-        if (transplantPlan is not { } plan)
-            return;
-        ClosePopover();
-        notice = null;
-        picked.Clear();
-        foreach (var id in plan.Proposal.PlantIds)
-            picked.Add(id);
-        highlightKey = null;
-        selecting = true;
-    }
+    /// <summary>
+    /// Barras de la card "Plantas por estado", como el gráfico del dashboard: las mismas seis, y las cosechadas rayadas
+    /// dentro de la de su destino (Baby Leaf o adulta).
+    /// </summary>
+    private static IReadOnlyList<DashboardStageCount> StageCounts(LotPlantBreakdown plants) =>
+    [
+        new("En desarrollo", plants.Developing, CommercialStageNames.EnDesarrollo),
+        new("Baby Leaf", plants.Apta, CommercialStageNames.BabyLeafApta, plants.HarvestedAsBabyLeaf),
+        new("Candidata", plants.Candidate, CommercialStageNames.CandidataBabyLeaf),
+        new("Adulta", plants.Conventional, CommercialStageNames.CosechaConvencional, plants.Harvested - plants.HarvestedAsBabyLeaf),
+        new("Descartada", plants.Discarded, null),
+        new("Riesgo", plants.Risk, CommercialStageNames.RiesgoFueraDeVentana),
+    ];
 
     private string SelectAllLabel => highlightKey is null
         ? $"Seleccionar todas ({Selectable().Count})"
@@ -764,6 +893,57 @@ else
         batchError = null;
         batchReason = null;
         batchAction = action;
+        if (action == BatchAction.Transplant)
+            SuggestTransplantOrder();
+        if (action == BatchAction.Harvest)
+        {
+            // Lo que corresponde por su estado: si todas van al mismo destino, ese; si no, "según su estado".
+            harvestAs = HarvestSplit() switch
+            {
+                { Adult: 0 } => HarvestDestination.BabyLeaf,
+                { BabyLeaf: 0 } => HarvestDestination.Convencional,
+                _ => null,
+            };
+        }
+    }
+
+    /// <summary>Cómo cosechar las seleccionadas: null = según el estado de cada una.</summary>
+    private HarvestDestination? harvestAs;
+
+    /// <summary>Cuántas van a Baby Leaf y cuántas a adulta con lo elegido (las trasplantadas, siempre adultas).</summary>
+    private (int BabyLeaf, int Adult) ChosenSplit()
+    {
+        if (harvestAs is null)
+            return HarvestSplit();
+        var cells = overview?.State.AllCells.Where(c => c.PlantId is { } id && picked.Contains(id)).ToList() ?? [];
+        return harvestAs == HarvestDestination.BabyLeaf
+            ? (cells.Count(c => !c.IsAdultRoute), cells.Count(c => c.IsAdultRoute))
+            : (0, cells.Count);
+    }
+
+    /// <summary>Circuitos de Adultas elegidos para el trasplante, en el orden en que se llenan.</summary>
+    private readonly List<int> transplantOrder = [];
+
+    private int ChosenHoles =>
+        transplantPlan?.Room.Where(r => transplantOrder.Contains(r.CircuitId)).Sum(r => r.FreeHoles) ?? 0;
+
+    /// <summary>Sugerencia al abrir: los primeros que alcanzan (los que ya tiene el lote y después en orden de nombre).</summary>
+    private void SuggestTransplantOrder()
+    {
+        transplantOrder.Clear();
+        foreach (var room in transplantPlan?.Room ?? [])
+        {
+            if (ChosenHoles >= picked.Count)
+                break;
+            transplantOrder.Add(room.CircuitId);
+        }
+    }
+
+    /// <summary>Tocar un circuito lo agrega al final del orden; tocarlo de nuevo lo saca (los de atrás suben).</summary>
+    private void ToggleTransplantCircuit(int circuitId)
+    {
+        if (!transplantOrder.Remove(circuitId) && ChosenHoles < picked.Count)
+            transplantOrder.Add(circuitId);
     }
 
     private void CloseBatch()
@@ -803,7 +983,7 @@ else
             var ids = picked.ToList();
             if (action == BatchAction.Transplant)
             {
-                var moved = await PlantTransplant.TransplantAsync(lotId, ids, user);
+                var moved = await PlantTransplant.TransplantAsync(lotId, ids, user, circuitOrder: transplantOrder.ToList());
                 if (!moved.Succeeded)
                 {
                     batchError = string.Join(" ", moved.Errors);
@@ -816,7 +996,7 @@ else
             }
 
             var result = action == BatchAction.Harvest
-                ? await PlantLifecycle.HarvestPlantsAsync(lotId, ids)
+                ? await PlantLifecycle.HarvestPlantsAsync(lotId, ids, destination: harvestAs)
                 : await PlantLifecycle.DiscardPlantsAsync(lotId, ids, string.IsNullOrWhiteSpace(batchReason) ? null : batchReason.Trim());
             StopSelecting();
             notice = action == BatchAction.Harvest
@@ -834,15 +1014,6 @@ else
         }
     }
 
-    private async Task DiscardSelectedAsync(string? reason)
-    {
-        if (detail is not { PlantId: > 0 } plant)
-            return;
-
-        await OperateAsync(() => PlantLifecycle.DiscardPlantAsync(plant.PlantId, reason), "No se pudo descartar");
-    }
-
-    /// <summary>Ejecuta una operación sobre la planta seleccionada y recarga manteniendo la selección.</summary>
     /// <summary>
     /// Recarga después de cosechar o descartar. Si ya no quedan plantas activas, el lote se cerró solo
     /// (PlantLifecycleService): se avisa y se actualiza el estado en el selector.
@@ -856,32 +1027,6 @@ else
             var status = closed.State.StatusName == "COSECHADO" ? "cosechado" : "descartado";
             notice = $"{notice} No quedan plantas activas: el lote se cerró como {status}.".Trim();
             lots = await LotOverview.GetLotOptionsAsync();
-        }
-    }
-
-    private async Task OperateAsync(Func<Task> operation, string errorPrefix)
-    {
-        operating = true;
-        try
-        {
-            await operation();
-            var position = selected;
-            notice = null;
-            await ReloadAfterPlantChangeAsync();
-            if (position is { } pos
-                && overview?.State.AllCells.FirstOrDefault(c => c.CircuitId == pos.Circuit && c.Row == pos.Row && c.Column == pos.Column) is { } cell)
-            {
-                selected = pos;
-                detail = await LoadDetailAsync(cell);
-            }
-        }
-        catch (Exception ex)
-        {
-            error = $"{errorPrefix}: {ex.Message}";
-        }
-        finally
-        {
-            operating = false;
         }
     }
 

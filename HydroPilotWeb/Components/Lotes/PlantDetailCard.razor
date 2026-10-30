@@ -48,36 +48,14 @@
                 }
             </div>
 
-            @if (Detail.BabyLeafScore is { } score)
-            {
-                <p class="plant-detail__score">
-                    Score Baby Leaf <strong>@LotFormat.Num(score)/100</strong>
-                </p>
-            }
-
-            @if (AllowActions && Detail.OperationalState == PlantOperationalState.Activa)
-            {
-                <div class="plant-detail__actions">
-                    <button class="btn btn-sm btn-success" @onclick="OnHarvest" disabled="@Busy">
-                        Cosechar F@(Detail.Row)-C@(Detail.Column)
-                    </button>
-                    <button class="btn btn-sm btn-outline-danger" @onclick="() => showDiscardInput = !showDiscardInput" disabled="@Busy">
-                        Descartar
-                    </button>
-                </div>
-                @if (showDiscardInput)
-                {
-                    <div class="input-group input-group-sm mb-2">
-                        <input class="form-control" placeholder="Motivo del descarte (opcional)" @bind="discardReason" />
-                        <button class="btn btn-danger" @onclick="ConfirmDiscardAsync" disabled="@Busy">Confirmar</button>
-                    </div>
-                }
-            }
-
             @* Solo datos de la planta: GDD, pH y CE son del lote y ya están en la vista. *@
             <details class="mt-2">
                 <summary>Detalle de la planta</summary>
                 <dl class="plant-facts">
+                    <div>
+                        <dt>Score Baby Leaf</dt>
+                        <dd>@(Detail.BabyLeafScore is { } score ? $"{LotFormat.Num(score)}/100" : "—")</dd>
+                    </div>
                     <div>
                         <dt>Etapa fenológica</dt>
                         <dd>@(Detail.PhenologicalStageName ?? "—")</dd>
@@ -145,40 +123,12 @@
 @code {
     [Parameter] public PlantDetailDto? Detail { get; set; }
 
-    /// <summary>Muestra cosechar/descartar para plantas activas (solo la vista Lotes).</summary>
-    [Parameter] public bool AllowActions { get; set; }
-    [Parameter] public bool Busy { get; set; }
-    [Parameter] public EventCallback OnHarvest { get; set; }
-    [Parameter] public EventCallback<string?> OnDiscard { get; set; }
-
     /// <summary>Si se pasa, muestra un botón × para cerrar (uso como popover en la vista Lotes).</summary>
     [Parameter] public EventCallback OnClose { get; set; }
 
     private RenderFragment? CloseButton => OnClose.HasDelegate
         ? @<button type="button" class="btn-close btn-sm" aria-label="Cerrar detalle" @onclick="OnClose"></button>
         : null;
-
-    private bool showDiscardInput;
-    private string? discardReason;
-    private int? lastPlantId;
-
-    protected override void OnParametersSet()
-    {
-        // Al cambiar de planta se cierra el formulario de descarte.
-        if (Detail?.PlantId != lastPlantId)
-        {
-            showDiscardInput = false;
-            discardReason = null;
-            lastPlantId = Detail?.PlantId;
-        }
-    }
-
-    private async Task ConfirmDiscardAsync()
-    {
-        await OnDiscard.InvokeAsync(string.IsNullOrWhiteSpace(discardReason) ? null : discardReason.Trim());
-        showDiscardInput = false;
-        discardReason = null;
-    }
 
     private static string DotColor(string? state) => state switch
     {

@@ -4,12 +4,12 @@ namespace HydroPilotWeb.Services.Simulation;
 /// Cómo rinde un ciclo del invernadero (del histórico de lotes cerrados y los precios de Parámetros), por planta:
 /// <list type="bullet">
 /// <item>DenseCycleDays: días que un lote ocupa el circuito denso (de la siembra a que sale la última planta) más la
-/// limpieza; AdultDays: días que una trasplantada ocupa su hueco de Adultas (del trasplante al corte).</item>
+/// limpieza (Ajustes &gt; Parámetros); AdultDays: días que una trasplantada ocupa su hueco de Adultas (del trasplante al corte).</item>
 /// <item>BabyLeafShare: de las sembradas, las que se cortan como Baby Leaf; RescueShare: las que siguen vivas sin llegar
 /// a Baby Leaf (pueden ir a Adultas; si no hay lugar, se descartan al cerrar la ventana); AdultLossRate: trasplantadas
 /// que se pierden antes del corte.</item>
 /// <item>BabyLeafValue: por Baby Leaf, venta − nutrientes hasta el corte; AdultValue: por trasplantada, venta × (1 −
-/// pérdida) − nutrientes de toda su vida − mano de obra del trasplante; UnplacedCost: nutrientes de una que no entra
+/// pérdida) − nutrientes de toda su vida (sin mano de obra desde 2026-10-28); UnplacedCost: nutrientes de una que no entra
 /// en Adultas hasta que cierra la ventana; SeedCost: por planta sembrada.</item>
 /// </list>
 /// </summary>
