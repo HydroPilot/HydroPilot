@@ -1,7 +1,8 @@
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Estado de TODAS las plantas del lote (activas, cosechadas y descartadas), en % del total. *@
+@* Estado de TODAS las plantas del lote (activas, cosechadas y descartadas), en % del total. Con ShowLegend, debajo
+   cada estado con su color y cuántas son (la card de la derecha de Lotes, lejos de los filtros del mapa). *@
 @if (Plants.TotalPlants > 0)
 {
     <div class="lot-stack" role="img" aria-label="@AriaLabel">
@@ -16,10 +17,26 @@
             </div>
         }
     </div>
+    @if (ShowLegend)
+    {
+        <div class="lot-legend mt-2">
+            @foreach (var item in Layout)
+            {
+                <span class="lot-legend__item">
+                    <span class="lot-legend__dot @(item.Segment.Striped ? "lot-seg--striped" : null)"
+                          style="background-color: @item.Segment.Background;"></span>
+                    @item.Segment.Label <strong>@item.Segment.Count</strong>
+                </span>
+            }
+        </div>
+    }
 }
 
 @code {
     [Parameter, EditorRequired] public LotPlantBreakdown Plants { get; set; } = null!;
+
+    /// <summary>Debajo de la barra, cada estado con su color y cuántas son.</summary>
+    [Parameter] public bool ShowLegend { get; set; }
 
     private sealed record Segment(string Label, int Count, string Background, string Text, bool Striped = false);
 

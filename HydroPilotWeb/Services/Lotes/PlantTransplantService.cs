@@ -94,7 +94,12 @@ public class PlantTransplantService
             plants.Count(p => p.TransplantedOn is not null));
     }
 
-    public async Task<TransplantResult> TransplantAsync(int lotId, IReadOnlyCollection<int> plantIds, ClaimsPrincipal user, CancellationToken ct = default)
+    /// <param name="circuitOrder">
+    /// Circuitos de Adultas elegidos, en el orden en que se llenan (desde 2026-10-28); null = todos los disponibles, primero
+    /// los que ya tiene el lote.
+    /// </param>
+    public async Task<TransplantResult> TransplantAsync(int lotId, IReadOnlyCollection<int> plantIds, ClaimsPrincipal user,
+        CancellationToken ct = default, IReadOnlyList<int>? circuitOrder = null)
     {
         if (!CanTransplant(user))
             return Fail("Solo Administrador, Productor y Operador pueden trasplantar.");
@@ -114,8 +119,15 @@ public class PlantTransplantService
             return Fail("Solo se trasplantan plantas activas que siguen en el circuito denso.");
 
         var room = await RoomAsync(context, lot, ct);
+        if (circuitOrder is not null)
+        {
+            var chosen = circuitOrder.Distinct().Select(id => room.FirstOrDefault(r => r.CircuitId == id)).ToList();
+            if (chosen.Count == 0 || chosen.Any(r => r is null))
+                return Fail("Alguno de los circuitos elegidos ya no tiene lugar: volvé a elegir.");
+            room = chosen.Select(r => r!).ToList();
+        }
         if (room.Sum(r => r.FreeHoles) < plants.Count)
-            return Fail($"No entran: hay {room.Sum(r => r.FreeHoles)} huecos libres en Adultas.");
+            return Fail($"No entran: hay {room.Sum(r => r.FreeHoles)} huecos libres en los circuitos de Adultas elegidos.");
 
         // Queda "En desarrollo" en la ruta Adulta: pasa a "Adulta" cuando llega a su corte (lo decide el flujo diario).
         var developing = await context.CommercialStages.FirstOrDefaultAsync(
@@ -218,7 +230,7 @@ public class PlantTransplantService
         return circuits
             .Where(c => c.Holder is null || c.Holder == lot.Id)
             .OrderBy(c => c.Holder == lot.Id ? 0 : 1)
-            .ThenBy(c => c.Name)
+            .ThenBy(c => c.Name, NaturalStringComparer.Instance)
             .Select(c => new AdultRoom(c.Id, c.Name, Math.Max(0, c.GridRows * c.GridColumns - c.Used)))
             .Where(r => r.FreeHoles > 0)
             .ToList();

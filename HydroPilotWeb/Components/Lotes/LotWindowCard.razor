@@ -8,6 +8,28 @@
 <section class="lot-card" aria-labelledby="lot-window-title">
     <header class="lot-card__head">
         <h3 class="lot-card__title" id="lot-window-title">@(Overview.IsClosed ? "Ciclo" : "Ventana actual")</h3>
+        <InfoTip Title="La ventana del lote">
+            <span class="hp-info__text">
+                La línea de tiempo del ciclo por calor acumulado (GDD), de la siembra a la sobremadurez. La fase de hoy va en
+                color pleno.
+            </span>
+            <span class="hp-info__stack">
+                <span class="hp-info__pump"><span style="background: #2e9e4f;"></span>Desarrollo: 0–250 GDD</span>
+                <span class="hp-info__pump"><span style="background: #2d7dd2;"></span>Baby Leaf: 250–450 GDD</span>
+                <span class="hp-info__pump"><span style="background: #8a4fd3;"></span>Adulta: 450–750 GDD</span>
+            </span>
+            <span class="hp-info__list">
+                <span><b>Fechas:</b> las que ya pasaron salen del GDD medido; las futuras, del pronóstico de 7 días corregido a
+                    la temperatura de adentro; más allá de 7 días, extrapoladas (≈).</span>
+                <span><b>Cosecha óptima Baby Leaf:</b> el <b>pico de aptas</b>, el día con más Baby Leafs a la vez. Se toma el
+                    historial de lotes parecidos como referencia para estimar. Cuando las aptas empiezan a bajar se sugiere la
+                    decisión: <b class="hp-info__good">Cortar ahora</b>.</span>
+                <span><b>Cosecha óptima Adulta:</b> 650 GDD más los días de estrés del trasplante (Ajustes &gt;
+                    Parámetros).</span>
+                <span>La que sigue en el denso a los 450 GDD sin cortarse se descarta; después de 750, pasado de
+                    cosecha.</span>
+            </span>
+        </InfoTip>
     </header>
 
     @if (Overview.IsClosed)

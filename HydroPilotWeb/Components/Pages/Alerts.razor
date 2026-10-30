@@ -21,10 +21,44 @@
                     <span class="settings-eyebrow">Invernadero</span>
                     <h3>Alertas</h3>
                 </div>
-                @if (result is { OpenCount: > 0 } open)
-                {
-                    <span class="lot-chip lot-chip--danger">@LotFormat.Count(open.OpenCount, "abierta", "abiertas")</span>
-                }
+                <div class="settings-head-actions">
+                    @if (result is { OpenCount: > 0 } open)
+                    {
+                        <span class="lot-chip lot-chip--danger">@LotFormat.Count(open.OpenCount, "abierta", "abiertas")</span>
+                    }
+                    <InfoTip Title="Cómo funciona Alertas" Wide="true">
+                        <span class="hp-info__text">
+                            El historial de todas las alertas del invernadero: los avisos que se mandan a las personas (bandeja
+                            y email) cuando algo necesita atención. Solo lectura.
+                        </span>
+                        <span class="hp-info__list">
+                            <span><b>Qué las genera:</b> <b>Solución fuera de banda</b> (el pH o la CE de un lote salieron de su
+                                banda dos o más lecturas seguidas), <b>Error de sensor</b> (sin datos, fuera de lo normal o un
+                                salto), <b>Control pausado</b> (3 dosis seguidas sin efecto), <b>Pi desconectada</b> y
+                                <b>Cosecha inminente</b>.</span>
+                            <span><b>Severidad:</b> el punto de color de cada una.</span>
+                        </span>
+                        <span class="hp-info__chips">
+                            <span class="hp-info__pump"><span style="background: var(--bs-danger);"></span>Crítica</span>
+                            <span class="hp-info__pump"><span style="background: #f08c2e;"></span>Alta</span>
+                            <span class="hp-info__pump"><span style="background: #e8c23d;"></span>Media</span>
+                            <span class="hp-info__pump"><span style="background: #8a94a0;"></span>Informativa</span>
+                        </span>
+                        <span class="hp-info__list">
+                            <span><b>Estado:</b> <span class="lot-chip lot-chip--danger">Abierta</span> mientras dura lo que la
+                                causó; se resuelve sola cuando eso se resuelve (<span class="lot-chip lot-chip--muted">Resuelta</span>,
+                                con la fecha en el tooltip).</span>
+                            <span><b>Alerta:</b> tocá el título para ir a donde corresponde (Optimización con el circuito o el
+                                lote, o Lotes); el mensaje completo va en el tooltip.</span>
+                            <span><b>Filtros:</b> texto en el título o el mensaje, tipo, severidad, abiertas o resueltas, lote
+                                (contiene) y fechas. De a 50 por página, las más nuevas primero.</span>
+                            <span><b>Bandeja (la campanita):</b> la copia de cada usuario, para marcar leídas o eliminar;
+                                borrarla de la bandeja no borra la alerta.</span>
+                            <span><b>Se cambia:</b> los rangos de los sensores en Ajustes &gt; Parámetros (Errores de sensores) y
+                                si te llegan por email en Ajustes &gt; Notificaciones.</span>
+                        </span>
+                    </InfoTip>
+                </div>
             </div>
 
             <div class="hp-grid-filters">
@@ -49,13 +83,8 @@
                     <option value="open">Abiertas</option>
                     <option value="resolved">Resueltas</option>
                 </select>
-                <select class="form-select form-select-sm" aria-label="Lote" @bind="lotId" @bind:after="SearchAsync">
-                    <option value="">Todos los lotes</option>
-                    @foreach (var lot in lots)
-                    {
-                        <option value="@lot.Id">@lot.Name</option>
-                    }
-                </select>
+                <input type="search" class="form-control form-control-sm" placeholder="Lote"
+                       aria-label="El nombre del lote contiene" @bind="lotText" @bind:after="SearchAsync" />
                 <HpDateInput @bind-Value="from" @bind-Value:after="SearchAsync" Max="to" Small="true"
                              Placeholder="Desde" AriaLabel="Desde" />
                 <HpDateInput @bind-Value="to" @bind-Value:after="SearchAsync" Min="from" Small="true"
@@ -167,7 +196,10 @@
 </style>
 
 @code {
-    private IReadOnlyList<AlertLotOption> lots = [];
+    /// <summary>"abiertas" o "resueltas": el filtro con que abre (el cuadro de alertas del dashboard manda "abiertas").</summary>
+    [SupplyParameterFromQuery(Name = "estado")]
+    public string? StateFromQuery { get; set; }
+
     private AlertHistoryPage? result;
     private string? error;
     private bool loading;
@@ -176,20 +208,13 @@
     private string type = "";
     private string severity = "";
     private string state = "";
-    private string lotId = "";
+    private string lotText = "";
     private DateOnly? from;
     private DateOnly? to;
 
     protected override async Task OnInitializedAsync()
     {
-        try
-        {
-            lots = await AlertHistory.LotsAsync();
-        }
-        catch (Exception ex)
-        {
-            error = $"No se pudieron cargar los lotes: {ex.Message}";
-        }
+        state = StateFromQuery switch { "abiertas" => "open", "resueltas" => "resolved", _ => "" };
         await LoadAsync(1);
     }
 
@@ -207,7 +232,7 @@
                 Type: type == "" ? null : type,
                 Severity: severity == "" ? null : severity,
                 Open: state switch { "open" => true, "resolved" => false, _ => null },
-                LotId: int.TryParse(lotId, out var id) ? id : null,
+                LotText: lotText,
                 From: from,
                 To: to,
                 Text: text,

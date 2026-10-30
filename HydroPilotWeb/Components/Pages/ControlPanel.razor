@@ -59,31 +59,44 @@ else
                       title="Última señal de la Pi: consulta de comandos (HTTP) o mensaje (IoT Hub)">
                     @(view.LastCommandPollAtUtc is { } poll ? $"Pi {Ago(poll)}" : "Pi sin señal")
                 </span>
-                @if (canConfigure)
-                {
-                    <button type="button" class="lot-chip" @onclick="StartTankEdit">Tanque @Liters(view.ReservoirLiters)</button>
-                }
-                else
-                {
-                    <span class="lot-chip">Tanque @Liters(view.ReservoirLiters)</span>
-                }
+                <span class="lot-chip" title="Los litros del tanque se cambian en Infraestructura > Circuitos">Tanque @Liters(view.ReservoirLiters)</span>
             }
-        </div>
 
-        @if (editingTank)
-        {
-            <div class="ctl-tank-edit">
-                <label class="form-label small mb-0" for="ctl-tank">Litros</label>
-                <input id="ctl-tank" type="number" min="1" step="1" class="form-control form-control-sm ctl-amount"
-                       value="@tankText" @oninput="e => tankText = e.Value?.ToString() ?? string.Empty" />
-                <button type="button" class="btn btn-success btn-sm" disabled="@busy" @onclick="SaveTankAsync">Guardar</button>
-                <button type="button" class="btn btn-sm hp-btn-secondary" @onclick="() => editingTank = false">Cancelar</button>
-                @if (tankError is not null)
-                {
-                    <span class="ctl-error">@tankError</span>
-                }
-            </div>
-        }
+            @* Cómo funciona la vista y el control automático, en síntesis (arriba a la derecha). *@
+            <span class="ctl-page-info">
+                <InfoTip Title="Cómo funciona Optimización" Wide="true">
+                    <span class="hp-info__text">
+                        Cada <b>circuito</b> es un tanque con su pH, su CE y 5 bombas. La <b>Pi</b> del invernadero manda las
+                        lecturas cada pocos minutos y ejecuta las dosis que le pide la web.
+                    </span>
+                    <span class="hp-info__list">
+                        <span><b>Qué busca:</b> el pH y la CE de la <b>banda del lote</b>. El pH sale del cultivo (5,5–6,5) y la
+                            CE de la etapa del lote (por sus GDD). La <b>receta aprendida</b> corre el objetivo según cómo les fue
+                            a lotes parecidos ya cerrados y cómo viene el score del lote.</span>
+                        <span><b>Manual:</b> solo las dosis que mandás desde las bombas. <b>Automático:</b> además, el motor
+                            corrige solo.</span>
+                        <span><b>Cómo decide el automático</b> (con cada lectura y cada minuto): actúa antes de que la solución
+                            salga de la banda (al 70 % del camino al borde); corrige primero la CE y después el pH (salvo un pH
+                            crítico, fuera de 5–7); una dosis por vez, y espera la mezcla (10 min) y dos lecturas nuevas antes
+                            de la siguiente.</span>
+                        <span><b>Cuánto pone:</b> la dosis completa sale de los litros del tanque y del efecto por ml de la
+                            bomba; aplica solo una parte (de 30 a 90 %) según cuánto se desvió y si ya se está acercando
+                            (lógica difusa). La CE se sube con la Solución A y la B por separado, en la proporción de la
+                            etapa.</span>
+                        <span><b>Se frena si:</b> la Pi no consulta, hay un error de sensor de ese parámetro, la bomba llegó a
+                            su máximo de 24 h, o 3 dosis seguidas no tuvieron efecto (pausa, con alerta).</span>
+                        <span><b>Aprende:</b> después de cada dosis mide cuánto se movió de verdad y recalibra la bomba.</span>
+                        <span><b>Datos que cruza:</b> las lecturas de pH y CE del circuito (Pi), la etapa y los GDD del lote
+                            (Lotes), los lotes cerrados (receta), los litros y las bombas (Circuitos), los errores de sensor y
+                            el resultado de cada comando.</span>
+                        <span><b>Desde Ajustes &gt; Parámetros:</b> los rangos normales y el salto máximo de cada sensor
+                            (<b>Errores de sensores</b>: cuándo una lectura no es confiable y frena el control) y, para ver, las
+                            <b>reglas de episodios fuera de rango</b>. Los litros del tanque, en Infraestructura &gt; Circuitos.
+                            La banda de pH y CE es del cultivo y de cada etapa.</span>
+                    </span>
+                </InfoTip>
+            </span>
+        </div>
 
         @if (view is not null)
         {
@@ -185,6 +198,28 @@ else
                                     aria-pressed="@(trendHours == hours)" @onclick="() => SetTrendWindowAsync(hours)">@hours h</button>
                         }
                     </div>
+                    <span class="ctl-trends__info">
+                        <InfoTip Title="Cómo leer la tendencia">
+                            <span class="hp-info__text">
+                                El pH y la CE del tanque en las últimas 1, 6 o 24 h, para ver cómo corrige el control. Se
+                                actualiza cada 5 s.
+                            </span>
+                            <span class="hp-info__list">
+                                <span><b>Línea:</b> las lecturas. <b>Sombreado:</b> la banda del lote. <b>Punteada:</b> la banda de
+                                    acción (donde el automático empieza a corregir). <b>Raya:</b> el objetivo.</span>
+                                <span><b>▲ abajo:</b> dosis que suben (Subir pH, Solución A y B). <b>▼ arriba:</b> dosis que bajan
+                                    (Bajar pH, Agua). Huecas si no llegaron al tanque (vencida o rechazada). Al pasar el mouse,
+                                    el detalle de la dosis y si tuvo efecto.</span>
+                            </span>
+                            <span class="hp-info__chips">
+                                <span class="hp-info__pump"><span style="background: #7c3aed;"></span>Subir pH</span>
+                                <span class="hp-info__pump"><span style="background: #e04f2b;"></span>Bajar pH</span>
+                                <span class="hp-info__pump"><span style="background: #0e9384;"></span>Solución A</span>
+                                <span class="hp-info__pump"><span style="background: #0b6b8a;"></span>Solución B</span>
+                                <span class="hp-info__pump"><span style="background: #2f7dd1;"></span>Agua</span>
+                            </span>
+                        </InfoTip>
+                    </span>
                 </header>
                 @if (trend is not null)
                 {
@@ -196,7 +231,24 @@ else
             </section>
 
             @* --- Bombas --- *@
-            <h3 class="lot-panel-title ctl-timeline-title">Bombas</h3>
+            <div class="ctl-timeline-head">
+                <h3 class="lot-panel-title ctl-timeline-title">Bombas</h3>
+                <InfoTip Title="Las bombas del circuito">
+                    <span class="hp-info__list">
+                        <span><b>Subir pH</b> y <b>Bajar pH:</b> corrigen el pH. <b>Solución A</b> y <b>Solución B:</b> suben la
+                            CE (no se mezclan concentradas: el automático las usa de a una, en la proporción de la etapa).
+                            <b>Agua:</b> baja la CE diluyendo.</span>
+                        <span><b>Barra:</b> lo usado en las últimas 24 h contra el máximo por día de la bomba.</span>
+                        <span><b>Dosis a mano:</b> escribí la cantidad (hasta el máximo por dosis) y tocá Enviar; al lado, el
+                            efecto estimado con los litros del tanque y la calibración de la bomba.</span>
+                        <span><b>Dosis en curso:</b> muestra su estado (pendiente o entregada a la Pi) y hasta cuándo vale; si
+                            la Pi todavía no la tomó, se puede cancelar.</span>
+                        <span><b>Calibración:</b> cada bomba ajusta sola su efecto por ml con lo que midió cada dosis.</span>
+                        <span><b>Se cambia:</b> los litros del tanque (de los que sale la dosis) en Infraestructura &gt;
+                            Circuitos. Los máximos por dosis y por día son de fábrica.</span>
+                    </span>
+                </InfoTip>
+            </div>
             <section class="ctl-pumps">
                 @foreach (var pump in view.Actuators)
                 {
@@ -262,7 +314,28 @@ else
             @* --- Episodios del circuito, en una sola lista: "Solución" (la solución salió de la banda del lote, motor de
                  anomalías) y "Sensor" (la lectura no es confiable: sin datos, fuera de lo normal o salto). Los errores de
                  sensor abiertos que frenan el control van arriba, con el botón para marcarlos como resueltos. --- *@
-            <h3 class="lot-panel-title ctl-timeline-title">Episodios</h3>
+            <div class="ctl-timeline-head">
+                <h3 class="lot-panel-title ctl-timeline-title">Episodios</h3>
+                <InfoTip Title="Qué es un episodio">
+                    <span class="hp-info__text">
+                        Todo lo que salió mal en el circuito (y en los sensores de ambiente del invernadero) con el lote en
+                        curso, los más nuevos arriba; los errores de sensor abiertos, primero.
+                    </span>
+                    <span class="hp-info__list">
+                        <span><b>Solución:</b> el pH o la CE salieron de la banda del lote (motor de anomalías). Con una
+                            lectura afuera queda en seguimiento; con dos seguidas se abre y se resuelve con dos lecturas
+                            normales. Si el control automático no alcanzó a evitarlo, aparece acá.</span>
+                        <span><b>Sensor:</b> la lectura no es confiable (sin datos, fuera de lo normal o un salto). Frena el
+                            control de ese parámetro hasta que se resuelve.</span>
+                        <span><b>Columnas:</b> hora · tipo y qué pasó (rojo: crítico; amarillo: advertencia) · detalle (hasta
+                            dónde llegó, cuántas lecturas y cuánto duró) · estado.</span>
+                        <span>Los que se abren mandan una alerta: el historial está en Monitoreo &gt; Alertas.</span>
+                        <span><b>En Ajustes &gt; Parámetros:</b> <b>Errores de sensores</b> define el rango normal y el salto
+                            máximo de cada sensor (los episodios de Sensor); <b>Reglas de episodios fuera de rango</b> muestra
+                            cuántas lecturas seguidas abren uno de Solución y la espera entre episodios (solo lectura).</span>
+                    </span>
+                </InfoTip>
+            </div>
             var rows = EpisodeRows();
             @if (rows.Count == 0)
             {
@@ -275,14 +348,11 @@ else
                     {
                         <li class="ctl-episode @(row.Closed ? "ctl-episode--closed" : null) @(row.Pinned ? "ctl-episode--pinned" : null)" title="@row.Hint">
                             <span class="ctl-episode__time">@Moment(row.AtUtc)</span>
-                            <span class="ctl-episode__sev ctl-episode__sev--@row.Severity" aria-hidden="true">@(row.Severity == "critical" ? "!" : "•")</span>
-                            <span class="ctl-episode__body">
-                                <span class="ctl-episode__head">
-                                    <span class="ctl-episode__source ctl-episode__source--@(row.IsSensor ? "sensor" : "solution")">@(row.IsSensor ? "Sensor" : "Solución")</span>
-                                    <span class="ctl-episode__title">@row.Title</span>
-                                </span>
-                                <span class="ctl-episode__detail">@row.Detail</span>
+                            <span class="ctl-episode__head">
+                                <span class="ctl-episode__source ctl-episode__source--@(row.IsSensor ? "sensor" : "solution")">@(row.IsSensor ? "Sensor" : "Solución")</span>
+                                <span class="ctl-episode__title ctl-episode__title--@row.Severity" title="@row.Title">@row.Title</span>
                             </span>
+                            <span class="ctl-episode__detail">@Sentence(row.Detail)</span>
                             <span class="ctl-episode__end">
                                 <span class="lot-chip lot-chip--@row.ChipTone">@row.Chip</span>
                                 @if (row.ResolvableFaultId is { } faultId && canDose)
@@ -298,13 +368,47 @@ else
 
             @* --- Timeline IoT: los mensajes con la Pi (lecturas, dosis, comandos y respuestas). Arranca contraído;
                  desplegado tiene scroll propio. --- *@
-            <h3 class="lot-panel-title ctl-timeline-title">
-                <button type="button" class="ctl-collapse" aria-expanded="@(timelineOpen ? "true" : "false")" aria-controls="ctl-timeline"
-                        @onclick="() => timelineOpen = !timelineOpen">
-                    <span class="ctl-collapse__chevron @(timelineOpen ? "ctl-collapse__chevron--open" : null)" aria-hidden="true"></span>
-                    Timeline IoT
-                </button>
-            </h3>
+            <div class="ctl-timeline-head">
+                <h3 class="lot-panel-title ctl-timeline-title">
+                    <button type="button" class="ctl-collapse" aria-expanded="@(timelineOpen ? "true" : "false")" aria-controls="ctl-timeline"
+                            @onclick="() => timelineOpen = !timelineOpen">
+                        <span class="ctl-collapse__chevron @(timelineOpen ? "ctl-collapse__chevron--open" : null)" aria-hidden="true"></span>
+                        Timeline IoT
+                    </button>
+                </h3>
+                <InfoTip Title="Cómo leer el Timeline IoT">
+                    <span class="hp-info__text">
+                        Cada fila es un mensaje entre la web y la Pi del invernadero, los más nuevos arriba:
+                        <b>hora · sentido · qué es · detalle · estado</b>.
+                    </span>
+                    <span class="hp-info__row">
+                        <span class="ctl-msg__dir ctl-msg__dir--in">→</span>
+                        <span><b class="hp-info__in">Entrante</b>: de la Pi a la web. <b>Lecturas</b>: el pH y la CE que mandó
+                            (×N = varias seguidas, juntas). <b>Resultado</b>: lo que hizo la bomba con un comando.</span>
+                    </span>
+                    <span class="hp-info__row">
+                        <span class="ctl-msg__dir ctl-msg__dir--out">←</span>
+                        <span><b class="hp-info__out">Saliente</b>: de la web a la Pi. <b>Comando</b>: la dosis que se le
+                            manda a una bomba, con hasta cuándo vale.</span>
+                    </span>
+                    <span class="hp-info__row">
+                        <span class="ctl-msg__dir ctl-msg__dir--web">•</span>
+                        <span><b>En la web</b>: lo que decide la web. <b>Pedido</b>: una dosis manual o automática (valor →
+                            objetivo y fuerza). <b>Efecto</b>: cuánto se movió el pH o la CE contra lo esperado.
+                            <b>Pausa</b> / <b>Reanudado</b> del control. <b>Vencido</b>, <b>Sin respuesta</b> o
+                            <b>Cancelado</b>: un comando que no se ejecutó.</span>
+                    </span>
+                    <span class="hp-info__text">
+                        Una dosis se lee de abajo hacia arriba: <b>Pedido</b>, <b>Comando</b>, <b>Resultado</b>, <b>Efecto</b>.
+                    </span>
+                    <span class="hp-info__chips">
+                        <span class="lot-chip lot-chip--success">Ejecutada / Con efecto</span>
+                        <span class="lot-chip lot-chip--warning">Rechazada / Vencida / Sin confirmar</span>
+                        <span class="lot-chip lot-chip--danger">Falló / Sin efecto</span>
+                        <span class="lot-chip lot-chip--info">Manual / Automático / en curso</span>
+                    </span>
+                </InfoTip>
+            </div>
             @if (timelineOpen)
             {
                 @if (view.Timeline.Count == 0)
@@ -364,9 +468,6 @@ else
     private string? currentUser;
     private ClaimsPrincipal user = new();
 
-    private bool editingTank;
-    private string tankText = string.Empty;
-    private string? tankError;
     private string? modeError;
 
     private readonly Dictionary<int, string> amounts = new();
@@ -436,7 +537,6 @@ else
     {
         amounts.Clear();
         pumpErrors.Clear();
-        editingTank = false;
         await LoadAsync();
         await RecordVisitAsync();
     }
@@ -633,43 +733,6 @@ else
         }
     }
 
-    // --- Tanque ---
-
-    private void StartTankEdit()
-    {
-        tankText = view?.ReservoirLiters.ToString("0.#", CultureInfo.InvariantCulture) ?? string.Empty;
-        tankError = null;
-        editingTank = true;
-    }
-
-    private async Task SaveTankAsync()
-    {
-        if (selectedCircuitId is not { } circuitId)
-            return;
-        if (!decimal.TryParse(tankText, NumberStyles.Number, CultureInfo.InvariantCulture, out var liters))
-        {
-            tankError = "Ingresá los litros del tanque.";
-            return;
-        }
-
-        busy = true;
-        try
-        {
-            var result = await ControlService.SetReservoirAsync(circuitId, liters, currentUser);
-            if (!result.Succeeded)
-            {
-                tankError = result.Message;
-                return;
-            }
-            editingTank = false;
-            await LoadAsync();
-        }
-        finally
-        {
-            busy = false;
-        }
-    }
-
     // --- Formato ---
 
     private static string Value(decimal? value) => value?.ToString("0.0#", LotFormat.Culture) ?? "—";
@@ -682,6 +745,10 @@ else
     private static string Amount(decimal value, string unit) => $"{value.ToString("0.#", LotFormat.Culture)} {unit}";
 
     private static string Liters(decimal value) => $"{value.ToString("0.#", LotFormat.Culture)} L";
+
+    /// <summary>El detalle de un episodio arranca con mayúscula ("Llegó a 7 …").</summary>
+    private static string Sentence(string text) =>
+        text.Length == 0 ? text : char.ToUpper(text[0], LotFormat.Culture) + text[1..];
 
     private static string Clock(DateTime utc) => utc.ToLocalTime().ToString("HH:mm:ss", LotFormat.Culture);
 

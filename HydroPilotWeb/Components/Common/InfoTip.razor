@@ -1,0 +1,24 @@
+@namespace HydroPilotWeb.Components.Common
+
+@* Ícono "i" con un cartel de ayuda que se abre al pasar el mouse o con el foco (teclado): el título en negrita y el
+   contenido. Se abre hacia la izquierda (para los que están a la derecha de la pantalla); Start = hacia la derecha.
+   Wide = cartel más ancho (la explicación general de una vista). *@
+<span class="hp-info @(Start ? "hp-info--start" : null) @(Wide ? "hp-info--wide" : null)" tabindex="0" aria-describedby="@_id">
+    <span class="hp-info__icon" aria-hidden="true">i</span>
+    <span class="hp-info__panel" role="tooltip" id="@_id">
+        @if (Title is not null)
+        {
+            <strong class="hp-info__title">@Title</strong>
+        }
+        @ChildContent
+    </span>
+</span>
+
+@code {
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public bool Start { get; set; }
+    [Parameter] public bool Wide { get; set; }
+
+    private readonly string _id = $"hp-info-{Guid.NewGuid():N}";
+}

@@ -12,7 +12,7 @@ namespace HydroPilotWeb.Services.Simulation;
 /// a las que siguen a convencional se les descuentan las pérdidas tardías.</item>
 /// <item>Rendimiento = plantas × peso por planta × precio por kg (LotYieldRules, sin m²).</item>
 /// <item>Gastos del sistema = semillas + nutrientes (según plantas vivas y etapa, <see cref="NutrientConsumptionRules"/>),
-/// de la siembra al último corte, + el trasplante de las que van a Adulta.</item>
+/// de la siembra al último corte (desde 2026-10-28, sin la mano de obra del trasplante).</item>
 /// <item>Con trasplante (<see cref="TransplantScenario"/>): las que van a Adulta se trasplantan a los huecos libres de
 /// Adultas (las que no entran se cortan como Baby Leaf si llegan, si no se pierden). El lugar entra como ese límite, no
 /// como plata. Margen = ingresos − gastos del sistema.</item>
@@ -39,19 +39,16 @@ public static class SimulationStrategies
         TransplantScenario? Transplant = null);
 
     /// <summary>
-    /// Trasplante del escenario: costo por planta trasplantada, huecos libres de Adultas (null = sin límite), las ya
-    /// trasplantadas (activas), que son Adultas en todas las estrategias, y el lugar de un hueco del denso y de uno de
-    /// Adultas (m²) para medir el lugar y el tiempo que ocupa cada estrategia.
+    /// Trasplante del escenario: huecos libres de Adultas (null = sin límite), las ya trasplantadas (activas), que son
+    /// Adultas en todas las estrategias, el lugar de un hueco del denso y de uno de Adultas (m²) y los días de limpieza del
+    /// denso (Ajustes &gt; Parámetros) para medir el lugar y el tiempo que ocupa cada estrategia.
     /// </summary>
     public sealed record TransplantScenario(
-        decimal CostPerPlant,
         int? AdultCapacity,
         int FixedAdults,
         decimal DenseHoleM2 = 0m,
-        decimal AdultHoleM2 = 0m);
-
-    /// <summary>Días de limpieza del circuito denso entre un lote y el siguiente (los del entorno de simulación).</summary>
-    public const int DenseCleaningDays = 3;
+        decimal AdultHoleM2 = 0m,
+        int DenseCleaningDays = 2);
 
     /// <summary>
     /// Reparto de plantas de una estrategia: Baby Leaf, adultas y pérdidas previstas (tempranas, tardías y las que no
@@ -229,9 +226,7 @@ public static class SimulationStrategies
                 input.SowingDate, input.Timeline.BabyLeafOpens.Date, input.Timeline.BabyLeafCloses.Date, spans);
         }
 
-        // El trasplante se paga por todas las que van a Adulta en el ciclo (las ya trasplantadas también).
-        var costs = CostCalculator.Calculate(input.Costs, input.Seeds, usage, cycleDays, input.Prices.Currency,
-            transplant is null ? 0 : allocation.Transplanted + fixedAdults, transplant?.CostPerPlant);
+        var costs = CostCalculator.Calculate(input.Costs, input.Seeds, usage, cycleDays, input.Prices.Currency);
         if (!available)
             costs = costs with { Total = null, TotalNotCalculableReason = "Sin fecha de corte: no se puede presupuestar el ciclo." };
 
@@ -286,7 +281,7 @@ public static class SimulationStrategies
         if (adults > 0 && (decision is null || conventionalCut.Date is null))
             return null;
 
-        var denseDays = Math.Max(0, exits.Max(d => d!.Value).DayNumber - input.SowingDate.DayNumber) + DenseCleaningDays;
+        var denseDays = Math.Max(0, exits.Max(d => d!.Value).DayNumber - input.SowingDate.DayNumber) + transplant.DenseCleaningDays;
         var adultDays = adults > 0 ? Math.Max(0, conventionalCut.Date!.Value.DayNumber - decision!.Value.DayNumber) : 0;
         return new SimulationSpaceUse(
             Math.Round(input.Seeds * transplant.DenseHoleM2 * denseDays, 2),
