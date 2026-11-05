@@ -159,14 +159,18 @@ public class BabyLeafPipelineService : IDisposable
         // 5. Inferencia Multi-Head ONNX (Nutrición NPK + Sanidad + Morfología auxiliar)
         var visualState = RunMultiHeadInference(analysis.NormalizedTensor, out float[] nnMorphPreds);
 
-        // Si la morfología basada en ExG no detectó tamaño suficiente, usar la cabeza de regresión de la red
+        // Fusión de la morfología geométrica ExG (65%) con la regresión aprendida de la red (35%)
+        // para estabilizar variaciones de encuadre o cobertura foliar parcial.
+        double nnLength = Math.Clamp((double)nnMorphPreds[0], 3.5, 16.0);
+        double nnArea = Math.Clamp((double)nnMorphPreds[1], 15.0, 130.0);
+
         double effectiveLeafLength = analysis.Morphology.MaxLeafLengthCm > 0.5
-            ? analysis.Morphology.MaxLeafLengthCm
-            : Math.Max(1.0, (double)nnMorphPreds[0]);
+            ? (0.65 * Math.Clamp(analysis.Morphology.MaxLeafLengthCm, 2.5, 18.0)) + (0.35 * nnLength)
+            : nnLength;
 
         double effectiveLeafArea = analysis.Morphology.LeafAreaCm2 > 1.0
-            ? analysis.Morphology.LeafAreaCm2
-            : Math.Max(2.0, (double)nnMorphPreds[1]);
+            ? (0.65 * Math.Clamp(analysis.Morphology.LeafAreaCm2, 8.0, 150.0)) + (0.35 * nnArea)
+            : nnArea;
 
         var effectiveMorphology = analysis.Morphology with
         {
@@ -175,38 +179,48 @@ public class BabyLeafPipelineService : IDisposable
             SizeRatio = Math.Round((0.65 * (effectiveLeafLength / DefaultOptimalLeafLengthCm)) + (0.35 * (effectiveLeafArea / DefaultOptimalLeafAreaCm2)), 3)
         };
 
-        // 6. Cálculo del Baby Leaf Score (BLS 0-100)
-        double lengthScore = Math.Exp(-Math.Pow(effectiveLeafLength - DefaultOptimalLeafLengthCm, 2) / (2.0 * Math.Pow(2.2, 2)));
-        double areaScore = Math.Exp(-Math.Pow(effectiveLeafArea - DefaultOptimalLeafAreaCm2, 2) / (2.0 * Math.Pow(20.0, 2)));
-        double morphScore = (0.65 * lengthScore) + (0.35 * areaScore);
+        // 6. Cálculo del Baby Leaf Score (BLS 0-100) con función meseta comercial
+        // Banda comercial de longitud: [6.5 cm .. 13.0 cm] => score 1.0, caída suave fuera del rango
+        double lengthScore = ComputeCommercialBandScore(effectiveLeafLength, minOpt: 6.5, maxOpt: 13.0, sigmaLow: 3.2, sigmaHigh: 4.5, floor: 0.30);
+        // Banda comercial de área foliar: [35.0 cm2 .. 115.0 cm2] => score 1.0, caída suave fuera del rango
+        double areaScore = ComputeCommercialBandScore(effectiveLeafArea, minOpt: 35.0, maxOpt: 115.0, sigmaLow: 22.0, sigmaHigh: 45.0, floor: 0.30);
+        double morphScore = (0.60 * lengthScore) + (0.40 * areaScore);
+
+        // Si no hay captura previa para medir tasa incremental, usar peso neutro alto (0.95) para no castigar capturas únicas
+        double effectiveGrowth = (previousAreaCm2.HasValue && previousGdd.HasValue) ? growthFactor : 0.95;
 
         double visualMultiplier = visualState.CombinedVisualAptitude;
-        double bls = 100.0 * ((0.75 * morphScore) + (0.25 * growthFactor)) * visualMultiplier;
+        double bls = 100.0 * ((0.80 * morphScore) + (0.20 * effectiveGrowth)) * visualMultiplier;
         bls = Math.Round(Math.Clamp(bls, 0.0, 100.0), 2);
 
         // Clasificación final y recomendación agronómica
         BabyLeafStageStatus status;
         string recommendation;
 
-        if (bls >= 78.0 && visualMultiplier >= 0.75)
+        bool isSanitaryHealthy = visualState.TopHealthClass == "Healthy";
+        bool isNutritionallyOptimal = visualState.TopNpkClass == "FN";
+
+        if (bls >= 70.0 && isSanitaryHealthy && isNutritionallyOptimal && visualMultiplier >= 0.68)
         {
             status = BabyLeafStageStatus.Apta;
             recommendation = "Apta para cosecha Baby Leaf: calibre foliar, vigor y sanidad óptimos.";
         }
-        else if (bls >= 50.0 && visualMultiplier >= 0.60)
+        else if (bls >= 45.0 && isSanitaryHealthy && visualMultiplier >= 0.48)
         {
             status = BabyLeafStageStatus.Candidata;
-            recommendation = "Planta candidata: en ventana térmica y buen estado sanitario. Mantener 24-48h para alcanzar calibre comercial.";
+            recommendation = isNutritionallyOptimal
+                ? "Planta candidata: en ventana térmica y buen estado sanitario. Mantener 24-48h para completar calibre comercial."
+                : $"Planta candidata en observación ({NpkDescriptions.GetValueOrDefault(visualState.TopNpkClass, visualState.TopNpkClass)} leve): ajustar solución nutritiva antes de cosecha.";
         }
         else
         {
             status = BabyLeafStageStatus.NoApta;
             string reasonDetail;
-            if (visualState.TopHealthClass != "Healthy")
+            if (!isSanitaryHealthy)
             {
                 reasonDetail = $"Alerta fitosanitaria: detectado {HealthDescriptions.GetValueOrDefault(visualState.TopHealthClass, visualState.TopHealthClass)}";
             }
-            else if (visualState.TopNpkClass != "FN")
+            else if (!isNutritionallyOptimal)
             {
                 reasonDetail = $"Alerta nutricional: detectada {NpkDescriptions.GetValueOrDefault(visualState.TopNpkClass, visualState.TopNpkClass)}";
             }
@@ -326,10 +340,35 @@ public class BabyLeafPipelineService : IDisposable
             "BabyLeafMultiHead-2.0");
     }
 
-    private static float[] Softmax(float[] logits)
+    /// <summary>
+    /// Función de aptitud por banda comercial (meseta de puntaje 1.0 dentro de [minOpt, maxOpt]
+    /// con decaimiento Gaussiano asimétrico suave hacia los extremos y piso mínimo).
+    /// </summary>
+    private static double ComputeCommercialBandScore(
+        double value,
+        double minOpt,
+        double maxOpt,
+        double sigmaLow,
+        double sigmaHigh,
+        double floor = 0.25)
     {
-        float maxLogit = logits.Max();
-        float[] exps = logits.Select(x => MathF.Exp(x - maxLogit)).ToArray();
+        if (value >= minOpt && value <= maxOpt)
+        {
+            return 1.0;
+        }
+
+        double raw = value < minOpt
+            ? Math.Exp(-Math.Pow(minOpt - value, 2) / (2.0 * sigmaLow * sigmaLow))
+            : Math.Exp(-Math.Pow(value - maxOpt, 2) / (2.0 * sigmaHigh * sigmaHigh));
+
+        return Math.Clamp(floor + (1.0 - floor) * raw, floor, 1.0);
+    }
+
+    private static float[] Softmax(float[] logits, float temperature = 1.35f)
+    {
+        float invTemp = 1.0f / Math.Max(0.1f, temperature);
+        float maxLogit = logits.Max() * invTemp;
+        float[] exps = logits.Select(x => MathF.Exp((x * invTemp) - maxLogit)).ToArray();
         float sumExps = exps.Sum();
         return exps.Select(x => x / (sumExps > 0 ? sumExps : 1.0f)).ToArray();
     }

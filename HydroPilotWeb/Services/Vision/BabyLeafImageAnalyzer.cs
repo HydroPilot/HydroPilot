@@ -65,9 +65,8 @@ public static class BabyLeafImageAnalyzer
             Mode = ResizeMode.Stretch
         }));
 
-        // Escala cm/px ajustada a la resolución procesada
-        double scaleFactor = (double)original.Width / procW;
-        double effectiveCmPerPixel = cmPerPixel * scaleFactor;
+        // Escala cm/px referenciada sobre la grilla estandarizada de trabajo (320px => ~14.4 cm de escena con 0.045 cm/px)
+        double effectiveCmPerPixel = cmPerPixel * (320.0 / Math.Max(1, procW));
 
         var (quality, mask) = ValidateQuality(
             procImg,
@@ -311,7 +310,7 @@ public static class BabyLeafImageAnalyzer
             }
         }
 
-        return Math.Max(16.0f, (float)bestThreshold);
+        return Math.Clamp((float)bestThreshold, 14.0f, 38.0f);
     }
 
     /// <summary>

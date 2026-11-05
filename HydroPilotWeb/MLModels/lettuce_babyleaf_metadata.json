@@ -47,5 +47,5 @@
     "optimal_leaf_length_cm": 10.0,
     "optimal_leaf_area_cm2": 65.0
   },
-  "val_combined_accuracy": 0.9663324854107437
+  "val_combined_accuracy": 0.9905660377358491
 }
