@@ -15,7 +15,8 @@
 <PageTitle>Invernadero - HydroPilot</PageTitle>
 
 @* Dashboard general del invernadero: todos los lotes activos con la lógica de Lotes (rendimiento,
-   plantas, cosechas), más alertas, chequeos de sensores y últimos accedidos. Las listas tienen su propio scroll. Lógica: notas/ux/logica-vista-invernadero.md *@
+   plantas, cosechas), más alertas, chequeos de sensores y últimos accedidos. Izquierda: los 4 cuadros, los gráficos y
+   Próximas cosechas a todo el ancho; derecha: Próximos chequeos (secundario) y Últimos accedidos. Las listas tienen su propio scroll. Lógica: notas/ux/logica-vista-invernadero.md *@
 @if (error is not null)
 {
     <div class="alert alert-danger d-flex justify-content-between align-items-center">
@@ -42,11 +43,35 @@ else
                 <span class="gh-kpi__label">@(data.ActiveLots == 1 ? "Lote activo" : "Lotes activos")</span>
             </section>
             @Kpi(data.CurrentRevenue, "Rendimiento actual", "Lo cosechado y lo listo para cosechar en los lotes activos")
-            @Kpi(data.ExpectedRevenue, "Rendimiento esperado", "Lo que se espera del ciclo completo de los lotes activos")
+            @Kpi(data.ExpectedRevenue, "Rendimiento esperado", "Lo que se espera del ciclo completo de los lotes activos", "gh-kpi--good")
+
+            @* Alertas: solo cuántas hay abiertas (en rojo si hay alguna); al tocarlo, la vista Alertas con las abiertas. *@
+            <a class="lot-card gh-kpi gh-alerts @(data.OpenAlerts > 0 ? "gh-alerts--on" : null)"
+               href="@(data.OpenAlerts > 0 ? "alertas?estado=abiertas" : "alertas")"
+               title="@(data.OpenAlerts > 0 ? "Ver las alertas abiertas" : "Ver el historial de alertas")">
+                <span class="gh-alerts__row">
+                    <svg class="gh-alerts__icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3.5 2.5 20h19Z" />
+                        <path d="M12 10v4.5" />
+                        <path d="M12 17.2v.3" />
+                    </svg>
+                    <span class="gh-kpi__value">@data.OpenAlerts</span>
+                </span>
+                <span class="gh-kpi__label">@(data.OpenAlerts switch { 0 => "Sin alertas abiertas", 1 => "Alerta abierta", _ => "Alertas abiertas" })</span>
+            </a>
 
             <section class="lot-card gh-chart gh-chart--bars" aria-labelledby="gh-stages-title">
                 <h3 class="gh-card__title" id="gh-stages-title">Plantas por estado</h3>
                 <DashboardStageChart Stages="data.Stages" />
+                @if (data.Stages.Any(s => s.Harvested > 0))
+                {
+                    <div class="lot-legend">
+                        <span class="lot-legend__item">
+                            <span class="lot-legend__dot lot-seg--striped" style="background-color: #8a94a0;"></span>
+                            Cosechadas
+                        </span>
+                    </div>
+                }
             </section>
 
             <section class="lot-card gh-chart gh-chart--donut" aria-labelledby="gh-bl-title">
@@ -54,75 +79,7 @@ else
                 <DashboardBabyLeafDonut ExpectedPlants="data.ExpectedBabyLeafPlants" TotalPlants="data.TotalPlants" />
             </section>
 
-            <section class="lot-card gh-list-card gh-list-card--half" aria-labelledby="gh-alerts-title">
-                <div class="gh-card__head">
-                    <h3 class="gh-card__title" id="gh-alerts-title">Alertas</h3>
-                    <a class="lot-link" href="alertas">Ver todas</a>
-                </div>
-                @if (data.Alerts.Count == 0)
-                {
-                    <p class="gh-empty">Sin alertas.</p>
-                }
-                else
-                {
-                    <ul class="gh-list">
-                        @foreach (var alert in data.Alerts)
-                        {
-                            <li>
-                                <a class="gh-row @(alert.IsResolved ? "gh-row--resolved" : null)" href="@alert.Link" title="@alert.Title">
-                                    <span class="gh-dot gh-dot--@SeverityClass(alert.Severity)" aria-label="@SeverityLabel(alert.Severity)"></span>
-                                    <span class="gh-row__main">
-                                        <span class="gh-row__title">@alert.Title</span>
-                                        @if (alert.IsResolved)
-                                        {
-                                            <span class="gh-row__sub">Resuelta</span>
-                                        }
-                                    </span>
-                                    <span class="gh-row__when">@When(alert.CreatedAtLocal)</span>
-                                </a>
-                            </li>
-                        }
-                    </ul>
-                }
-            </section>
-
-            <section class="lot-card gh-list-card gh-list-card--half" aria-labelledby="gh-checks-title">
-                <h3 class="gh-card__title" id="gh-checks-title">Próximos chequeos de sensores</h3>
-                @if (!data.HasSensorIntervals)
-                {
-                    <p class="gh-empty">Sin chequeos programados. <a class="lot-link" href="settings/parametros">Definir en Parámetros</a></p>
-                }
-                else if (data.SensorChecks.Count == 0)
-                {
-                    <p class="gh-empty">Nada vence en los próximos @GreenhouseDashboardRules.CheckWindowDays días. <a class="lot-link" href="settings/sensores">Ver sensores</a></p>
-                }
-                else
-                {
-                    <ul class="gh-list">
-                        @foreach (var check in data.SensorChecks)
-                        {
-                            var overdue = check.DueDate <= data.Today;
-                            <li class="gh-row gh-row--static" title="@CheckTitle(check)">
-                                <span class="gh-row__main">
-                                    <span class="gh-row__title">@check.SensorType · @check.Place</span>
-                                    <span class="gh-row__sub @(overdue ? "gh-row__sub--danger" : null)">@CheckText(check)</span>
-                                </span>
-                                @if (canCalibrate)
-                                {
-                                    <button type="button" class="btn btn-sm gh-row__action" @onclick="() => RegisterCalibrationAsync(check.SensorId)"
-                                            disabled="@(calibrating == check.SensorId)">
-                                        @(calibrating == check.SensorId ? "Guardando…" : "Calibrado hoy")
-                                    </button>
-                                }
-                            </li>
-                        }
-                    </ul>
-                }
-            </section>
-        </div>
-
-        <div class="gh-dash__side">
-            <section class="lot-card gh-list-card" aria-labelledby="gh-harvests-title">
+            <section class="lot-card gh-list-card gh-list-card--half gh-list-card--wide" aria-labelledby="gh-harvests-title">
                 <h3 class="gh-card__title" id="gh-harvests-title">Próximas cosechas</h3>
                 @if (data.Harvests.Count == 0)
                 {
@@ -155,6 +112,40 @@ else
                     </ul>
                 }
             </section>
+        </div>
+
+        <div class="gh-dash__side">
+            <section class="lot-card gh-list-card" aria-labelledby="gh-checks-title">
+                <h3 class="gh-card__title" id="gh-checks-title">Próximos chequeos de sensores</h3>
+                @if (!data.HasSensorIntervals)
+                {
+                    <p class="gh-empty">Sin chequeos programados. <a class="lot-link" href="settings/parametros">Definir en Parámetros</a></p>
+                }
+                else if (data.SensorChecks.Count == 0)
+                {
+                    <p class="gh-empty">Nada vence en los próximos @GreenhouseDashboardRules.CheckWindowDays días. <a class="lot-link" href="settings/sensores">Ver sensores</a></p>
+                }
+                else
+                {
+                    <ul class="gh-list">
+                        @foreach (var check in data.SensorChecks)
+                        {
+                            var overdue = check.DueDate <= data.Today;
+                            <li class="gh-row gh-row--static" title="@CheckTitle(check)">
+                                <span class="gh-row__main">
+                                    <span class="gh-row__title">@check.SensorType · @check.Place</span>
+                                    <span class="gh-row__sub @(overdue ? "gh-row__sub--danger" : null)">@CheckText(check)</span>
+                                </span>
+                                @if (canCalibrate)
+                                {
+                                    <CalibrationCheck Checked="@(check.LastCalibration == data.Today)" Busy="@(calibrating == check.SensorId)"
+                                                      Disabled="@(calibrating is not null)" OnCheck="() => RegisterCalibrationAsync(check.SensorId)" />
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
 
             <section class="lot-card gh-list-card" aria-labelledby="gh-visits-title">
                 <h3 class="gh-card__title" id="gh-visits-title">Últimos accedidos</h3>
@@ -168,10 +159,14 @@ else
                         @foreach (var visit in data.RecentVisits)
                         {
                             <li>
+                                @* Ícono de la vista (el del menú) a la izquierda y su nombre en color debajo del lote. *@
                                 <a class="gh-row" href="@visit.Link">
+                                    <span class="gh-view gh-view--@VisitRoute(visit)" aria-hidden="true">
+                                        <NavIcon Name="@VisitRoute(visit)" Class="gh-view__icon" />
+                                    </span>
                                     <span class="gh-row__main">
                                         <span class="gh-row__title">@visit.Title</span>
-                                        <span class="gh-row__sub">@visit.View</span>
+                                        <span class="gh-row__sub gh-view__name gh-view__name--@VisitRoute(visit)">@visit.View</span>
                                     </span>
                                     <span class="gh-row__when">@When(visit.VisitedAtLocal)</span>
                                 </a>
@@ -234,9 +229,9 @@ else
     }
 
     /// <summary>Card de $ redondeado ("$123k"); sin precios o pesos para algún lote, "—" con el link a Parámetros.</summary>
-    private RenderFragment Kpi(DashboardMoney money, string label, string hint) => __builder =>
+    private RenderFragment Kpi(DashboardMoney money, string label, string hint, string? css = null) => __builder =>
     {
-        <section class="lot-card gh-kpi" title="@(money.Amount is { } exact ? $"{hint}: {LotFormat.Money(exact, money.Currency)}" : hint)">
+        <section class="lot-card gh-kpi @css" title="@(money.Amount is { } exact ? $"{hint}: {LotFormat.Money(exact, money.Currency)}" : hint)">
             <span class="gh-kpi__value">@(money.Amount is { } amount ? DashboardFormat.CompactMoney(amount, money.Currency) : "—")</span>
             <span class="gh-kpi__label">@label</span>
             @if (money.Amount is null)
@@ -247,6 +242,9 @@ else
     };
 
     private string When(DateTime local) => LotFormat.When(local, data!.NowLocal);
+
+    /// <summary>Ruta de la vista visitada (para su ícono del menú y su color): Lotes u Optimización.</summary>
+    private static string VisitRoute(DashboardVisitItem visit) => visit.View == "Optimización" ? "optimization" : "lotes";
 
     private string DaysUntil(DateOnly date)
     {
@@ -283,19 +281,4 @@ else
         (check.LastCalibration is { } last ? $"Último chequeo: {LotFormat.Short(last)}" : "Sin calibración registrada") +
         $" · cada {LotFormat.Days(check.IntervalDays)}";
 
-    private static string SeverityClass(string severity) => severity switch
-    {
-        NotificationSeverities.Critica => "critical",
-        NotificationSeverities.Alta => "high",
-        NotificationSeverities.Media => "medium",
-        _ => "info"
-    };
-
-    private static string SeverityLabel(string severity) => severity switch
-    {
-        NotificationSeverities.Critica => "Crítica",
-        NotificationSeverities.Alta => "Alta",
-        NotificationSeverities.Media => "Media",
-        _ => "Informativa"
-    };
 }

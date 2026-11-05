@@ -627,10 +627,8 @@ public sealed partial class HistoryGenerator
     {
         var p = plant.Plant;
         var previous = p.CommercialStageId;
-        if (!babyLeaf)
-            p.CommercialStageId = _w.CommercialStageIds[CommercialStageNames.CosechaConvencional];
-        else if (p.CommercialStageId != _w.CommercialStageIds[CommercialStageNames.CandidataBabyLeaf])
-            p.CommercialStageId = _w.CommercialStageIds[CommercialStageNames.BabyLeafApta]; // se corta como Baby Leaf
+        // Cosechada queda siempre "Adulta" o "Baby Leaf" (también la candidata que se corta como Baby Leaf).
+        p.CommercialStageId = _w.CommercialStageIds[babyLeaf ? CommercialStageNames.BabyLeafApta : CommercialStageNames.CosechaConvencional];
         p.OperationalState = PlantOperationalState.Cosechada;
         p.HarvestDate = date;
         plant.CutAsBabyLeaf = babyLeaf;

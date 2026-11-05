@@ -260,7 +260,7 @@ public class SimulationService
         if (adultCapacity == 0 && fixedAdults == 0)
             warnings.Add("No hay huecos libres en circuitos de Adultas: las que no llegan a Baby Leaf se pierden.");
         var transplantScenario = new SimulationStrategies.TransplantScenario(
-            transplant.CostPerPlant, adultCapacity, fixedAdults, transplant.DenseHoleM2, transplant.AdultHoleM2);
+            adultCapacity, fixedAdults, transplant.DenseHoleM2, transplant.AdultHoleM2, transplant.DenseCleaningDays);
 
         // --- 7. Estrategias: máximo Baby Leaf / meta Baby Leaf / todo adulta ---
         IReadOnlyList<SimulationStrategyOutcome> strategies = timeline is null

@@ -4,15 +4,17 @@ using HydroPilotWeb.Services.Lotes;
 namespace HydroPilotWeb.Services.Dashboard;
 
 /// <summary>
-/// Plantas de los lotes activos en un estado (barra del gráfico). Stage = etapa comercial (para el color
-/// de la vista Lotes); null = descartadas.
+/// Plantas en un estado (barra del gráfico). Stage = etapa comercial (para el color de la vista Lotes); null =
+/// descartadas. Harvested: las ya cosechadas de ese destino (de los lotes activos en el dashboard), que van rayadas en la
+/// misma barra.
 /// </summary>
-public sealed record DashboardStageCount(string Label, int Plants, string? Stage);
+public sealed record DashboardStageCount(string Label, int Plants, string? Stage, int Harvested = 0)
+{
+    public int Total => Plants + Harvested;
+}
 
 /// <summary>Total en $ de los lotes activos; Amount null si a algún lote le falta peso o precio para calcularlo.</summary>
 public sealed record DashboardMoney(decimal? Amount, string Currency);
-
-public sealed record DashboardAlertItem(int Id, string Severity, string Title, string Link, DateTime CreatedAtLocal, bool IsResolved);
 
 /// <summary>Próximo óptimo de corte de un lote. Approximate = cae más allá del pronóstico (se muestra con ≈).</summary>
 public sealed record DashboardHarvestItem(
@@ -38,7 +40,7 @@ public sealed record GreenhouseDashboard(
     IReadOnlyList<DashboardStageCount> Stages,
     int TotalPlants,
     int ExpectedBabyLeafPlants,
-    IReadOnlyList<DashboardAlertItem> Alerts, // las abiertas y las últimas resueltas (GreenhouseDashboardService.AlertsShown)
+    int OpenAlerts, // alertas abiertas (el cuadro de Alertas; la lista está en la vista Alertas)
     IReadOnlyList<DashboardHarvestItem> Harvests,
     IReadOnlyList<DashboardVisitItem> RecentVisits,
     IReadOnlyList<DashboardSensorCheck> SensorChecks,

@@ -23,9 +23,7 @@ public static class CostCalculator
         int seeds,
         NutrientUsage? usage,
         int cycleDays,
-        string currencyCode,
-        int transplanted = 0,
-        decimal? transplantCostPerPlant = null)
+        string currencyCode)
     {
         var warnings = new List<string>();
         var components = new List<SimulationCostComponent>();
@@ -38,14 +36,6 @@ public static class CostCalculator
         // Nutrientes: cada solución, precio/L × los litros que consume el ciclo.
         components.Add(Solution(SolutionA, costs.SolutionAPricePerLiter, usage?.SolutionALiters, usage is null));
         components.Add(Solution(SolutionB, costs.SolutionBPricePerLiter, usage?.SolutionBLiters, usage is null));
-
-        // Trasplante: la mano de obra de las que pasan a Adultas.
-        if (transplanted > 0)
-        {
-            components.Add(transplantCostPerPlant is { } perPlant
-                ? new SimulationCostComponent("Trasplante", "plantas trasplantadas × costo por planta", Math.Round(perPlant * transplanted, 2), null, "planta")
-                : new SimulationCostComponent("Trasplante", "plantas trasplantadas × costo por planta", null, "Falta el costo del trasplante.", "planta"));
-        }
 
         // Total: solo si todos los componentes son calculables (nada se inventa).
         var notCalculable = components.Where(c => c.Amount is null).Select(c => c.Name).ToList();
@@ -61,7 +51,7 @@ public static class CostCalculator
             warnings.Add(totalReason);
         }
 
-        return new SimulationCostBreakdown(currencyCode, components, total, totalReason, cycleDays, seeds, usage, warnings, transplanted);
+        return new SimulationCostBreakdown(currencyCode, components, total, totalReason, cycleDays, seeds, usage, warnings);
     }
 
     public const string SolutionA = "Solución A";

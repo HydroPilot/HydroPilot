@@ -1481,6 +1481,112 @@ button {
     --batch: #198754;
 }
 
+.btn.lot-batch-btn--babyleaf {
+    --batch: #2d7dd2;
+}
+
+/* Elegir entre opciones (cosechar como Baby Leaf / Adulta): pastillas; la elegida en verde. */
+.lot-choices {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.lot-choice {
+    padding: 5px 14px;
+    border: 1px solid var(--border-input);
+    border-radius: 999px;
+    background: var(--chip-bg);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 650;
+}
+
+.lot-choice:hover {
+    border-color: var(--accent);
+}
+
+.lot-choice.is-on {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+}
+
+/* Modal de trasplante: los circuitos de Adultas para elegir, con su número de orden (violeta de las adultas). */
+.lot-transplant-pick {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 2px;
+}
+
+.lot-transplant-pick__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid var(--border-input);
+    border-radius: 12px;
+    background: var(--chip-bg);
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.lot-transplant-pick__item:hover:not(:disabled) {
+    border-color: #8a4fd3;
+}
+
+.lot-transplant-pick__item.is-chosen {
+    border-color: #8a4fd3;
+    background: color-mix(in srgb, #8a4fd3 22%, transparent);
+}
+
+.lot-transplant-pick__item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.lot-transplant-pick__order {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--border-input);
+    border-radius: 50%;
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.lot-transplant-pick__item.is-chosen .lot-transplant-pick__order {
+    border-color: #8a4fd3;
+    background: #8a4fd3;
+    color: #fff;
+}
+
+.lot-transplant-pick__text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.lot-transplant-pick__name {
+    overflow: hidden;
+    font-size: 0.88rem;
+    font-weight: 650;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.lot-transplant-pick__holes {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
 .btn.lot-batch-btn--discard {
     --batch: #dc3545;
 }
@@ -1515,11 +1621,296 @@ button {
     opacity: 0.6;
 }
 
+/* --- Ayuda (InfoTip): ícono "i" y un cartel con la explicación al pasar el mouse o con el foco. --- */
+.hp-info {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    outline: none;
+}
+
+.hp-info__icon {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 1.5px solid var(--border-input);
+    border-radius: 50%;
+    color: var(--text-secondary);
+    font-family: Georgia, serif;
+    font-size: 0.9rem;
+    font-style: italic;
+    font-weight: 700;
+    cursor: help;
+}
+
+.hp-info:hover .hp-info__icon,
+.hp-info:focus-visible .hp-info__icon {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.hp-info__panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 60;
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    width: min(460px, 86vw);
+    padding: 14px 16px;
+    border: 1px solid var(--border-input);
+    border-radius: 14px;
+    background: var(--bg-picker);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 400;
+    line-height: 1.45;
+    letter-spacing: normal;
+    text-align: left;
+    text-transform: none;
+    white-space: normal;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.3);
+}
+
+.hp-info--start .hp-info__panel {
+    right: auto;
+    left: 0;
+}
+
+/* infotip.js: hacia arriba si abajo no entra (no estira la página) y al otro lado si se sale de la pantalla. */
+.hp-info--up .hp-info__panel {
+    top: auto;
+    bottom: calc(100% + 8px);
+}
+
+.hp-info--flip .hp-info__panel {
+    right: auto;
+    left: 0;
+}
+
+.hp-info--start.hp-info--flip .hp-info__panel {
+    right: 0;
+    left: auto;
+}
+
+.hp-info--wide .hp-info__panel {
+    width: min(560px, 90vw);
+}
+
+.hp-info:hover .hp-info__panel,
+.hp-info:focus-within .hp-info__panel {
+    display: flex;
+}
+
+.hp-info__title {
+    color: var(--text-primary);
+    font-size: 0.92rem;
+}
+
+.hp-info__panel b {
+    color: var(--text-primary);
+}
+
+.hp-info__text {
+    display: block;
+}
+
+.hp-info__list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.hp-info__list > span {
+    position: relative;
+    padding-left: 14px;
+}
+
+.hp-info__list > span::before {
+    content: "";
+    position: absolute;
+    top: 0.6em;
+    left: 2px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+.hp-info__row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+}
+
+.hp-info__panel b.hp-info__in {
+    color: #0e9384;
+}
+
+.hp-info__panel b.hp-info__out {
+    color: var(--accent);
+}
+
+.hp-info__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Una debajo de la otra (las fases de la ventana). */
+.hp-info__stack {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.hp-info__pump {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-primary);
+    font-weight: 650;
+}
+
+.hp-info__pump > span {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+/* Cuadradito de color dentro de un texto del cartel (el color del estado del que se habla). */
+.hp-info__swatch {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    margin: 0 4px 0 2px;
+    border-radius: 2px;
+    vertical-align: baseline;
+}
+
+.hp-info__panel b.hp-info__good {
+    color: var(--accent);
+}
+
+.hp-info__panel b.hp-info__bad {
+    color: #ef4444;
+}
+
+/* Encabezado de Alertas, Circuitos y Sensores: lo de la derecha (chip o botón) y la "i" en una fila. */
+.settings-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Lotes: el título del mapa con su "i" al lado, y la "i" de la vista a la derecha de todo. */
+.lot-head-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.lot-page-info {
+    display: inline-flex;
+    margin-left: 4px;
+}
+
+/* --- "Calibrado hoy" (CalibrationCheck): casilla de verificación con su texto. Vacía con borde; al pasar el mouse se
+   asoma el ✓ verde; tildada (ya se calibró hoy), verde llena. Mientras guarda, la casilla gira. --- */
+.hp-check {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px 5px 6px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.hp-check__box {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 2px solid color-mix(in srgb, var(--text-primary) 35%, transparent);
+    border-radius: 6px;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.hp-check__box svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: #fff;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0;
+}
+
+.hp-check:hover:not(:disabled) {
+    background: var(--chip-bg);
+    color: var(--text-primary);
+}
+
+.hp-check:hover:not(:disabled) .hp-check__box {
+    border-color: var(--accent);
+}
+
+.hp-check:hover:not(:disabled) .hp-check__box svg {
+    stroke: var(--accent);
+    opacity: 0.45;
+}
+
+.hp-check.is-checked {
+    color: var(--accent);
+}
+
+.hp-check.is-checked .hp-check__box {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+.hp-check.is-checked .hp-check__box svg {
+    stroke: #fff;
+    opacity: 1;
+}
+
+.hp-check:disabled {
+    cursor: default;
+}
+
+.hp-check.is-busy .hp-check__box {
+    border-color: var(--accent);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: hp-check-spin 0.8s linear infinite;
+}
+
+@keyframes hp-check-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* --- Selector de fecha propio (HpDateInput): el campo es un botón con el aspecto de form-control; el calendario se
    abre debajo, con los colores de la lista de los desplegables. --- */
+/* Bloque, como los demás campos: debajo de su etiqueta y a todo el ancho del campo (en los filtros, del ancho mínimo). */
 .hp-date {
     position: relative;
-    display: inline-block;
+    display: block;
     min-width: 150px;
 }
 
@@ -3290,6 +3681,191 @@ button.lot-chip[aria-pressed="true"] {
     background: var(--chip-bg);
 }
 
+/* Sección "Metas" de Lotes: agrupa las cards de metas (Meta Baby Leaf y Plantas activas) bajo un título con bandera. */
+.lot-goals {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border-panel);
+    border-radius: 22px;
+    background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.lot-goals__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 6px 0;
+    font-size: 1rem;
+    font-weight: 750;
+    color: var(--text-primary);
+}
+
+/* Metas: el lápiz al lado del título y la "i" a la derecha de todo. */
+.lot-goals__info {
+    display: inline-flex;
+    margin-left: auto;
+}
+
+.lot-goals__icon {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    color: var(--text-primary);
+}
+
+.lot-goals__icon rect {
+    fill: currentColor;
+}
+
+.lot-goals__pole,
+.lot-goals__flag {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Card Rendimiento del lote: cuadrados en una fila (actual y esperado; el esperado en verde) y el detalle del abierto. */
+.lot-yield-tiles {
+    display: grid;
+    grid-template-columns: repeat(var(--tiles, 2), minmax(0, 1fr));
+    gap: 10px;
+}
+
+.lot-yield-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-input);
+    border-radius: 14px;
+    background: var(--chip-bg);
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.lot-yield-tile:hover,
+.lot-yield-tile.is-open {
+    border-color: color-mix(in srgb, var(--text-primary) 35%, transparent);
+}
+
+.lot-yield-tile--good {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.lot-yield-tile--good:hover,
+.lot-yield-tile--good.is-open {
+    border-color: var(--accent);
+}
+
+.lot-yield-tile__money {
+    font-size: 1.35rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+}
+
+.lot-yield-tile--good .lot-yield-tile__money {
+    color: var(--accent);
+}
+
+.lot-yield-tile__kg {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.lot-yield-tile__chevron {
+    transition: transform 150ms ease;
+}
+
+.lot-yield-tile__chevron.is-open {
+    transform: rotate(180deg);
+}
+
+.lot-yield-detail {
+    display: flex;
+    flex-direction: column;
+    margin-top: 10px;
+    border: 1px solid var(--border-input);
+    border-radius: 12px;
+}
+
+/* Torta del detalle (Baby Leaf vs adulta) con su leyenda en %, arriba de las filas. */
+.lot-yield-pie {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border-input);
+}
+
+.lot-yield-pie__chart {
+    flex: none;
+    width: 96px;
+    height: 96px;
+}
+
+.lot-yield-pie__legend {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.lot-yield-pie__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.88rem;
+    font-weight: 650;
+}
+
+.lot-yield-pie__item strong {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Columnas fijas (plantas, kg, $) alineadas a la derecha: Baby Leaf y Adulta quedan una debajo de la otra. */
+.lot-yield-detail__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 6.5em 5em 6.5em;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 12px;
+    font-size: 0.85rem;
+}
+
+.lot-yield-detail__row + .lot-yield-detail__row {
+    border-top: 1px solid var(--border-input);
+}
+
+.lot-yield-detail__name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 650;
+}
+
+.lot-yield-detail__plants,
+.lot-yield-detail__kg {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.lot-yield-detail__money {
+    white-space: nowrap;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Barra vacía (0 %): el % igual se ve, a la izquierda. */
 .lot-stack__empty {
     display: flex;
@@ -4041,6 +4617,14 @@ button.lot-chip[aria-pressed="true"] {
     background: var(--lot-popover-bg);
 }
 
+/* Con el detalle desplegado no se sale de la pantalla: scroll propio, barra fina. */
+.lot-popover .plant-detail .card-body {
+    max-height: min(62vh, 560px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-scrollbar) transparent;
+}
+
 .lot-popover--center {
     --lot-arrow-x: 50%;
     transform: translateX(-50%);
@@ -4175,13 +4759,16 @@ button.lot-chip[aria-pressed="true"] {
     margin-bottom: 12px;
 }
 
-/* Barra de selección de plantas (debajo de los filtros, solo mientras se selecciona). */
+/* Barra de selección de plantas (debajo de los filtros, solo mientras se selecciona): separada de los filtros por una
+   raya y más aire, para que no parezca la misma fila. */
 .lot-select-bar {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-    margin-bottom: 12px;
+    margin: 6px 0 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-panel);
 }
 
 .lot-select-bar__count {
@@ -4222,11 +4809,35 @@ button.lot-chip[aria-pressed="true"] {
     color: var(--text-secondary);
 }
 
+/* Acciones: "Cosechar como" arriba y los tres botones del mismo ancho y alto en una fila (Descartar a la derecha). */
 .plant-detail__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px 8px;
     margin: 12px 0 8px;
+}
+
+.plant-detail__actions .plant-detail__label {
+    grid-column: 1 / 3;
+    grid-row: 1;
+}
+
+.plant-detail__actions .btn {
+    grid-row: 2;
+}
+
+.plant-detail__actions .plant-detail__wide {
+    grid-column: 1 / 3;
+}
+
+.plant-detail__actions .plant-detail__discard {
+    grid-column: 3;
+}
+
+.plant-detail__label {
+    font-size: 0.8rem;
+    font-weight: 650;
+    color: var(--text-secondary);
 }
 
 .plant-detail__score {
@@ -4414,12 +5025,12 @@ button.lot-chip[aria-pressed="true"] {
     grid-template-rows: minmax(0, 1fr);
     gap: 16px;
     height: calc(100dvh - 106px);
-    min-height: 680px;
+    min-height: 780px;
 }
 
 .gh-dash__main {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(12, minmax(0, 1fr));
     grid-template-rows: auto auto minmax(0, 1fr);
     gap: 16px;
     min-height: 0;
@@ -4445,7 +5056,7 @@ button.lot-chip[aria-pressed="true"] {
 }
 
 .gh-kpi {
-    grid-column: span 2;
+    grid-column: span 3;
     justify-content: center;
     gap: 2px;
     min-height: 128px;
@@ -4461,6 +5072,16 @@ button.lot-chip[aria-pressed="true"] {
 }
 
 .gh-kpi__value--accent {
+    color: var(--accent);
+}
+
+/* Rendimiento esperado: fondo verde, como el margen de Simulación. */
+.gh-kpi--good {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg-panel));
+}
+
+.gh-kpi--good .gh-kpi__value {
     color: var(--accent);
 }
 
@@ -4490,11 +5111,11 @@ button.lot-chip[aria-pressed="true"] {
 }
 
 .gh-chart--bars {
-    grid-column: span 4;
+    grid-column: span 8;
 }
 
 .gh-chart--donut {
-    grid-column: span 2;
+    grid-column: span 4;
     align-items: center;
 }
 
@@ -4513,12 +5134,66 @@ button.lot-chip[aria-pressed="true"] {
     max-height: none;
 }
 
+/* Próximas cosechas: a todo el ancho de la columna (las alertas pasaron a un cuadro arriba y los chequeos a la derecha). */
+.gh-list-card--wide {
+    grid-column: 1 / -1;
+}
+
+/* Cuadro de alertas abiertas: como los de números, con el ícono; rojo si hay alguna. Lleva a la vista Alertas. */
+a.gh-alerts {
+    color: inherit;
+    text-decoration: none;
+}
+
+a.gh-alerts:hover {
+    border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+}
+
+.gh-alerts__row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.gh-alerts__icon {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.gh-alerts .gh-kpi__value {
+    color: var(--text-muted);
+}
+
+.gh-alerts--on {
+    border-color: color-mix(in srgb, #ef4444 55%, transparent);
+    background: color-mix(in srgb, #ef4444 14%, var(--bg-panel));
+}
+
+.gh-alerts--on .gh-alerts__icon {
+    stroke: #ef4444;
+}
+
+.gh-alerts--on .gh-kpi__value,
+.gh-alerts--on .gh-kpi__label {
+    color: #ef4444;
+}
+
+a.gh-alerts--on:hover {
+    border-color: #ef4444;
+}
+
 /* --- Barras verticales de plantas por estado ---
    Fila 1: las barras (misma base para todas); fila 2: los nombres (subgrid, aunque uno ocupe 2 líneas). */
 .gh-bars {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-rows: 190px auto;
+    grid-template-rows: 240px auto;
     column-gap: 8px;
     row-gap: 6px;
 }
@@ -4537,14 +5212,14 @@ button.lot-chip[aria-pressed="true"] {
     justify-content: flex-end;
     align-items: center;
     width: 100%;
-    height: 190px;
+    height: 240px;
     border-bottom: 1px solid var(--border-input);
 }
 
 .gh-bars__value {
     flex: none;
     margin-bottom: 4px;
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     font-weight: 750;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
@@ -4553,9 +5228,31 @@ button.lot-chip[aria-pressed="true"] {
 /* El largo deja lugar fijo para la cantidad (arriba o al costado): la escala es la misma para todas. */
 .gh-bars__bar {
     flex: none;
-    width: min(36px, 70%);
+    width: min(48px, 70%);
     height: calc((100% - 24px) * var(--share));
     border-radius: 4px 4px 0 0;
+}
+
+/* La barra apila sus partes: las activas arriba y las cosechadas (rayadas) abajo, separadas por una línea fina. */
+.gh-bars__bar.gh-bars__stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+}
+
+.gh-bars__seg {
+    flex-basis: 0;
+    min-height: 2px;
+}
+
+/* Versión baja, para la card angosta de Lotes. */
+.gh-bars--compact {
+    grid-template-rows: 170px auto;
+}
+
+.gh-bars--compact .gh-bars__plot {
+    height: 170px;
 }
 
 /* Una barra con plantas siempre se ve, aunque sean pocas al lado de un estado grande. */
@@ -4564,7 +5261,7 @@ button.lot-chip[aria-pressed="true"] {
 }
 
 .gh-bars__label {
-    font-size: 0.75rem;
+    font-size: 0.82rem;
     font-weight: 600;
     line-height: 1.2;
     text-align: center;
@@ -4574,8 +5271,8 @@ button.lot-chip[aria-pressed="true"] {
 /* --- Dona de Baby Leaf esperado --- */
 .gh-donut {
     position: relative;
-    width: 180px;
-    height: 180px;
+    width: 230px;
+    height: 230px;
 }
 
 .gh-donut__chart {
@@ -4603,7 +5300,7 @@ button.lot-chip[aria-pressed="true"] {
 }
 
 .gh-donut__center strong {
-    font-size: 1.7rem;
+    font-size: 2.1rem;
     font-weight: 800;
     line-height: 1;
     color: var(--text-primary);
@@ -4664,9 +5361,9 @@ button.lot-chip[aria-pressed="true"] {
 .gh-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px;
-    border-radius: 10px;
+    gap: 12px;
+    padding: 14px 12px;
+    border-radius: 12px;
     color: inherit;
     text-decoration: none;
 }
@@ -4681,6 +5378,11 @@ a.gh-row:focus-visible {
     opacity: 0.55;
 }
 
+/* Una raya suave entre filas. */
+.gh-list > li + li {
+    border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
 .gh-row__main {
     display: flex;
     flex-direction: column;
@@ -4690,7 +5392,7 @@ a.gh-row:focus-visible {
 
 .gh-row__title {
     overflow: hidden;
-    font-size: 0.88rem;
+    font-size: 0.98rem;
     font-weight: 650;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -4701,7 +5403,8 @@ a.gh-row:focus-visible {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 0.78rem;
+    margin-top: 3px;
+    font-size: 0.85rem;
     color: var(--text-secondary);
 }
 
@@ -4712,7 +5415,7 @@ a.gh-row:focus-visible {
 
 .gh-row__when {
     flex: none;
-    font-size: 0.78rem;
+    font-size: 0.84rem;
     color: var(--text-muted);
     white-space: nowrap;
 }
@@ -4724,8 +5427,8 @@ a.gh-row:focus-visible {
 
 .btn.gh-row__action {
     flex: none;
-    padding: 2px 10px;
-    font-size: 0.78rem;
+    padding: 5px 12px;
+    font-size: 0.84rem;
 }
 
 .gh-empty {
@@ -4737,8 +5440,8 @@ a.gh-row:focus-visible {
 /* Severidad de la alerta (va con su nombre en el aria-label). */
 .gh-dot {
     flex: none;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
 }
 
@@ -4767,28 +5470,70 @@ a.gh-row:focus-visible {
 }
 
 /* Fecha de la cosecha: día grande y mes abajo. */
+/* Últimos accedidos: ícono de la vista (el del menú) en un cuadrito de su color, y su nombre en ese color. */
+.gh-view {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+}
+
+.gh-view__icon {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.gh-view--lotes {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+}
+
+.gh-view--optimization {
+    background: color-mix(in srgb, #8a4fd3 18%, transparent);
+    color: #a77ce8;
+}
+
+.gh-view__name {
+    font-weight: 700;
+}
+
+.gh-view__name--lotes {
+    color: var(--accent);
+}
+
+.gh-view__name--optimization {
+    color: #a77ce8;
+}
+
 .gh-date {
     display: flex;
     flex: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
     background: var(--chip-bg);
     line-height: 1;
 }
 
 .gh-date strong {
-    font-size: 1rem;
+    font-size: 1.15rem;
     font-weight: 800;
     color: var(--text-primary);
 }
 
 .gh-date span {
-    margin-top: 2px;
-    font-size: 0.68rem;
+    margin-top: 3px;
+    font-size: 0.72rem;
     font-weight: 650;
     text-transform: uppercase;
     color: var(--text-secondary);
@@ -4838,10 +5583,6 @@ a.gh-row:focus-visible {
     .gh-kpi {
         grid-column: span 1;
         min-height: 104px;
-    }
-
-    .gh-kpi:first-child {
-        grid-column: span 2;
     }
 
     .gh-kpi__value {
@@ -4895,6 +5636,11 @@ a.gh-row:focus-visible {
         min-width: 3px;
     }
 
+    /* Horizontal: las cosechadas a la izquierda (junto al eje) y las activas después. */
+    .gh-bars__bar.gh-bars__stack {
+        flex-direction: row-reverse;
+    }
+
     .gh-bars__value {
         margin: 0 0 0 6px;
     }
@@ -4906,31 +5652,6 @@ a.gh-row:focus-visible {
     font-size: 0.85rem;
     font-weight: 700;
     color: var(--text-secondary);
-}
-
-/* Card de trasplante a Adultas: cuántas pasan, su costo y los huecos libres. */
-.lot-transplant {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.lot-transplant__main {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-}
-
-.lot-transplant__value {
-    font-size: 1.6rem;
-    font-weight: 750;
-    color: var(--text-primary);
-}
-
-.lot-transplant__chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
 }
 
 /* Filtros arriba de una grilla (Circuitos, Sensores): en una fila; en pantallas chicas bajan de línea. */

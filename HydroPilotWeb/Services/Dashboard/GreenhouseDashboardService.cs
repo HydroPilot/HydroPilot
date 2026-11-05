@@ -18,9 +18,6 @@ namespace HydroPilotWeb.Services.Dashboard;
 /// </summary>
 public class GreenhouseDashboardService
 {
-    /// <summary>Alertas del dashboard: todas las abiertas y, si queda lugar, las últimas resueltas hasta este total.</summary>
-    public const int AlertsShown = 5;
-
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly LotOverviewService _lots;
     private readonly RecentVisitService _visits;
@@ -63,6 +60,7 @@ public class GreenhouseDashboardService
         var expected = new List<decimal?>();
         var currency = YieldPrices.None.Currency;
         int developing = 0, apta = 0, candidate = 0, conventional = 0, discarded = 0, risk = 0, total = 0, expectedBabyLeaf = 0;
+        int harvestedBabyLeaf = 0, harvestedAdult = 0;
         var harvests = new List<DashboardHarvestItem>();
 
         foreach (var lot in activeLots)
@@ -90,6 +88,8 @@ public class GreenhouseDashboardService
             conventional += plants.Conventional;
             discarded += plants.Discarded;
             risk += plants.Risk;
+            harvestedBabyLeaf += plants.HarvestedAsBabyLeaf;
+            harvestedAdult += plants.Harvested - plants.HarvestedAsBabyLeaf;
             total += plants.TotalPlants;
             expectedBabyLeaf += overview.Yield.Expected.BabyLeaf.Plants;
 
@@ -101,13 +101,14 @@ public class GreenhouseDashboardService
                 harvests.AddRange(GreenhouseDashboardRules.Harvests(lot.Id, lot.Name ?? $"Lote {lot.Id}", timeline));
         }
 
-        // Mismos estados que el mapa de Lotes (el color lo pone la vista con la paleta de Lotes).
+        // Mismos estados que el mapa de Lotes (el color lo pone la vista con la paleta de Lotes). Las ya cosechadas de los
+        // lotes activos van rayadas en la barra de su destino (desde 2026-10-28), como en la card de Lotes.
         var stages = new List<DashboardStageCount>
         {
             new("En desarrollo", developing, CommercialStageNames.EnDesarrollo),
-            new("Baby Leaf", apta, CommercialStageNames.BabyLeafApta),
+            new("Baby Leaf", apta, CommercialStageNames.BabyLeafApta, harvestedBabyLeaf),
             new("Candidata", candidate, CommercialStageNames.CandidataBabyLeaf),
-            new("Adulta", conventional, CommercialStageNames.CosechaConvencional),
+            new("Adulta", conventional, CommercialStageNames.CosechaConvencional, harvestedAdult),
             new("Descartada", discarded, null),
             new("Riesgo", risk, CommercialStageNames.RiesgoFueraDeVentana),
         };
@@ -123,36 +124,11 @@ public class GreenhouseDashboardService
             stages,
             total,
             expectedBabyLeaf,
-            await AlertsAsync(context, Local, ct),
+            await context.NotificationAlerts.CountAsync(a => !a.IsResolved && a.Type != NotificationTypes.PruebaSistema, ct),
             harvests.OrderBy(h => h.Date).ThenBy(h => h.Destination).ToList(),
             await VisitsAsync(user, Local, ct),
             sensorChecks,
             hasIntervals);
-    }
-
-    /// <summary>
-    /// Las abiertas siempre (aunque sean más de <see cref="AlertsShown"/>), más nuevas primero; si queda lugar, las últimas
-    /// resueltas hasta completar <see cref="AlertsShown"/>. Todas están en la bandeja de notificaciones.
-    /// </summary>
-    private static async Task<IReadOnlyList<DashboardAlertItem>> AlertsAsync(
-        HydroPilotDbContext context, Func<DateTime, DateTime> local, CancellationToken ct)
-    {
-        var alerts = context.NotificationAlerts
-            .AsNoTracking()
-            .Where(a => a.Type != NotificationTypes.PruebaSistema)
-            .OrderByDescending(a => a.CreatedAtUtc)
-            .ThenByDescending(a => a.Id)
-            .Select(a => new { a.Id, a.Type, a.Severity, a.Title, a.LotId, a.Fingerprint, a.CreatedAtUtc, a.IsResolved });
-        var rows = await alerts.Where(a => !a.IsResolved).ToListAsync(ct);
-        if (rows.Count < AlertsShown)
-            rows.AddRange(await alerts.Where(a => a.IsResolved).Take(AlertsShown - rows.Count).ToListAsync(ct));
-
-        // Error de sensor de un circuito: el link va a Optimización con ese circuito (sale de la huella de la alerta).
-        return rows
-            .Select(a => new DashboardAlertItem(a.Id, a.Severity, a.Title,
-                GreenhouseDashboardRules.AlertLink(a.Type, a.LotId, SensorFaultAlerts.CircuitId(a.Fingerprint)),
-                local(a.CreatedAtUtc), a.IsResolved))
-            .ToList();
     }
 
     private async Task<IReadOnlyList<DashboardVisitItem>> VisitsAsync(ClaimsPrincipal user, Func<DateTime, DateTime> local, CancellationToken ct)

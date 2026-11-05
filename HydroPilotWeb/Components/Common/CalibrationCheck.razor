@@ -1,0 +1,22 @@
+@namespace HydroPilotWeb.Components.Common
+
+@* "Calibrado hoy" como casilla de verificación (antes un botón que no parecía botón): tocarla anota hoy como fecha de
+   calibración del sensor; si ya se calibró hoy queda tildada en verde y no se toca. La usan el dashboard y Sensores. *@
+<button type="button" role="checkbox" aria-checked="@(Checked ? "true" : "false")"
+        class="hp-check @(Checked ? "is-checked" : null) @(Busy ? "is-busy" : null)"
+        disabled="@(Checked || Busy || Disabled)"
+        title="@(Checked ? "Ya se calibró hoy" : "Anota hoy como fecha de calibración")"
+        @onclick="OnCheck">
+    <span class="hp-check__box" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19 7" /></svg>
+    </span>
+    <span>@(Busy ? "Guardando…" : "Calibrado hoy")</span>
+</button>
+
+@code {
+    /// <summary>Ya se calibró hoy.</summary>
+    [Parameter] public bool Checked { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback OnCheck { get; set; }
+}

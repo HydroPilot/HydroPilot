@@ -132,6 +132,8 @@
                         <label class="form-label mb-1" for="param-stress">Días de estrés</label>
                         <input id="param-stress" type="number" class="form-control" min="0" step="1" @bind="transplant.StressDays" disabled="@(!canEdit)" />
                     </div>
+                    @* Plantas por hora y costo de la hora: ocultos desde 2026-10-28 (la mano de obra del trasplante ya no entra en
+                       los gastos). Los valores siguen guardados; para volver a mostrarlos, descomentar.
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="param-plants-hour">Plantas por hora (operario)</label>
                         <input id="param-plants-hour" type="number" class="form-control" min="1" step="10" @bind="transplant.PlantsPerHour" disabled="@(!canEdit)" />
@@ -140,6 +142,7 @@
                         <label class="form-label mb-1" for="param-labor-cost">Costo de la hora (@(current?.Currency ?? "ARS"))</label>
                         <input id="param-labor-cost" type="number" class="form-control" min="0" step="100" @bind="transplant.LaborCostPerHour" disabled="@(!canEdit)" />
                     </div>
+                    *@
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="param-max-size">Tamaño máximo Baby Leaf (× ideal)</label>
                         <input id="param-max-size" type="number" class="form-control" min="1" step="0.05" @bind="transplant.MaxSizeFactor" disabled="@(!canEdit)" />
@@ -152,10 +155,11 @@
                         <label class="form-label mb-1" for="param-adult-spacing">Separación entre huecos Adultas (cm)</label>
                         <input id="param-adult-spacing" type="number" class="form-control" min="0" step="0.5" @bind="transplant.AdultSpacingCm" disabled="@(!canEdit)" />
                     </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-cleaning">Días de limpieza del denso</label>
+                        <input id="param-cleaning" type="number" class="form-control" min="0" max="30" step="1" @bind="transplant.DenseCleaningDays" disabled="@(!canEdit)" />
+                    </div>
                 </div>
-                <p class="lot-muted mt-2 mb-0">
-                    Trasplante: @LotFormat.Money(TransplantRow.ToParameters(transplant).CostPerPlant, current?.Currency ?? "ARS") por planta.
-                </p>
 
                 @if (transplantErrors.Count > 0)
                 {
@@ -412,16 +416,19 @@
         public decimal MaxSizeFactor { get; set; }
         public decimal DenseSpacingCm { get; set; }
         public decimal AdultSpacingCm { get; set; }
+        public int DenseCleaningDays { get; set; }
 
         public static TransplantRow From(TransplantParameters p) => new()
         {
             DecisionGdd = p.DecisionGdd,
             PlantsPerHour = p.PlantsPerHour, LaborCostPerHour = p.LaborCostPerHour, StressDays = p.StressDays,
             MaxSizeFactor = p.MaxSizeFactor, DenseSpacingCm = p.DenseSpacingCm, AdultSpacingCm = p.AdultSpacingCm,
+            DenseCleaningDays = p.DenseCleaningDays,
         };
 
         public static TransplantParameters ToParameters(TransplantRow r) => new(
-            r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor, r.DenseSpacingCm, r.AdultSpacingCm);
+            r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor, r.DenseSpacingCm, r.AdultSpacingCm,
+            r.DenseCleaningDays);
     }
 
     private TransplantRow? transplant;

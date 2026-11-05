@@ -24,15 +24,43 @@
                     <span class="settings-eyebrow">Invernadero</span>
                     <h3>Circuitos</h3>
                 </div>
-                @if (!canEdit)
-                {
-                    <span class="settings-readonly-badge">Solo lectura</span>
-                }
-                else if (greenhouses is { Count: > 0 })
-                {
-                    <button type="button" class="btn lot-toolbar__new circuits-new" @onclick="OpenCreateAsync"
-                            disabled="@creating">+ Nuevo circuito</button>
-                }
+                <div class="settings-head-actions">
+                    @if (!canEdit)
+                    {
+                        <span class="settings-readonly-badge">Solo lectura</span>
+                    }
+                    else if (greenhouses is { Count: > 0 })
+                    {
+                        <button type="button" class="btn lot-toolbar__new circuits-new" @onclick="OpenCreateAsync"
+                                disabled="@creating">+ Nuevo circuito</button>
+                    }
+                    <InfoTip Title="Cómo funciona Circuitos" Wide="true">
+                        <span class="hp-info__text">
+                            Cada circuito es un sistema hidropónico del invernadero: su tanque, sus sondas de pH y CE, sus 5
+                            bombas y un lote por vez. Todos los maneja la Pi del invernadero.
+                        </span>
+                        <span class="hp-info__list">
+                            <span><b>Tipo:</b> <span class="hp-info__swatch" style="background: #2d7dd2;"></span><b>Denso</b>,
+                                donde se siembra el lote (Baby Leaf, huecos a 6,5 cm), o
+                                <span class="hp-info__swatch" style="background: #8a4fd3;"></span><b>Adultas</b>, que recibe las que
+                                se trasplantan (huecos a 22,5 cm).</span>
+                            <span><b>Huecos:</b> filas × columnas; en el denso es la grilla del lote (cuántas plantas se
+                                siembran).</span>
+                            <span><b>Tanque:</b> los litros, de los que sale el tamaño de las dosis del control
+                                (Optimización).</span>
+                            <span><b>Lote en curso:</b> el que tiene ahora, o Libre. Uno con lote no se puede desactivar ni
+                                cambiar de tipo o de grilla.</span>
+                            <span><b>+ Nuevo circuito:</b> lo crea en la Pi con sus sondas y sus bombas (las claves que la Pi
+                                tiene que usar); arranca en Manual.</span>
+                            <span><b>✎:</b> edita nombre, tipo, huecos, tanque y si está activo. Uno inactivo no aparece en
+                                Nuevo lote ni en Optimización.</span>
+                            <span><b>Filtros:</b> buscar por circuito, lote o invernadero; tipo; libres o con lote; activos o
+                                inactivos.</span>
+                            <span>Solo Administrador y Productor crean y editan. Las separaciones entre huecos se cambian en
+                                Ajustes &gt; Parámetros &gt; Trasplante a Adultas.</span>
+                        </span>
+                    </InfoTip>
+                </div>
             </div>
 
             @if (!string.IsNullOrEmpty(savedMessage))

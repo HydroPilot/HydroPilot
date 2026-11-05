@@ -41,8 +41,12 @@ public class PlantLifecycleService
         _parameters = parameters;
     }
 
-    /// <summary>Cosecha una planta (detalle de la planta): mismo destino por estado que la selección.</summary>
-    public async Task<Plant?> HarvestPlantAsync(int plantId, DateOnly? harvestDate = null, CancellationToken ct = default)
+    /// <summary>
+    /// Cosecha una planta (detalle de la planta). <paramref name="destination"/>: Baby Leaf o adulta, como lo elige el
+    /// usuario (desde 2026-10-28); null = el destino de su estado, como la selección.
+    /// </summary>
+    public async Task<Plant?> HarvestPlantAsync(
+        int plantId, DateOnly? harvestDate = null, CancellationToken ct = default, HarvestDestination? destination = null)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -56,7 +60,8 @@ public class PlantLifecycleService
             return plant; // No se re-cosecha ni se cambia un estado histórico.
 
         var adult = await AdultStageAsync(context, ct);
-        Harvest(context, plant, adult, harvestDate ?? Today, DateTime.UtcNow, "harvest");
+        var babyLeaf = await BabyLeafStageAsync(context, ct);
+        Harvest(context, plant, adult, harvestDate ?? Today, DateTime.UtcNow, "harvest", destination, babyLeaf);
 
         await context.SaveChangesAsync(ct);
         await CloseLotIfDoneAsync(context, plant.LotId, ct);
@@ -64,23 +69,27 @@ public class PlantLifecycleService
     }
 
     /// <summary>
-    /// Cosecha las plantas elegidas en el mapa (solo las activas del lote). El destino sale del estado de
-    /// cada una (<see cref="PlantHarvestRules.DestinationFor"/>): Baby Leaf o candidata se cosecha como Baby
-    /// Leaf y conserva su estado; el resto se cosecha como adulta y su estado pasa a "Adulta".
+    /// Cosecha las plantas elegidas en el mapa (solo las activas del lote). <paramref name="destination"/> null: el destino
+    /// sale del estado de cada una (<see cref="PlantHarvestRules.DestinationFor"/>): Baby Leaf o candidata se cosecha como
+    /// Baby Leaf y conserva su estado; el resto se cosecha como adulta y su estado pasa a "Adulta". Si se elige un destino
+    /// (desde 2026-10-28), todas van con ese, salvo las trasplantadas, que siempre son adultas.
     /// </summary>
     public async Task<PlantBatchResult> HarvestPlantsAsync(
-        int lotId, IReadOnlyCollection<int> plantIds, DateOnly? harvestDate = null, CancellationToken ct = default)
+        int lotId, IReadOnlyCollection<int> plantIds, DateOnly? harvestDate = null, CancellationToken ct = default,
+        HarvestDestination? destination = null)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var plants = await ActivePlantsAsync(context, lotId, plantIds, ct);
         var adult = await AdultStageAsync(context, ct);
+        var babyLeafStage = await BabyLeafStageAsync(context, ct);
 
         var date = harvestDate ?? Today;
         var now = DateTime.UtcNow;
         var babyLeaf = 0;
         foreach (var plant in plants)
         {
-            if (Harvest(context, plant, adult, date, now, "harvest-bulk") == HarvestDestination.BabyLeaf)
+            var chosen = destination == HarvestDestination.BabyLeaf && plant.IsAdultRoute ? HarvestDestination.Convencional : destination;
+            if (Harvest(context, plant, adult, date, now, "harvest-bulk", chosen, babyLeafStage) == HarvestDestination.BabyLeaf)
                 babyLeaf++;
         }
 
@@ -140,11 +149,21 @@ public class PlantLifecycleService
     private static Task<CommercialStage?> AdultStageAsync(HydroPilotDbContext context, CancellationToken ct) =>
         context.CommercialStages.FirstOrDefaultAsync(s => s.Name == CommercialStageNames.CosechaConvencional, ct);
 
-    /// <summary>Cosecha una planta activa con el destino de su estado; el estado comercial queda congelado.</summary>
+    /// <summary>Estado "Baby Leaf" del catálogo: el de toda planta cosechada como Baby Leaf.</summary>
+    private static Task<CommercialStage?> BabyLeafStageAsync(HydroPilotDbContext context, CancellationToken ct) =>
+        context.CommercialStages.FirstOrDefaultAsync(s => s.Name == CommercialStageNames.BabyLeafApta, ct);
+
+    /// <summary>
+    /// Cosecha una planta activa con el destino elegido o, si no, el de su estado. El estado comercial queda congelado con
+    /// el destino, siempre "Baby Leaf" o "Adulta" (desde 2026-10-28, una candidata cosechada como Baby Leaf queda "Baby
+    /// Leaf"): es de donde lo leen el rendimiento y los lotes cerrados.
+    /// </summary>
     private static HarvestDestination Harvest(
-        HydroPilotDbContext context, Plant plant, CommercialStage? adult, DateOnly date, DateTime now, string source)
+        HydroPilotDbContext context, Plant plant, CommercialStage? adult, DateOnly date, DateTime now, string source,
+        HarvestDestination? chosen = null, CommercialStage? babyLeaf = null)
     {
-        var destination = PlantHarvestRules.DestinationFor(plant.CommercialStage?.Name, plant.IsAdultRoute);
+        var byStage = PlantHarvestRules.DestinationFor(plant.CommercialStage?.Name, plant.IsAdultRoute);
+        var destination = chosen ?? byStage;
         var previousStageId = plant.CommercialStageId;
         plant.OperationalState = PlantOperationalState.Cosechada;
         plant.HarvestDate = date;
@@ -152,6 +171,8 @@ public class PlantLifecycleService
         plant.DiscardReason = null;
         if (destination == HarvestDestination.Convencional && adult is not null)
             plant.CommercialStageId = adult.Id; // el destino queda registrado en el estado congelado
+        else if (destination == HarvestDestination.BabyLeaf && babyLeaf is not null)
+            plant.CommercialStageId = babyLeaf.Id;
 
         context.PlantStageHistories.Add(new PlantStageHistory
         {

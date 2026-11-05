@@ -14,6 +14,28 @@
             <div>
                 <h3>Escenario</h3>
             </div>
+            <InfoTip Title="Cómo se arma la simulación" Wide="true" Start="true">
+                <span class="hp-info__text">
+                    Calcula qué va a dar un lote (o uno imaginario) según cómo lo cosechás. Es solo una cuenta: no guarda nada
+                    ni toca la Pi.
+                </span>
+                <span class="hp-info__list">
+                    <span><b>Contexto:</b> un lote en curso o un escenario libre. Con un lote se toman sus plantas activas, su
+                        siembra, su GDD medido, su etapa, las que ya trasplantó y sus huecos libres de Adultas; la meta Baby
+                        Leaf viene de la del lote. Libre: elegís la siembra (puede ser futura) y cuántas plantas.</span>
+                    <span><b>Clima:</b> <b>Pronóstico</b> es lo mismo que usa Lotes (el GDD medido hasta hoy y 7 días de
+                        pronóstico corregido a la temperatura de adentro; después, extrapolado ≈). <b>Manual</b>: cada día suma
+                        el GDD de esa Tmín y Tmáx, para probar "¿y si hace más frío?".</span>
+                    <span><b>Estrategia:</b> <b>Máximo Baby Leaf</b> (corta todas las que se prevén aptas), <b>Meta Baby Leaf
+                        máxima</b> (hasta ese % de las plantas) o <b>Todo adulta</b>. El resto va a Adultas mientras haya
+                        huecos; las que no entran se pierden al cerrar la ventana.</span>
+                    <span><b>Pesos y precios:</b> g por planta y $ por kg de cada destino. Vienen de <b>Ajustes &gt;
+                        Parámetros</b>; si los cambiás acá, valen solo para este escenario.</span>
+                    <span><b>Gastos del sistema:</b> el precio por semilla y por litro de Solución A y B (estos de
+                        Parámetros). Las cantidades (semillas y litros) las calcula el sistema.</span>
+                    <span>Las otras estrategias se calculan igual, para compararlas abajo.</span>
+                </span>
+            </InfoTip>
         </div>
 
         @if (options is null)
@@ -185,7 +207,25 @@
                     </div>
                 </div>
 
-                <h4 class="sim-section">Ventanas y cortes</h4>
+                <div class="sim-head">
+                    <h4 class="sim-section">Ventanas y cortes</h4>
+                    <InfoTip Title="Ventanas y cortes">
+                        <span class="hp-info__text">La misma línea de tiempo de Lotes, por GDD, con el clima del escenario.</span>
+                        <span class="hp-info__stack">
+                            <span class="hp-info__pump"><span style="background: #2e9e4f;"></span>Desarrollo: 0–250 GDD</span>
+                            <span class="hp-info__pump"><span style="background: #2d7dd2;"></span>Baby Leaf: 250–450 GDD</span>
+                            <span class="hp-info__pump"><span style="background: #8a4fd3;"></span>Adulta: 450–750 GDD</span>
+                        </span>
+                        <span class="hp-info__list">
+                            <span><b>Corte Baby Leaf:</b> el óptimo por la curva de aptas (el del lote si ya está en la ventana;
+                                si no, el pico de los lotes cerrados parecidos, o 300 GDD sin historial). Pasado el óptimo,
+                                "ahora"; desde los 450 ya no se puede.</span>
+                            <span><b>Corte adultas:</b> el día que llega a 650 GDD más los días de estrés del trasplante
+                                (Parámetros); después de 750, pasado de cosecha.</span>
+                            <span><b>Fechas:</b> medidas hasta hoy, pronóstico 7 días y después extrapoladas (≈).</span>
+                        </span>
+                    </InfoTip>
+                </div>
                 @if (result.Timeline is { } timeline)
                 {
                     <LotCycleTimeline Timeline="timeline" />
@@ -198,7 +238,26 @@
                 @if (result.Timeline is not null)
                 {
                     var outlook = result.Outlook;
-                    <h4 class="sim-section">Previsión de Baby Leaf y pérdidas</h4>
+                    <div class="sim-head">
+                        <h4 class="sim-section">Previsión de Baby Leaf y pérdidas</h4>
+                        <InfoTip Title="Cómo se prevé">
+                            <span class="hp-info__text">Cuántas van a estar aptas para Baby Leaf en el óptimo y cuántas se van a perder.</span>
+                            <span class="hp-info__list">
+                                <span><b>Histórico:</b> los lotes cerrados del cultivo, pesados por parecido: <b>temporada</b>
+                                    (sembrados a ±30 días en el calendario pesan 1, y bajan hasta 0 a los 90) × <b>clima</b> (GDD
+                                    por día parecido al del escenario). De cada uno: el % de aptas en el óptimo, las pérdidas
+                                    tempranas (antes de 450 GDD) y las tardías (adultas que se perdieron esperando su corte).</span>
+                                <span><b>El lote:</b> sus <span class="hp-info__swatch" style="background: #2d7dd2;"></span>Baby
+                                    Leafs + <span class="hp-info__swatch" style="background: #e8a33d;"></span>candidatas sobre las
+                                    activas. No pesa mientras está en desarrollo; desde que abre la ventana pesa cada vez más,
+                                    hasta reemplazar al histórico en el óptimo.</span>
+                                <span><b>Baby Leafs en el óptimo</b> = peso del lote × su estado + el resto × el histórico.</span>
+                                <span><b>Plantas perdidas</b> = las ya descartadas del lote + las previstas hasta el corte de la
+                                    estrategia elegida (las tasas del histórico, solo por lo que le falta a cada etapa).</span>
+                                <span><b>Lotes usados:</b> cada lote del histórico con su peso.</span>
+                            </span>
+                        </InfoTip>
+                    </div>
                     <div class="mini-grid">
                         <div class="mini-card"><span>Baby Leafs en el óptimo</span><strong>@Rate(outlook.AptRate)</strong></div>
                         <div class="mini-card" title="@LossesTitle"><span>Plantas perdidas</span><strong>@LotFormat.Plants(Losses.Discarded + Losses.Expected)</strong></div>
@@ -243,7 +302,26 @@
 
                 @if (Chosen is { } chosen)
                 {
-                    <h4 class="sim-section">Estrategia elegida: @chosen.Name</h4>
+                    <div class="sim-head">
+                        <h4 class="sim-section">Estrategia elegida: @chosen.Name</h4>
+                        <InfoTip Title="Cómo se calcula">
+                            <span class="hp-info__list">
+                                <span><b>Kg</b> = plantas Baby Leaf × g Baby Leaf + adultas × g adulta.</span>
+                                <span><b>Ingresos</b> = kg de cada destino × su precio por kg.</span>
+                                <span><b>Gastos del sistema</b> = semillas (precio × plantas) + Solución A y B (litros que consume
+                                    el ciclo × precio por litro). Los litros salen
+                                    día por día del agua por planta de cada etapa (0,015 / 0,055 / 0,2 L) × la dosis de A y B de
+                                    esa etapa, solo con las plantas vivas. "Ver" abre el detalle.</span>
+                                <span><b class="hp-info__good">Margen</b> = ingresos − gastos del sistema (sin energía,
+                                    amortización ni otros costos).</span>
+                                <span><b class="hp-info__good">Margen acumulativo</b>: lo que dejaría si la estrategia se repite
+                                    en el lugar y el tiempo que ocupa la que más usa (huecos × separación² × días, con los días
+                                    de limpieza del denso de Parámetros). Las Baby
+                                    Leaf usan huecos más chicos y liberan el denso antes, y ese lugar se vuelve a sembrar:
+                                    margen × las veces que entra. Las separaciones son de Parámetros.</span>
+                            </span>
+                        </InfoTip>
+                    </div>
                     @if (!chosen.Available)
                     {
                         <div class="alert alert-warning small mt-2 mb-0">No se puede calcular: @string.Join(" ", chosen.Warnings)</div>
@@ -274,7 +352,28 @@
 
                 @if (result.Strategies.Count > 1)
                 {
-                    <h4 class="sim-section">Comparación de estrategias</h4>
+                    <div class="sim-head">
+                        <h4 class="sim-section">Comparación de estrategias</h4>
+                        <InfoTip Title="Cómo comparar">
+                            <span class="hp-info__text">
+                                Las tres estrategias con el mismo lote, clima, pesos y precios: cortes, cuántas van a cada
+                                destino y cuántas se pierden, días de ciclo (de la siembra al último corte), kg, margen y margen
+                                acumulativo.
+                            </span>
+                            <span class="hp-info__chips">
+                                <span class="badge text-bg-primary">elegida</span>
+                                <span class="badge sim-badge--outline">mejor margen</span>
+                                <span class="badge text-bg-success">mejor margen acumulativo</span>
+                            </span>
+                            <span class="hp-info__list">
+                                <span><b class="hp-info__good">El valor más importante es el margen acumulativo.</b> El margen
+                                    dice cuánto deja este lote solo, pero las estrategias no ocupan lo mismo: las Baby Leaf usan
+                                    huecos más chicos y liberan el denso antes, y en ese lugar se vuelve a sembrar. El margen
+                                    acumulativo compara todas en el mismo lugar y el mismo tiempo, que es lo que realmente
+                                    tiene el invernadero: por eso es el que conviene mirar para decidir cómo cosechar.</span>
+                            </span>
+                        </InfoTip>
+                    </div>
                     <div class="table-responsive hp-table-card">
                         <table class="table table-sm hp-table">
                             <thead>
@@ -419,6 +518,8 @@
     .sim-actions { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
     .sim-results-col { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
     .sim-section { margin: 22px 0 10px; font-size: 1rem; font-weight: 700; }
+    .sim-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 0 10px; }
+    .sim-head .sim-section { margin: 0; }
     .sim-card__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .mini-grid.sim-chosen { grid-template-columns: repeat(var(--cards, 4), minmax(0, 1fr)); }
     .sim-card--big strong { font-size: 1.6rem; }
@@ -612,7 +713,6 @@
     /// <summary>Fórmula con las cantidades que calculó el sistema (semillas, litros, días).</summary>
     private static string CostFormula(SimulationCostComponent component, SimulationCostBreakdown costs) => component.Name switch
     {
-        "Trasplante" => $"{LotFormat.Count(costs.Transplanted, "planta trasplantada", "plantas trasplantadas")} × costo por planta (hora ÷ plantas por hora)",
         "Semillas" => $"precio por semilla × {LotFormat.Count(costs.Seeds, "semilla", "semillas")}",
         CostCalculator.SolutionA when costs.Usage is { } usage =>
             $"{usage.SolutionALiters.ToString("0.###", LotFormat.Culture)} L × precio por litro · " +

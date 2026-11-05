@@ -2,19 +2,29 @@
 @using HydroPilotWeb.Services.Dashboard
 @namespace HydroPilotWeb.Components.Dashboard
 
-@* Plantas de todos los lotes activos por estado: una barra vertical por estado, con los colores del mapa
-   de Lotes. Cada barra lleva su cantidad arriba y su nombre abajo (el color no es lo único que la
-   identifica); todas comparten la escala del estado con más plantas. En celular las barras pasan a ser
-   horizontales (los nombres no entran debajo). --share = largo de la barra, de 0 a 1 del máximo. *@
-<div class="gh-bars" role="img" aria-label="@AriaLabel">
+@* Plantas por estado: una barra vertical por estado, con los colores del mapa de Lotes. Cada barra lleva su
+   cantidad arriba y su nombre abajo (el color no es lo único que la identifica); todas comparten la escala del estado
+   con más plantas. Las cosechadas de un destino van rayadas abajo, en la misma barra. En
+   celular las barras pasan a ser horizontales (los nombres no entran debajo). --share = largo de la barra, de 0 a 1 del
+   máximo. Compact: más baja, para una card angosta. *@
+<div class="gh-bars @(Compact ? "gh-bars--compact" : null)" role="img" aria-label="@AriaLabel">
     @foreach (var stage in Stages)
     {
-        var share = Max > 0 ? (decimal)stage.Plants / Max : 0m;
-        <div class="gh-bars__col" title="@($"{stage.Label}: {LotFormat.Plants(stage.Plants)}")">
+        var share = Max > 0 ? (decimal)stage.Total / Max : 0m;
+        var color = Color(stage);
+        <div class="gh-bars__col" title="@Title(stage)">
             <div class="gh-bars__plot">
-                <span class="gh-bars__value">@stage.Plants</span>
-                <span class="gh-bars__bar @(stage.Plants > 0 ? "gh-bars__bar--some" : null)"
-                      style="--share: @Css(share); background: @Color(stage);"></span>
+                <span class="gh-bars__value">@stage.Total</span>
+                <span class="gh-bars__bar gh-bars__stack @(stage.Total > 0 ? "gh-bars__bar--some" : null)" style="--share: @Css(share);">
+                    @if (stage.Plants > 0)
+                    {
+                        <span class="gh-bars__seg" style="flex-grow: @stage.Plants; background-color: @color;"></span>
+                    }
+                    @if (stage.Harvested > 0)
+                    {
+                        <span class="gh-bars__seg lot-seg--striped" style="flex-grow: @stage.Harvested; background-color: @color;"></span>
+                    }
+                </span>
             </div>
             <span class="gh-bars__label">@stage.Label</span>
         </div>
@@ -24,14 +34,25 @@
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<DashboardStageCount> Stages { get; set; } = [];
 
-    private int Max => Stages.Count == 0 ? 0 : Stages.Max(s => s.Plants);
+    /// <summary>Barras más bajas (card angosta de Lotes).</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    /// <summary>Texto del gráfico para lectores de pantalla (por defecto, el del dashboard).</summary>
+    [Parameter] public string Description { get; set; } = "Plantas de los lotes activos por estado";
+
+    private int Max => Stages.Count == 0 ? 0 : Stages.Max(s => s.Total);
+
+    private static string Title(DashboardStageCount stage) =>
+        stage.Harvested > 0
+            ? $"{stage.Label}: {LotFormat.Count(stage.Plants, "activa", "activas")} + {LotFormat.Count(stage.Harvested, "cosechada", "cosechadas")}"
+            : $"{stage.Label}: {LotFormat.Plants(stage.Plants)}";
 
     // Descartadas: el gris de su filtro en el mapa (sin la trama de la celda, que en una barra no se lee).
     private static string Color(DashboardStageCount stage) =>
         stage.Stage is { } name ? CommercialStagePalette.ForStage(name).Background : "#8a94a0";
 
-    private string AriaLabel => "Plantas de los lotes activos por estado: " +
-        string.Join(", ", Stages.Select(s => $"{s.Label} {s.Plants}"));
+    private string AriaLabel => $"{Description}: " +
+        string.Join(", ", Stages.Select(s => s.Harvested > 0 ? $"{s.Label} {s.Plants} y {s.Harvested} cosechadas" : $"{s.Label} {s.Plants}"));
 
     private static string Css(decimal value) => value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
 }
