@@ -41,7 +41,8 @@ public sealed record DeviceCircuitConfig(
     string? EcKey,
     IReadOnlyDictionary<string, string> Pumps,
     int Plants,
-    int? LotDays);
+    int? LotDays,
+    IReadOnlyList<int>? PlantIds = null);
 
 /// <summary>Configuración de la Pi (GET /api/nodos/{nodo}/circuitos): sus circuitos y las claves de temperatura y humedad.</summary>
 public sealed record DeviceConfigResponse(string NodeId, string? TemperatureKey, string? HumidityKey, IReadOnlyList<DeviceCircuitConfig> Circuits);
@@ -228,13 +229,17 @@ public sealed class CircuitService
         var result = new List<DeviceCircuitConfig>();
         foreach (var c in circuits)
         {
-            var plants = c.Lot is { } lot
-                ? await context.Plants.CountAsync(p => p.LotId == lot.LotId && p.OperationalState == PlantOperationalState.Activa
-                                                       && (p.CircuitId == c.Id || (p.CircuitId == null && lot.DenseCircuit == c.Id)), ct)
-                : 0;
+            var plantIds = c.Lot is { } lot
+                ? await context.Plants.Where(p => p.LotId == lot.LotId && p.OperationalState == PlantOperationalState.Activa
+                                                  && (p.CircuitId == c.Id || (p.CircuitId == null && lot.DenseCircuit == c.Id)))
+                    .OrderBy(p => p.Id)
+                    .Select(p => p.Id)
+                    .ToListAsync(ct)
+                : new List<int>();
             result.Add(new DeviceCircuitConfig(c.Name, c.Kind, c.ReservoirLiters, c.Ph, c.Ec,
-                c.Pumps.GroupBy(p => p.Kind).ToDictionary(g => g.Key, g => g.First().TechnicalKey), plants,
-                c.Lot is { } current ? today.DayNumber - current.SowingDate.DayNumber : null));
+                c.Pumps.GroupBy(p => p.Kind).ToDictionary(g => g.Key, g => g.First().TechnicalKey), plantIds.Count,
+                c.Lot is { } current ? today.DayNumber - current.SowingDate.DayNumber : null,
+                plantIds));
         }
 
         var ambient = await context.Sensors.AsNoTracking()

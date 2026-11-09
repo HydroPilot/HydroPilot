@@ -5,6 +5,7 @@ using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Notifications;
 using HydroPilotWeb.Services;
+using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.Notifications;
 using HydroPilotWeb.Services.Storage;
 using HydroPilotWeb.Services.Vision;
@@ -20,6 +21,8 @@ public class PlantImageController : ControllerBase
     private readonly BabyLeafPipelineService _pipelineService;
     private readonly GddService _gddService;
     private readonly NotificationService _notificationService;
+    private readonly LotDailyFlowService? _lotDailyFlowService;
+    private readonly PlantEvaluationService? _plantEvaluationService;
     private readonly ILogger<PlantImageController> _logger;
 
     public PlantImageController(
@@ -28,7 +31,9 @@ public class PlantImageController : ControllerBase
         BabyLeafPipelineService pipelineService,
         GddService gddService,
         NotificationService notificationService,
-        ILogger<PlantImageController> logger)
+        ILogger<PlantImageController> logger,
+        LotDailyFlowService? lotDailyFlowService = null,
+        PlantEvaluationService? plantEvaluationService = null)
     {
         _dbFactory = dbFactory;
         _storageService = storageService;
@@ -36,6 +41,8 @@ public class PlantImageController : ControllerBase
         _gddService = gddService;
         _notificationService = notificationService;
         _logger = logger;
+        _lotDailyFlowService = lotDailyFlowService;
+        _plantEvaluationService = plantEvaluationService;
     }
 
     /// <summary>
@@ -52,7 +59,8 @@ public class PlantImageController : ControllerBase
         [FromForm] int? column,
         [FromForm] DateTime? capturedAtUtc,
         [FromForm] double? gddOverride,
-        CancellationToken ct)
+        CancellationToken ct = default,
+        [FromForm] int? circuitId = null)
     {
         if (file == null || file.Length == 0)
         {
@@ -82,10 +90,22 @@ public class PlantImageController : ControllerBase
         }
         else if (lotId.HasValue && row.HasValue && column.HasValue)
         {
-            targetPlant = await context.Plants
+            var plantQuery = context.Plants
                 .Include(p => p.Lot)
                 .ThenInclude(l => l!.CropType)
-                .FirstOrDefaultAsync(p => p.LotId == lotId.Value && p.Row == row.Value && p.Column == column.Value, ct);
+                .Where(p => p.LotId == lotId.Value && p.Row == row.Value && p.Column == column.Value);
+
+            if (circuitId.HasValue)
+            {
+                plantQuery = plantQuery.Where(p => p.CircuitId == circuitId.Value);
+                targetPlant = await plantQuery.FirstOrDefaultAsync(ct);
+            }
+            else
+            {
+                targetPlant = await plantQuery
+                    .OrderByDescending(p => p.CircuitId == p.Lot!.CircuitId || p.CircuitId == null)
+                    .FirstOrDefaultAsync(ct);
+            }
         }
         else if (lotId.HasValue)
         {
@@ -107,7 +127,23 @@ public class PlantImageController : ControllerBase
 
         // 2. Determinar contexto de GDD y configuración Baby Leaf del lote
         var lot = targetPlant.Lot;
-        decimal lotGdd = (decimal)(gddOverride ?? (double)await _gddService.GetAccumulatedGddAsync(lot, null, ct));
+        decimal lotGdd;
+        if (gddOverride.HasValue)
+        {
+            lotGdd = (decimal)gddOverride.Value;
+        }
+        else
+        {
+            var calculatedGdd = await _gddService.GetAccumulatedGddAsync(lot, null, ct);
+            if (calculatedGdd == 0m && lot.AccumulatedGdd is > 0m)
+            {
+                lotGdd = lot.AccumulatedGdd.Value;
+            }
+            else
+            {
+                lotGdd = calculatedGdd;
+            }
+        }
 
         var babyConfig = await context.BabyLeafConfigs
             .Where(c => c.CropTypeId == lot.CropTypeId && c.IsActive)
@@ -136,7 +172,9 @@ public class PlantImageController : ControllerBase
             cmPerPixel: 0.045,
             previousAreaCm2: prevArea,
             previousGdd: prevGdd,
-            ct: ct);
+            ct: ct,
+            scoreMinReady: babyConfig != null ? (double)babyConfig.ScoreMinReady : 70.0,
+            scoreMinCandidate: babyConfig != null ? (double)babyConfig.ScoreMinCandidate : 45.0);
 
         // 4. Persistir PlantImage
         var plantImage = new PlantImage
@@ -227,19 +265,33 @@ public class PlantImageController : ControllerBase
 
             if (hasNpkDeficiency || hasPathogen)
             {
-                if (targetPlant.OperationalState == PlantOperationalState.Activa)
-                {
-                    var riskStage = await context.CommercialStages
-                        .FirstOrDefaultAsync(s => s.Name == "Riesgo / fuera de ventana", ct);
-                    if (riskStage != null)
-                    {
-                        targetPlant.CommercialStageId = riskStage.Id;
-                    }
-                }
-
                 string alertTitle = hasPathogen
                     ? $"Patógeno detectado: {BabyLeafPipelineService.HealthDescriptions.GetValueOrDefault(visual.TopHealthClass, visual.TopHealthClass)}"
                     : $"Deficiencia nutricional: {BabyLeafPipelineService.NpkDescriptions.GetValueOrDefault(visual.TopNpkClass, visual.TopNpkClass)}";
+
+                if (targetPlant.OperationalState == PlantOperationalState.Activa)
+                {
+                    var riskStage = await context.CommercialStages
+                        .FirstOrDefaultAsync(s => s.CropTypeId == lot.CropTypeId && s.Name == "Riesgo / fuera de ventana", ct)
+                        ?? await context.CommercialStages.FirstOrDefaultAsync(s => s.Name == "Riesgo / fuera de ventana", ct);
+                    if (riskStage != null && targetPlant.CommercialStageId != riskStage.Id)
+                    {
+                        var prevComm = targetPlant.CommercialStageId;
+                        targetPlant.CommercialStageId = riskStage.Id;
+                        context.PlantStageHistories.Add(new PlantStageHistory
+                        {
+                            PlantId = targetPlant.Id,
+                            PreviousCommercialStageId = prevComm,
+                            PreviousPhenologicalStageId = targetPlant.PhenologicalStageId,
+                            PreviousOperationalState = targetPlant.OperationalState.ToString(),
+                            NewCommercialStageId = riskStage.Id,
+                            NewOperationalState = targetPlant.OperationalState.ToString(),
+                            Source = "vision",
+                            Reason = alertTitle,
+                            ChangedAtUtc = DateTime.UtcNow
+                        });
+                    }
+                }
 
                 string ruleCode = hasPathogen ? $"PATHOGEN_{visual.TopHealthClass.ToUpperInvariant()}" : $"DEFICIENCY_{visual.TopNpkClass.TrimStart('-')}";
                 decimal confidenceVal = (decimal)(hasPathogen ? visual.HealthProbabilities.GetValueOrDefault(visual.TopHealthClass, 0f) : visual.NpkProbabilities.GetValueOrDefault(visual.TopNpkClass, 0f));
@@ -273,9 +325,155 @@ public class PlantImageController : ControllerBase
                     targetPlant.LotId
                 ), ct);
             }
+            else
+            {
+                // Planta sana: si no quedan otras plantas activas con patógeno o deficiencia, cerrar anomalías visuales
+                var activePlantIds = await context.Plants
+                    .Where(p => p.LotId == targetPlant.LotId && p.OperationalState == PlantOperationalState.Activa)
+                    .Select(p => p.Id)
+                    .ToListAsync(ct);
+
+                var otherImages = await context.PlantImages
+                    .AsNoTracking()
+                    .Include(i => i.Analysis)
+                    .Where(i => activePlantIds.Contains(i.PlantId) && i.PlantId != targetPlant.Id && i.Analysis != null)
+                    .OrderByDescending(i => i.CapturedAtUtc)
+                    .ThenByDescending(i => i.Id)
+                    .ToListAsync(ct);
+
+                var latestByOtherPlant = otherImages
+                    .GroupBy(i => i.PlantId)
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                bool anyOtherHasVisualRisk = latestByOtherPlant.Values.Any(img =>
+                {
+                    var a = img.Analysis;
+                    if (a == null) return false;
+                    bool path = a.HealthClass != null && a.HealthClass != "Healthy" && (a.HealthConfidence ?? 0m) >= 0.70m;
+                    bool def = a.PredominantClass != null && a.PredominantClass != "FN" && (a.Confidence ?? 0m) >= 0.70m;
+                    return path || def;
+                });
+
+                if (!anyOtherHasVisualRisk)
+                {
+                    var openVisualAnomalies = await context.AnomalyEvents
+                        .Where(e => e.LotId == targetPlant.LotId
+                            && (e.Status == AnomalyContract.StatusAbierta || e.Status == AnomalyContract.StatusReconocida)
+                            && (e.Type == "PATOGENO_FOLIAR_VISUAL" || e.Type == "DEFICIENCIA_NUTRICIONAL_VISUAL"))
+                        .ToListAsync(ct);
+
+                    foreach (var anomaly in openVisualAnomalies)
+                    {
+                        anomaly.Status = AnomalyContract.StatusResuelta;
+                        anomaly.ResolvedAtUtc = DateTime.UtcNow;
+                        anomaly.ResolutionReason = "Cerrada automáticamente: la planta analizada y las demás plantas activas del lote se encuentran sanas.";
+                    }
+                }
+
+                // Recalcular estado comercial de la planta y del lote
+                if (_lotDailyFlowService != null)
+                {
+                    await context.SaveChangesAsync(ct);
+                    await _lotDailyFlowService.RunDailyAsync(targetPlant.LotId, null, ct);
+                }
+
+                // Evaluar targetPlant con PlantDecisionEngine.Evaluate usando el lotGdd efectivo
+                if (targetPlant.OperationalState == PlantOperationalState.Activa)
+                {
+                    var thresholds = await PlantEvaluationService.ResolveThresholdsAsync(context, lot.CropTypeId, ct)
+                        ?? new PlantDecisionEngine.PlantDecisionThresholds(
+                            BabyLeafGddMin: babyConfig != null ? babyConfig.GddMin : 250m,
+                            BabyLeafGddMax: babyConfig != null ? babyConfig.GddMax : 450m,
+                            OvermaturityGdd: 750m,
+                            ScoreMinCandidate: babyConfig != null ? babyConfig.ScoreMinCandidate : 45m,
+                            ScoreMinReady: babyConfig != null ? babyConfig.ScoreMinReady : 70m);
+
+                    var phenoStage = await PlantEvaluationService.ResolvePhenologicalStageAsync(context, lot.CropTypeId, lotGdd, ct);
+
+                    var decision = PlantDecisionEngine.Evaluate(
+                        new PlantDecisionEngine.PlantEvaluationInput(
+                            LotGdd: lotGdd,
+                            BabyLeafScore: (decimal)evalResult.BabyLeafScore,
+                            MandatoryCriteriaMet: isBabyLeafApta,
+                            HasRisk: false,
+                            RiskReason: null,
+                            IsAdultRoute: targetPlant.IsAdultRoute,
+                            SizeRatio: morph?.SizeRatio.HasValue == true ? (decimal)morph.SizeRatio.Value : null),
+                        thresholds);
+
+                    var targetCommercialStage = await context.CommercialStages
+                        .Where(s => s.CropTypeId == lot.CropTypeId && s.Name == decision.CommercialStageName && s.IsActive)
+                        .FirstOrDefaultAsync(ct);
+
+                    int? newCommId = targetCommercialStage?.Id;
+                    int? newPhenoId = phenoStage?.Id;
+
+                    bool commChanged = newCommId.HasValue && targetPlant.CommercialStageId != newCommId.Value;
+                    bool phenoChanged = newPhenoId.HasValue && targetPlant.PhenologicalStageId != newPhenoId.Value;
+
+                    int? prevComm = targetPlant.CommercialStageId;
+                    int? prevPheno = targetPlant.PhenologicalStageId;
+
+                    if (commChanged)
+                    {
+                        targetPlant.CommercialStageId = newCommId!.Value;
+                    }
+                    if (phenoChanged)
+                    {
+                        targetPlant.PhenologicalStageId = newPhenoId!.Value;
+                    }
+
+                    if (commChanged || phenoChanged)
+                    {
+                        context.PlantStageHistories.Add(new PlantStageHistory
+                        {
+                            PlantId = targetPlant.Id,
+                            PreviousCommercialStageId = prevComm,
+                            PreviousPhenologicalStageId = prevPheno,
+                            PreviousOperationalState = targetPlant.OperationalState.ToString(),
+                            NewCommercialStageId = commChanged ? newCommId : null,
+                            NewPhenologicalStageId = phenoChanged ? newPhenoId : null,
+                            NewOperationalState = targetPlant.OperationalState.ToString(),
+                            Source = "vision",
+                            Reason = decision.Reason,
+                            ChangedAtUtc = DateTime.UtcNow
+                        });
+                    }
+
+                    // Actualizar predominancia comercial del lote sobre plantas activas
+                    var activePlants = await context.Plants
+                        .Where(p => p.LotId == targetPlant.LotId && p.OperationalState == PlantOperationalState.Activa)
+                        .ToListAsync(ct);
+
+                    var stageNames = await context.CommercialStages
+                        .Where(s => s.CropTypeId == lot.CropTypeId)
+                        .ToDictionaryAsync(s => s.Id, s => s.Name, ct);
+
+                    var activeCounts = new Dictionary<string, int>();
+                    foreach (var p in activePlants)
+                    {
+                        var name = p.CommercialStageId is { } sId && stageNames.TryGetValue(sId, out var resolved)
+                            ? resolved
+                            : "(sin estado)";
+                        activeCounts[name] = activeCounts.GetValueOrDefault(name) + 1;
+                    }
+
+                    var (predominantName, isMixed) = Predominance.Resolve(activeCounts);
+                    var predominantStage = !isMixed && predominantName is not null
+                        ? await context.CommercialStages
+                            .Where(s => s.CropTypeId == lot.CropTypeId && s.Name == predominantName)
+                            .FirstOrDefaultAsync(ct)
+                        : null;
+
+                    lot.PredominantCommercialStageId = predominantStage?.Id;
+                    lot.IsCommercialStageMixed = isMixed;
+                }
+            }
         }
 
         await context.SaveChangesAsync(ct);
+
+        LotViewCache.InvalidatePlant(targetPlant.Id, targetPlant.LotId);
 
         _logger.LogInformation("Imagen #{ImageId} analizada para planta #{PlantId}: Status={Status}, BLS={BLS}, NPK={NPK}, Health={Health}",
             plantImage.Id, targetPlant.Id, evalResult.Status, evalResult.BabyLeafScore, visual?.TopNpkClass, visual?.TopHealthClass);
@@ -307,8 +505,9 @@ public class PlantImageController : ControllerBase
         [FromForm] IFormFile? file,
         [FromForm] DateTime? capturedAtUtc,
         [FromForm] double? gddOverride,
-        CancellationToken ct)
+        CancellationToken ct = default,
+        [FromForm] int? circuitId = null)
     {
-        return UploadImage(file, null, plantId, null, null, capturedAtUtc, gddOverride, ct);
+        return UploadImage(file, null, plantId, null, null, capturedAtUtc, gddOverride, ct, circuitId);
     }
 }

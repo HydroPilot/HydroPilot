@@ -7,6 +7,7 @@ using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.SensorFaults;
 using HydroPilotWeb.Services.Sensors;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace HydroPilotWeb.Services.Dashboard;
 
@@ -23,29 +24,48 @@ public class GreenhouseDashboardService
     private readonly RecentVisitService _visits;
     private readonly SensorService _sensors;
     private readonly ILogger<GreenhouseDashboardService> _logger;
+    private readonly IMemoryCache? _cache;
 
     public GreenhouseDashboardService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         LotOverviewService lots,
         RecentVisitService visits,
         SensorService sensors,
-        ILogger<GreenhouseDashboardService> logger)
+        ILogger<GreenhouseDashboardService> logger,
+        IMemoryCache? cache = null)
     {
         _dbFactory = dbFactory;
         _lots = lots;
         _visits = visits;
         _sensors = sensors;
         _logger = logger;
+        _cache = cache;
     }
 
-    public async Task<GreenhouseDashboard> GetAsync(ClaimsPrincipal user, CancellationToken ct = default)
+    public Task<GreenhouseDashboard> GetAsync(DateTime? nowUtc = null, CancellationToken ct = default) =>
+        GetAsync(null, nowUtc, ct);
+
+    public Task<GreenhouseDashboard> GetAsync(ClaimsPrincipal? user, CancellationToken ct) =>
+        GetAsync(user, null, ct);
+
+    public async Task<GreenhouseDashboard> GetAsync(ClaimsPrincipal? user, DateTime? nowUtc = null, CancellationToken ct = default)
     {
+        string? cacheKey = null;
+        if (nowUtc is null)
+        {
+            cacheKey = $"greenhouse-dashboard:{LotViewCache.GlobalVersion}:{LotViewCache.LotsDigestVersion}";
+            if (_cache != null && _cache.TryGetValue(cacheKey, out GreenhouseDashboard? cached) && cached != null)
+            {
+                return cached;
+            }
+        }
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
         var timeZoneId = await context.Greenhouses.AsNoTracking().OrderBy(g => g.Id).Select(g => g.TimeZoneId).FirstOrDefaultAsync(ct);
         var zone = GddService.ResolveGreenhouseTimeZone(timeZoneId, []);
         DateTime Local(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), zone);
-        var nowLocal = Local(DateTime.UtcNow);
+        var nowLocal = Local(nowUtc ?? DateTime.UtcNow);
         var today = DateOnly.FromDateTime(nowLocal);
 
         // Lotes activos = en curso (ni cosechados ni descartados), como los operativos del selector de Lotes.
@@ -115,7 +135,7 @@ public class GreenhouseDashboardService
 
         var (sensorChecks, hasIntervals) = await SensorChecksAsync(today, ct);
 
-        return new GreenhouseDashboard(
+        var result = new GreenhouseDashboard(
             today,
             nowLocal,
             activeLots.Count,
@@ -129,10 +149,19 @@ public class GreenhouseDashboardService
             await VisitsAsync(user, Local, ct),
             sensorChecks,
             hasIntervals);
+
+        if (nowUtc is null && cacheKey is not null && _cache is not null)
+        {
+            _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
+        }
+
+        return result;
     }
 
-    private async Task<IReadOnlyList<DashboardVisitItem>> VisitsAsync(ClaimsPrincipal user, Func<DateTime, DateTime> local, CancellationToken ct)
+    private async Task<IReadOnlyList<DashboardVisitItem>> VisitsAsync(ClaimsPrincipal? user, Func<DateTime, DateTime> local, CancellationToken ct)
     {
+        if (user is null)
+            return [];
         var visits = await _visits.GetAsync(user, 10, ct);
         return visits
             .Select(v =>

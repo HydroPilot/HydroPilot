@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 
@@ -45,11 +46,13 @@ public class LotAggregateService
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly GddService _gddService;
+    private readonly IMemoryCache? _cache;
 
-    public LotAggregateService(IDbContextFactory<HydroPilotDbContext> dbFactory, GddService gddService)
+    public LotAggregateService(IDbContextFactory<HydroPilotDbContext> dbFactory, GddService gddService, IMemoryCache? cache = null)
     {
         _dbFactory = dbFactory;
         _gddService = gddService;
+        _cache = cache;
     }
 
     public async Task<LotStateDto?> GetLotStateAsync(
@@ -257,6 +260,10 @@ public class LotAggregateService
         decimal? currentEc,
         CancellationToken ct = default)
     {
+        var cacheKey = $"plant-detail:{plantId}:{Math.Round(lotGdd, 1)}:{currentPh}:{currentEc}:{LotViewCache.GlobalVersion}:{LotViewCache.GetPlantVersion(plantId)}";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out PlantDetailDto? cached) && cached is not null)
+            return cached;
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
         var plant = await context.Plants
@@ -290,15 +297,15 @@ public class LotAggregateService
             .Select(h => DescribeChange(h, stageNames))
             .ToList();
 
+        var analysis = lastImage?.Analysis;
+
         var warnings = new List<string>();
-        if (lastEvaluation is null)
+        if (lastEvaluation is null && analysis is null)
             warnings.Add("Sin evaluaciones registradas: BabyLeafScore y GrowthRate solo provienen de evaluaciones persistidas (no se inventan).");
         if (lastImage is null)
             warnings.Add("Sin imagen disponible.");
 
-        var analysis = lastImage?.Analysis;
-
-        return new PlantDetailDto(
+        var result = new PlantDetailDto(
             plant.Id,
             plant.Row,
             plant.Column,
@@ -311,10 +318,10 @@ public class LotAggregateService
             lotGdd,
             currentPh,
             currentEc,
-            lastEvaluation?.BabyLeafScore,
-            lastEvaluation?.GrowthRateUsed,
-            lastEvaluation?.Result,
-            lastEvaluation?.EvaluatedAtUtc,
+            lastEvaluation?.BabyLeafScore ?? analysis?.BabyLeafScore,
+            lastEvaluation?.GrowthRateUsed ?? analysis?.GrowthRate,
+            lastEvaluation?.Result ?? analysis?.BabyLeafStatus,
+            lastEvaluation?.EvaluatedAtUtc ?? analysis?.AnalyzedAtUtc,
             lastImage is not null,
             lastImage?.Path,
             lastImage?.FileName,
@@ -325,6 +332,9 @@ public class LotAggregateService
             analysis?.HealthClass,
             analysis?.FoliarArea,
             analysis?.LeafLength);
+
+        _cache?.Set(cacheKey, result, TimeSpan.FromSeconds(60));
+        return result;
     }
 
     /// <summary>

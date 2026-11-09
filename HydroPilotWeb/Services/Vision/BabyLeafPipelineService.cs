@@ -104,7 +104,9 @@ public class BabyLeafPipelineService : IDisposable
         double cmPerPixel = 0.045,
         double? previousAreaCm2 = null,
         double? previousGdd = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        double scoreMinReady = 70.0,
+        double scoreMinCandidate = 45.0)
     {
         // 1. Compuerta Fenológica (¿En ventana temporal Baby Leaf?)
         if (accumulatedGdd < gddMin || accumulatedGdd > gddMax)
@@ -200,12 +202,12 @@ public class BabyLeafPipelineService : IDisposable
         bool isSanitaryHealthy = visualState.TopHealthClass == "Healthy";
         bool isNutritionallyOptimal = visualState.TopNpkClass == "FN";
 
-        if (bls >= 70.0 && isSanitaryHealthy && isNutritionallyOptimal && visualMultiplier >= 0.68)
+        if (bls >= scoreMinReady && isSanitaryHealthy && isNutritionallyOptimal && visualMultiplier >= 0.68)
         {
             status = BabyLeafStageStatus.Apta;
             recommendation = "Apta para cosecha Baby Leaf: calibre foliar, vigor y sanidad óptimos.";
         }
-        else if (bls >= 45.0 && isSanitaryHealthy && visualMultiplier >= 0.48)
+        else if (bls >= scoreMinCandidate && isSanitaryHealthy && visualMultiplier >= 0.48)
         {
             status = BabyLeafStageStatus.Candidata;
             recommendation = isNutritionallyOptimal

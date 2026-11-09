@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Services.Forecasting;
@@ -85,6 +86,7 @@ public class LotOverviewService
     private readonly SystemParametersService _parameters;
     private readonly ILogger<LotOverviewService> _logger;
     private readonly BabyLeafOptimumService _optimum;
+    private readonly IMemoryCache? _cache;
 
     public LotOverviewService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
@@ -93,7 +95,8 @@ public class LotOverviewService
         GddService gdd,
         SystemParametersService parameters,
         ILogger<LotOverviewService> logger,
-        BabyLeafOptimumService? optimum = null)
+        BabyLeafOptimumService? optimum = null,
+        IMemoryCache? cache = null)
     {
         _dbFactory = dbFactory;
         _aggregate = aggregate;
@@ -101,7 +104,8 @@ public class LotOverviewService
         _gdd = gdd;
         _parameters = parameters;
         _logger = logger;
-        _optimum = optimum ?? new BabyLeafOptimumService(dbFactory);
+        _optimum = optimum ?? new BabyLeafOptimumService(dbFactory, cache);
+        _cache = cache;
     }
 
     public static bool CanEditObjectives(ClaimsPrincipal user) =>
@@ -110,13 +114,17 @@ public class LotOverviewService
     /// <summary>Lotes para el selector: primero los operativos, luego los cerrados; más recientes arriba.</summary>
     public async Task<IReadOnlyList<LotOption>> GetLotOptionsAsync(CancellationToken ct = default)
     {
+        var cacheKey = $"lot-options:{LotViewCache.GlobalVersion}";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out IReadOnlyList<LotOption>? cached) && cached is not null)
+            return cached;
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var rows = await context.Lots
             .AsNoTracking()
             .Select(l => new { l.Id, l.Name, Status = l.Status!.Name, l.SowingDate })
             .ToListAsync(ct);
 
-        return rows
+        IReadOnlyList<LotOption> list = rows
             .Select(r => new LotOption(
                 r.Id,
                 string.IsNullOrWhiteSpace(r.Name) ? $"Lote #{r.Id}" : r.Name!,
@@ -126,10 +134,17 @@ public class LotOverviewService
             .OrderByDescending(o => o.IsOperational)
             .ThenByDescending(o => o.SowingDate)
             .ToList();
+
+        _cache?.Set(cacheKey, list, TimeSpan.FromSeconds(60));
+        return list;
     }
 
     public async Task<LotOverviewDto?> GetOverviewAsync(int lotId, DateOnly? asOfDate = null, CancellationToken ct = default)
     {
+        var cacheKey = $"lot-overview:{lotId}:{asOfDate?.ToString("O") ?? "today"}:{LotViewCache.GlobalVersion}:{LotViewCache.GetLotVersion(lotId)}";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out LotOverviewDto? cached) && cached is not null)
+            return cached;
+
         var warnings = new List<string>();
 
         // Un ciclo cerrado no necesita pronóstico (sus ventanas se arman con lo medido hasta el cierre).
@@ -272,7 +287,7 @@ public class LotOverviewService
             ? LotDataQualityRules.Alerts(forecast.SourceKind, forecast.CoverageDays, forecast.MissingDays)
             : [];
 
-        return new LotOverviewDto(
+        var result = new LotOverviewDto(
             state,
             forecast,
             timeline,
@@ -286,6 +301,10 @@ public class LotOverviewService
             closedCycle,
             dataAlerts,
             LotDataQualityRules.RemainingWarnings(warnings.Distinct(), dataAlerts));
+
+        var ttl = result.IsClosed ? TimeSpan.FromMinutes(30) : TimeSpan.FromSeconds(45);
+        _cache?.Set(cacheKey, result, ttl);
+        return result;
     }
 
     /// <summary>Guarda el umbral de cosecha y las metas del ciclo (solo Administrador y Productor).</summary>
@@ -312,6 +331,7 @@ public class LotOverviewService
         lot.BabyLeafGoalPercent = normalized.BabyLeafGoalPercent;
         lot.ExpectedActivePercent = normalized.ExpectedActivePercent;
         await context.SaveChangesAsync(ct);
+        LotViewCache.InvalidateLot(lotId);
 
         _logger.LogInformation(
             "Objetivos del lote {LotId} actualizados por {User}: umbral {Threshold}, meta Baby Leaf {Goal}, plantas activas esperadas {ExpectedActive}",
@@ -346,10 +366,14 @@ public class LotOverviewService
 
     /// <summary>
     /// Cómo terminaron los lotes cerrados (cosechados o descartados) del mismo invernadero y cultivo:
-    /// plantas sembradas, cosechadas como Baby Leaf (apta o candidata al cosecharse) y como convencional.
+    /// plantas sembradas, cosechadas como Baby Leaf (apta al cosecharse) y como convencional.
     /// </summary>
-    private static async Task<YieldHistory?> YieldHistoryAsync(HydroPilotDbContext context, Lot lot, CancellationToken ct)
+    private async Task<YieldHistory?> YieldHistoryAsync(HydroPilotDbContext context, Lot lot, CancellationToken ct)
     {
+        var cacheKey = $"lot-yield-history:{lot.GreenhouseId}:{lot.CropTypeId}:{lot.SowingDate:O}:{LotViewCache.GlobalVersion}";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out YieldHistory? cached) && cached is not null)
+            return cached;
+
         var closed = await context.Lots
             .AsNoTracking()
             .Where(l => l.Id != lot.Id
@@ -358,19 +382,53 @@ public class LotOverviewService
                 && (l.Status!.Name == LotStatusNames.Cosechado || l.Status.Name == LotStatusNames.Descartado))
             .Select(l => new
             {
+                l.Id,
+                l.Name,
                 l.SowingDate,
-                Total = context.Plants.Count(p => p.LotId == l.Id),
-                BabyLeaf = context.Plants.Count(p => p.LotId == l.Id
-                    && p.OperationalState == PlantOperationalState.Cosechada
-                    && p.CommercialStage != null
-                    && (p.CommercialStage.Name == CommercialStageNames.BabyLeafApta
-                        || p.CommercialStage.Name == CommercialStageNames.CandidataBabyLeaf)),
-                Harvested = context.Plants.Count(p => p.LotId == l.Id && p.OperationalState == PlantOperationalState.Cosechada)
+                l.PlantedAreaM2,
+                l.GridRows,
+                l.GridColumns
             })
             .ToListAsync(ct);
 
-        return LotYieldHistoryRules.Build(lot.SowingDate,
-            closed.Select(l => new LotYieldHistoryRules.ClosedLot(l.SowingDate, l.Total, l.BabyLeaf, l.Harvested - l.BabyLeaf)));
+        if (closed.Count == 0)
+            return null;
+
+        var closedLotIds = closed.Select(l => l.Id).ToList();
+
+        var plantStats = await context.Plants
+            .AsNoTracking()
+            .Where(p => closedLotIds.Contains(p.LotId) && p.OperationalState == PlantOperationalState.Cosechada)
+            .GroupBy(p => p.LotId)
+            .Select(g => new
+            {
+                LotId = g.Key,
+                Harvested = g.Count(),
+                Adult = g.Count(p => p.TransplantedOn != null),
+                BabyLeaf = g.Count(p => p.TransplantedOn == null
+                    && p.CommercialStage != null
+                    && p.CommercialStage.Name == CommercialStageNames.BabyLeafApta)
+            })
+            .ToDictionaryAsync(x => x.LotId, ct);
+
+        var closedLots = closed.Select(l =>
+        {
+            plantStats.TryGetValue(l.Id, out var stats);
+            var harvested = stats?.Harvested ?? 0;
+            var babyLeaf = stats?.BabyLeaf ?? 0;
+            var adult = stats?.Adult ?? (harvested - babyLeaf);
+            var gridCapacity = (l.GridRows > 0 && l.GridColumns > 0) ? l.GridRows.Value * l.GridColumns.Value : 0;
+            var total = Math.Max(gridCapacity, harvested);
+            return new LotYieldHistoryRules.ClosedLot(l.SowingDate, total, babyLeaf, adult);
+        });
+
+        var result = LotYieldHistoryRules.Build(lot.SowingDate, closedLots);
+        if (result is not null)
+        {
+            _cache?.Set(cacheKey, result, TimeSpan.FromMinutes(15));
+        }
+
+        return result;
     }
 
     private static LotPlantBreakdown Breakdown(LotStateDto state, int harvestedAsBabyLeaf)

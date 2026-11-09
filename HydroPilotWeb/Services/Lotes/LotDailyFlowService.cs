@@ -147,6 +147,8 @@ public class LotDailyFlowService
             warnings.Add($"Se descartaron {group.Count()} plantas: {group.Key}.");
         }
 
+        LotViewCache.InvalidateLot(lot.Id);
+
         return new LotDailyFlowResult(
             LotId: lot.Id,
             GddAccumulated: Math.Round(lotGdd, 2),

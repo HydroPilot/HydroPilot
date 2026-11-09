@@ -128,6 +128,9 @@ public sealed class SimulationEnvironmentService
             _logger.LogWarning("Entorno de simulación: {Summary} ({Seconds:0} s)", summary, watch.Elapsed.TotalSeconds);
             foreach (var line in data.Story)
                 _logger.LogInformation("  {Line}", line);
+
+            LotViewCache.InvalidateAll();
+
             return new(true, summary, watch.Elapsed, data.Story);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -458,7 +461,7 @@ public sealed class SimulationEnvironmentService
             dates.Add(end);
             foreach (var date in dates.Distinct())
             {
-                await forecasts.GetForecastAsync(lot.Id, date == today ? null : date, persistSnapshot: true, ct);
+                await forecasts.GetForecastAsync(lot.Id, date, persistSnapshot: true, ct);
                 count++;
             }
         }
