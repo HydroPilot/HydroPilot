@@ -16,6 +16,13 @@ var useLocalDb = builder.Configuration.GetValue("HydroPilot:UseLocalDb", false);
 var connectionStringName = useLocalDb ? "LocalSqlServer" : "AzureSql";
 var connectionString = builder.Configuration.GetConnectionString(connectionStringName)
     ?? throw new InvalidOperationException($"Falta la cadena de conexión '{connectionStringName}'.");
+if (useLocalDb && builder.Configuration.GetValue("SimulationEnvironment:Enabled", false))
+{
+    connectionString = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
+    {
+        InitialCatalog = "hydropilot_sim"
+    }.ConnectionString;
+}
 
 builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
     options.UseSqlServer(connectionString, sqlOptions =>
@@ -137,6 +144,22 @@ else
 }
 builder.Services.AddScoped<HydroPilotWeb.Services.Notifications.NotificationService>();
 builder.Services.AddHostedService<HydroPilotWeb.Services.Notifications.NotificationDispatcherHostedService>();
+
+// --- Módulo de visión artificial, redes neuronales y Baby Leaf Score (plan 19 + Gemini) ---
+var azureStorageConn = builder.Configuration["Azure:Storage:ConnectionString"]
+    ?? builder.Configuration.GetConnectionString("AzureBlobStorage");
+
+if (!string.IsNullOrWhiteSpace(azureStorageConn))
+{
+    builder.Services.AddSingleton<HydroPilotWeb.Services.Storage.IPlantImageStorageService, HydroPilotWeb.Services.Storage.AzureBlobPlantImageStorageService>();
+}
+else
+{
+    builder.Services.AddSingleton<HydroPilotWeb.Services.Storage.IPlantImageStorageService, HydroPilotWeb.Services.Storage.LocalFileSystemPlantImageStorageService>();
+}
+
+builder.Services.AddSingleton<HydroPilotWeb.Services.Vision.BabyLeafPipelineService>();
+builder.Services.AddSingleton<HydroPilotWeb.Services.Vision.PlantImageClassifierService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

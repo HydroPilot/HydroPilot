@@ -26,6 +26,8 @@ public static class NotificationTypes
     public const string NodoDesconectado = "NodoDesconectado";
     /// <summary>Error de un sensor (sin datos, fuera de lo normal o salto): ver SensorFault.</summary>
     public const string ErrorSensor = "ErrorSensor";
+    public const string AlertaSanitaria = "AlertaSanitaria";
+    public const string DeficienciaNutricional = "DeficienciaNutricional";
     public const string PruebaSistema = "PruebaSistema";
     public const string Info = "Info";
 }

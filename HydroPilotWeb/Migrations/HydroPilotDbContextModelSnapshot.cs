@@ -1710,6 +1710,19 @@ namespace HydroPilotWeb.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
+                    b.Property<decimal?>("BabyLeafScore")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<string>("BabyLeafStatus")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<decimal?>("CanopySolidity")
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal?>("Confidence")
+                        .HasColumnType("decimal(6,4)");
+
                     b.Property<decimal?>("DamagePercent")
                         .HasColumnType("decimal(8,2)");
 
@@ -1722,8 +1735,21 @@ namespace HydroPilotWeb.Migrations
                     b.Property<decimal?>("GrowthRate")
                         .HasColumnType("decimal(8,2)");
 
+                    b.Property<string>("HealthClass")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<decimal?>("HealthConfidence")
+                        .HasColumnType("decimal(6,4)");
+
+                    b.Property<string>("HealthProbabilitiesJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<decimal?>("ImageQuality")
                         .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal?>("LaplacianVariance")
+                        .HasColumnType("decimal(10,2)");
 
                     b.Property<decimal?>("LeafCount")
                         .HasColumnType("decimal(8,2)");
@@ -1748,8 +1774,21 @@ namespace HydroPilotWeb.Migrations
                     b.Property<decimal?>("PlantWidth")
                         .HasColumnType("decimal(8,2)");
 
+                    b.Property<string>("PredominantClass")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("ProbabilitiesJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<decimal?>("RosetteDiameter")
                         .HasColumnType("decimal(8,2)");
+
+                    b.Property<decimal?>("SizeRatio")
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal?>("VegetationCoverageRatio")
+                        .HasColumnType("decimal(8,4)");
 
                     b.HasKey("Id");
 

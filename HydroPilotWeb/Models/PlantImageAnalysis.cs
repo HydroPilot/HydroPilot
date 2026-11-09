@@ -40,6 +40,33 @@ public class PlantImageAnalysis
 
     public decimal? ImageQuality { get; set; }
 
+    [MaxLength(50)]
+    public string? PredominantClass { get; set; }
+
+    public decimal? Confidence { get; set; }
+
+    public string? ProbabilitiesJson { get; set; }
+
+    [MaxLength(50)]
+    public string? HealthClass { get; set; }
+
+    public decimal? HealthConfidence { get; set; }
+
+    public string? HealthProbabilitiesJson { get; set; }
+
+    public decimal? LaplacianVariance { get; set; }
+
+    public decimal? VegetationCoverageRatio { get; set; }
+
+    public decimal? CanopySolidity { get; set; }
+
+    public decimal? SizeRatio { get; set; }
+
+    public decimal? BabyLeafScore { get; set; }
+
+    [MaxLength(50)]
+    public string? BabyLeafStatus { get; set; }
+
     [Required]
     [MaxLength(50)]
     public string ModelVersion { get; set; } = "CV-pending";
