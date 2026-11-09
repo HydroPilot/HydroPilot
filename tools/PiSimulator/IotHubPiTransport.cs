@@ -106,6 +106,8 @@ public sealed class IotHubPiTransport : IPiTransport
     /// <summary>Por IoT Hub no se pregunta: la Pi usa sus claves de siempre (--circuitos).</summary>
     public Task<DeviceConfig?> GetConfigAsync(CancellationToken ct) => Task.FromResult<DeviceConfig?>(null);
 
+    public Task<string?> SendPlantImageAsync(int plantId, string filePath, CancellationToken ct) => Task.FromResult<string?>(null);
+
     public async ValueTask DisposeAsync()
     {
         await _client.CloseAsync();

@@ -49,6 +49,9 @@ public interface IPiTransport : IAsyncDisposable
 
     /// <summary>Los circuitos de la Pi según la web; null si este transporte no lo sabe preguntar (IoT Hub).</summary>
     Task<DeviceConfig?> GetConfigAsync(CancellationToken ct);
+
+    /// <summary>Envía una fotografía de planta para análisis de visión por la API web.</summary>
+    Task<string?> SendPlantImageAsync(int plantId, string filePath, CancellationToken ct);
 }
 
 /// <summary>Transporte HTTP de la fase 1: POST de lecturas, GET de comandos pendientes, POST de resultados.</summary>
@@ -101,6 +104,51 @@ public sealed class HttpPiTransport : IPiTransport
         if (response.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.NotFound or HttpStatusCode.BadRequest)
             return (ReportOutcome.Drop, $"HTTP {(int)response.StatusCode} {await Body(response, ct)}");
         return (ReportOutcome.Retry, $"HTTP {(int)response.StatusCode}");
+    }
+
+    public async Task<string?> SendPlantImageAsync(int plantId, string filePath, CancellationToken ct)
+    {
+        if (!File.Exists(filePath))
+            return $"archivo no encontrado: {Path.GetFileName(filePath)}";
+
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        var contentType = ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            _ => "image/jpeg"
+        };
+
+        using var content = new MultipartFormDataContent();
+        await using var stream = File.OpenRead(filePath);
+        using var fileContent = new StreamContent(stream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        content.Add(fileContent, "file", Path.GetFileName(filePath));
+
+        using var response = await _http.PostAsync($"api/plantas/{plantId}/imagenes", content, ct);
+        if (!response.IsSuccessStatusCode)
+            return $"HTTP {(int)response.StatusCode} {await Body(response, ct)}";
+
+        using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+        var root = doc.RootElement;
+        var status = (root.TryGetProperty("status", out var s) || root.TryGetProperty("Status", out s)) ? s.GetString() : "?";
+        var bls = (root.TryGetProperty("babyLeafScore", out var b) || root.TryGetProperty("BabyLeafScore", out b)) && b.ValueKind == JsonValueKind.Number ? b.GetDouble() : 0.0;
+        string? npk = null;
+        string? health = null;
+        if (root.TryGetProperty("visualState", out var vs) || root.TryGetProperty("VisualState", out vs))
+        {
+            if (vs.ValueKind == JsonValueKind.Object)
+            {
+                if (vs.TryGetProperty("topNpkClass", out var n) || vs.TryGetProperty("TopNpkClass", out n))
+                    npk = n.GetString();
+                if (vs.TryGetProperty("topHealthClass", out var h) || vs.TryGetProperty("TopHealthClass", out h))
+                    health = h.GetString();
+            }
+        }
+        npk ??= "-";
+        health ??= "-";
+        return $"score {bls:0.#} ({status}) · NPK {npk} · {health}";
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
