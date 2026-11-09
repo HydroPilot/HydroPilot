@@ -225,6 +225,8 @@ public class LotCreationService
             return new NewLotResult(null, [$"{circuit.Name} ya tiene un lote en curso."]);
         }
 
+        LotViewCache.InvalidateAll();
+
         _logger.LogInformation(
             "Lote {LotId} \"{Name}\" creado por {User} en {Circuit}: {Rows}×{Columns} plantas, siembra {SowingDate}",
             lot.Id, name, user.Identity?.Name, circuit.Name, circuit.GridRows, circuit.GridColumns, input.SowingDate);

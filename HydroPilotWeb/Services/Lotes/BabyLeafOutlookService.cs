@@ -212,7 +212,7 @@ public class BabyLeafOutlookService : ILotHistorySource
             return cached;
 
         var measured = (await _gddService.GetGddHistoryAsync(lot, closedOn, ct)).Daily
-            .Where(p => p.Source == GddPointSource.Observed)
+            .Where(p => p.Source == GddPointSource.Observed && p.Date >= lot.SowingDate)
             .OrderBy(p => p.Date)
             .ToList();
         var cycle = measured.Count == 0

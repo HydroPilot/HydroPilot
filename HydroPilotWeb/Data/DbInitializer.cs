@@ -200,8 +200,8 @@ public static class DbInitializer
         {
             context.CommercialStages.AddRange(
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = "En desarrollo", Description = "Todavía no es cosechable." },
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Candidata Baby Leaf", Description = "Score en banda candidata (60-79) o Baby Leaf sin confirmar obligatorios." },
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.BabyLeafApta, Description = "Score >= 80 y criterios obligatorios aprobados." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Candidata Baby Leaf", Description = "Score en banda candidata (45-69) o Baby Leaf sin confirmar obligatorios." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.BabyLeafApta, Description = "Score >= 70 y criterios obligatorios aprobados." },
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.CosechaConvencional, Description = "Ventana adulta con madurez confirmada." },
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Riesgo / fuera de ventana", Description = "Anomalía, bolting, mal estado visual o sobremadurez." });
         }
@@ -212,9 +212,9 @@ public static class DbInitializer
             {
                 CropTypeId = cultivoLote.Id,
                 Name = "Baby Leaf Butterhead v1",
-                Description = "Ventana GDD 250-450; candidata 60, Baby Leaf 80. Valores de arranque calibrables.",
+                Description = "Ventana GDD 250-450; candidata 45, Baby Leaf 70. Valores de arranque calibrables.",
                 GddMin = 250, GddMax = 450,
-                ScoreMinCandidate = 60, ScoreMinReady = 80,
+                ScoreMinCandidate = 45, ScoreMinReady = 70,
                 Version = "1.0"
             };
             context.BabyLeafConfigs.Add(babyLeafConfig);
@@ -225,6 +225,13 @@ public static class DbInitializer
                 new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Morfología / tamaño", DataType = "MORFOLOGIA", Unit = "score", Weight = 45, IsMandatory = true },
                 new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "GrowthRate", DataType = "CRECIMIENTO", Unit = "%/día", Weight = 20, IsMandatory = false },
                 new BabyLeafCriterion { BabyLeafConfigId = babyLeafConfig.Id, Name = "Estado visual", DataType = "VISUAL", Unit = "score", Weight = 15, IsMandatory = true });
+        }
+
+        foreach (var existingConfig in context.BabyLeafConfigs.Where(c => c.ScoreMinCandidate == 60 && c.ScoreMinReady == 80))
+        {
+            existingConfig.ScoreMinCandidate = 45;
+            existingConfig.ScoreMinReady = 70;
+            existingConfig.Description = "Ventana GDD 250-450; candidata 45, Baby Leaf 70. Valores de arranque calibrables.";
         }
 
         context.SaveChanges();
@@ -449,9 +456,9 @@ public static class DbInitializer
             {
                 CropTypeId = cropType.Id,
                 Name = "Baby Leaf Butterhead v1",
-                Description = "Ventana GDD 250-450; candidata 60, Baby Leaf 80. Valores de arranque calibrables.",
+                Description = "Ventana GDD 250-450; candidata 45, Baby Leaf 70. Valores de arranque calibrables.",
                 GddMin = 250, GddMax = 450,
-                ScoreMinCandidate = 60, ScoreMinReady = 80,
+                ScoreMinCandidate = 45, ScoreMinReady = 70,
                 Version = "1.0"
             };
             context.BabyLeafConfigs.Add(babyLeafConfig);

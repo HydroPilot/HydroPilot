@@ -3,6 +3,7 @@ using HydroPilotWeb.Models;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace HydroPilotWeb.Services.Simulation;
 
@@ -57,18 +58,29 @@ public sealed class GreenhousePlanService
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SystemParametersService _parameters;
     private readonly BabyLeafOutlookService _outlook;
+    private readonly IMemoryCache? _cache;
 
     public GreenhousePlanService(
-        IDbContextFactory<HydroPilotDbContext> dbFactory, SystemParametersService parameters, BabyLeafOutlookService outlook)
+        IDbContextFactory<HydroPilotDbContext> dbFactory,
+        SystemParametersService parameters,
+        BabyLeafOutlookService outlook,
+        IMemoryCache? cache = null)
     {
         _dbFactory = dbFactory;
         _parameters = parameters;
         _outlook = outlook;
+        _cache = cache;
     }
 
     /// <summary>Superficie de los circuitos activos y kg de Baby Leaf vendidos por mes (sin calcular el plan).</summary>
     public async Task<GreenhousePlanDefaults> DefaultsAsync(CancellationToken ct = default)
     {
+        var cacheKey = $"greenhouse-plan-defaults:{LotViewCache.GlobalVersion}";
+        if (_cache != null && _cache.TryGetValue(cacheKey, out GreenhousePlanDefaults? cached) && cached != null)
+        {
+            return cached;
+        }
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var transplant = await _parameters.GetTransplantParametersAsync(ct);
         var yield = await _parameters.GetYieldParametersAsync(ct);
@@ -77,7 +89,9 @@ public sealed class GreenhousePlanService
         var sold = cropId is { } crop && yield.BabyLeafGrams is { } grams
             ? await SoldBabyLeafKgPerMonthAsync(context, crop, grams, ct)
             : null;
-        return new GreenhousePlanDefaults(area, sold);
+        var result = new GreenhousePlanDefaults(area, sold);
+        _cache?.Set(cacheKey, result, TimeSpan.FromMinutes(5));
+        return result;
     }
 
     public async Task<GreenhousePlanResult> PlanAsync(GreenhousePlanRequest request, CancellationToken ct = default)

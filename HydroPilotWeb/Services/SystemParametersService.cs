@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Optimization;
@@ -141,15 +142,21 @@ public class SystemParametersService
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
     private readonly ILogger<SystemParametersService> _logger;
+    private readonly IMemoryCache? _cache;
+    private static IMemoryCache? _staticCache;
 
     public SystemParametersService(
         IDbContextFactory<HydroPilotDbContext> dbFactory,
         SettingsService settings,
-        ILogger<SystemParametersService> logger)
+        ILogger<SystemParametersService> logger,
+        IMemoryCache? cache = null)
     {
         _dbFactory = dbFactory;
         _settings = settings;
         _logger = logger;
+        _cache = cache;
+        if (cache != null)
+            _staticCache = cache;
     }
 
     public static bool CanEdit(ClaimsPrincipal user) => EditorRoles.Any(user.IsInRole);
@@ -196,12 +203,26 @@ public class SystemParametersService
             lot.HarvestPriceCurrency ?? YieldPrices.None.Currency));
 
     /// <summary>Peso promedio por planta de cada destino; null = sin definir.</summary>
-    public async Task<YieldReference> GetYieldReferenceAsync(CancellationToken ct = default) => new(
-        await _settings.GetDecimalAsync(BabyLeafGramsKey, ct),
-        await _settings.GetDecimalAsync(ConventionalGramsKey, ct));
+    public async Task<YieldReference> GetYieldReferenceAsync(CancellationToken ct = default)
+    {
+        var cacheKey = $"sysparams:yield-ref:{LotViewCache.GlobalVersion}";
+        if (_cache != null && _cache.TryGetValue(cacheKey, out YieldReference? cached) && cached != null)
+            return cached;
+
+        var result = new YieldReference(
+            await _settings.GetDecimalAsync(BabyLeafGramsKey, ct),
+            await _settings.GetDecimalAsync(ConventionalGramsKey, ct));
+
+        _cache?.Set(cacheKey, result, TimeSpan.FromMinutes(10));
+        return result;
+    }
 
     public async Task<YieldParameters> GetYieldParametersAsync(CancellationToken ct = default)
     {
+        var cacheKey = $"sysparams:yield-params:{LotViewCache.GlobalVersion}";
+        if (_cache != null && _cache.TryGetValue(cacheKey, out YieldParameters? cached) && cached != null)
+            return cached;
+
         var reference = await GetYieldReferenceAsync(ct);
 
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
@@ -218,12 +239,15 @@ public class SystemParametersService
             .ThenByDescending(r => r.Id)
             .FirstOrDefault()?.Value;
 
-        return new YieldParameters(
+        var result = new YieldParameters(
             reference.BabyLeafGramsPerPlant,
             reference.ConventionalGramsPerPlant,
             Price(OptimizationContractDestination.BabyLeaf),
             Price(OptimizationContractDestination.Conventional),
             rows.FirstOrDefault()?.Currency ?? "ARS");
+
+        _cache?.Set(cacheKey, result, TimeSpan.FromMinutes(10));
+        return result;
     }
 
     public async Task<ParametersUpdateResult> UpdateYieldParametersAsync(
@@ -247,6 +271,8 @@ public class SystemParametersService
 
         await _settings.SetDecimalAsync(BabyLeafGramsKey, normalized.BabyLeafGrams, ct);
         await _settings.SetDecimalAsync(ConventionalGramsKey, normalized.ConventionalGrams, ct);
+
+        LotViewCache.InvalidateAll();
 
         _logger.LogInformation(
             "Parámetros de rendimiento actualizados por {User}: Baby Leaf {BabyLeaf} g y {BabyLeafPrice}/kg, adulta {Conventional} g y {ConventionalPrice}/kg",
@@ -380,13 +406,27 @@ public class SystemParametersService
     /// <summary>Trasplante y tamaño de Baby Leaf: los cargados o los de fábrica.</summary>
     public async Task<TransplantParameters> GetTransplantParametersAsync(CancellationToken ct = default)
     {
+        var cacheKey = $"sysparams:transplant-params:{LotViewCache.GlobalVersion}";
+        if (_cache != null && _cache.TryGetValue(cacheKey, out TransplantParameters? cached) && cached != null)
+            return cached;
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
-        return await LoadTransplantAsync(context, ct);
+        var result = await LoadTransplantAsync(context, ct, _cache);
+        _cache?.Set(cacheKey, result, TimeSpan.FromMinutes(10));
+        return result;
     }
 
     /// <summary>Lo mismo con un contexto propio (flujo diario, trasplante, entorno de simulación).</summary>
-    public static async Task<TransplantParameters> LoadTransplantAsync(HydroPilotDbContext context, CancellationToken ct = default)
+    public static async Task<TransplantParameters> LoadTransplantAsync(
+        HydroPilotDbContext context,
+        CancellationToken ct = default,
+        IMemoryCache? cache = null)
     {
+        var effectiveCache = cache ?? _staticCache;
+        var cacheKey = $"sysparams:transplant-load:{LotViewCache.GlobalVersion}";
+        if (effectiveCache != null && effectiveCache.TryGetValue(cacheKey, out TransplantParameters? cached) && cached != null)
+            return cached;
+
         string[] keys = [DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey, DenseSpacingKey,
             AdultSpacingKey, DenseCleaningDaysKey];
         var values = await context.AppSettings.AsNoTracking()
@@ -399,7 +439,7 @@ public class SystemParametersService
                 : fallback;
 
         var d = TransplantParameters.Defaults;
-        return new TransplantParameters(
+        var result = new TransplantParameters(
             Value(DecisionGddKey, d.DecisionGdd),
             (int)Value(PlantsPerHourKey, d.PlantsPerHour),
             Value(LaborCostPerHourKey, d.LaborCostPerHour),
@@ -408,6 +448,9 @@ public class SystemParametersService
             Value(DenseSpacingKey, d.DenseSpacingCm),
             Value(AdultSpacingKey, d.AdultSpacingCm),
             (int)Value(DenseCleaningDaysKey, d.DenseCleaningDays));
+
+        effectiveCache?.Set(cacheKey, result, TimeSpan.FromMinutes(10));
+        return result;
     }
 
     public static IReadOnlyList<string> ValidateTransplant(TransplantParameters p)
@@ -450,6 +493,7 @@ public class SystemParametersService
         await _settings.SetDecimalAsync(DenseSpacingKey, input.DenseSpacingCm, ct);
         await _settings.SetDecimalAsync(AdultSpacingKey, input.AdultSpacingCm, ct);
         await _settings.SetDecimalAsync(DenseCleaningDaysKey, input.DenseCleaningDays, ct);
+        LotViewCache.InvalidateAll();
         _logger.LogInformation("Trasplante actualizado por {User}: {Parameters}", user.Identity?.Name, input);
         return new ParametersUpdateResult(true, []);
     }

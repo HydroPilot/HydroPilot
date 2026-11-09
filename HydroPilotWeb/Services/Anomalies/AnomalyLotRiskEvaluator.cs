@@ -24,7 +24,8 @@ public sealed class AnomalyLotRiskEvaluator
 
         var episodes = await context.AnomalyEvents
             .Where(e => e.LotId == lotId
-                && (e.Status == AnomalyContract.StatusAbierta || e.Status == AnomalyContract.StatusReconocida))
+                && (e.Status == AnomalyContract.StatusAbierta || e.Status == AnomalyContract.StatusReconocida)
+                && e.Type != "PATOGENO_FOLIAR_VISUAL" && e.Type != "DEFICIENCIA_NUTRICIONAL_VISUAL")
             .OrderBy(e => e.FirstObservedAtUtc)
             .ToListAsync(ct);
 

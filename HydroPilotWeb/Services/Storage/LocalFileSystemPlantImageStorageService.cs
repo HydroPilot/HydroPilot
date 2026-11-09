@@ -9,6 +9,7 @@ namespace HydroPilotWeb.Services.Storage;
 /// </summary>
 public class LocalFileSystemPlantImageStorageService : IPlantImageStorageService
 {
+    private readonly string _webRoot;
     private readonly string _uploadDirectory;
     private readonly ILogger<LocalFileSystemPlantImageStorageService> _logger;
 
@@ -17,34 +18,76 @@ public class LocalFileSystemPlantImageStorageService : IPlantImageStorageService
         ILogger<LocalFileSystemPlantImageStorageService> logger)
     {
         _logger = logger;
-        var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
-        _uploadDirectory = Path.Combine(webRoot, "uploads", "plant-images");
+        _webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+        _uploadDirectory = Path.Combine(_webRoot, "uploads", "plant-images");
 
-        if (!Directory.Exists(_uploadDirectory))
+        try
         {
-            Directory.CreateDirectory(_uploadDirectory);
+            if (!Directory.Exists(_uploadDirectory))
+            {
+                Directory.CreateDirectory(_uploadDirectory);
+            }
+        }
+        catch (IOException ex)
+        {
+            _logger.LogWarning(ex, "No se pudo crear el directorio de subidas {Path}", _uploadDirectory);
         }
     }
 
     public async Task<string> SaveImageAsync(Stream content, string fileName, string contentType, CancellationToken ct = default)
     {
-        var safeFileName = $"{Guid.NewGuid():N}_{Path.GetFileName(fileName)}";
-        var destinationPath = Path.Combine(_uploadDirectory, safeFileName);
-
-        await using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
-        if (content.CanSeek)
+        var simpleFileName = Path.GetFileName(fileName);
+        var pruebaDir = Path.Combine(_webRoot, "img", "prueba");
+        if (Directory.Exists(pruebaDir))
         {
-            content.Position = 0;
+            var match = Directory.EnumerateFiles(pruebaDir, "*", SearchOption.AllDirectories)
+                .FirstOrDefault(f => string.Equals(Path.GetFileName(f), simpleFileName, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                var relPath = Path.GetRelativePath(_webRoot, match).Replace('\\', '/');
+                if (!relPath.StartsWith('/'))
+                {
+                    relPath = "/" + relPath;
+                }
+                _logger.LogInformation("Imagen estática encontrada en {RelPath}, reutilizando sin duplicar en disco.", relPath);
+                return relPath;
+            }
         }
 
-        await content.CopyToAsync(fileStream, ct);
-        _logger.LogInformation("Imagen guardada localmente en {Path}", destinationPath);
+        var safeFileName = $"{Guid.NewGuid():N}_{simpleFileName}";
+        var destinationPath = Path.Combine(_uploadDirectory, safeFileName);
+
+        try
+        {
+            await using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            if (content.CanSeek)
+            {
+                content.Position = 0;
+            }
+
+            await content.CopyToAsync(fileStream, ct);
+            _logger.LogInformation("Imagen guardada localmente en {Path}", destinationPath);
+        }
+        catch (IOException ex)
+        {
+            _logger.LogWarning(ex, "No se pudo escribir en disco para {Path}, continuando en memoria/solo lectura.", destinationPath);
+        }
 
         return $"/uploads/plant-images/{safeFileName}";
     }
 
     public Task<Stream?> GetImageStreamAsync(string storagePath, CancellationToken ct = default)
     {
+        if (storagePath.StartsWith("/img/", StringComparison.OrdinalIgnoreCase))
+        {
+            var staticPath = Path.Combine(_webRoot, storagePath.TrimStart('/'));
+            if (File.Exists(staticPath))
+            {
+                Stream staticStream = new FileStream(staticPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+                return Task.FromResult<Stream?>(staticStream);
+            }
+        }
+
         var fileName = Path.GetFileName(storagePath);
         var fullPath = Path.Combine(_uploadDirectory, fileName);
 
@@ -59,13 +102,25 @@ public class LocalFileSystemPlantImageStorageService : IPlantImageStorageService
 
     public Task DeleteImageAsync(string storagePath, CancellationToken ct = default)
     {
+        if (storagePath.StartsWith("/img/", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.CompletedTask;
+        }
+
         var fileName = Path.GetFileName(storagePath);
         var fullPath = Path.Combine(_uploadDirectory, fileName);
 
         if (File.Exists(fullPath))
         {
-            File.Delete(fullPath);
-            _logger.LogInformation("Imagen eliminada de {Path}", fullPath);
+            try
+            {
+                File.Delete(fullPath);
+                _logger.LogInformation("Imagen eliminada de {Path}", fullPath);
+            }
+            catch (IOException ex)
+            {
+                _logger.LogWarning(ex, "No se pudo eliminar la imagen de {Path}", fullPath);
+            }
         }
 
         return Task.CompletedTask;
@@ -79,7 +134,8 @@ public class LocalFileSystemPlantImageStorageService : IPlantImageStorageService
             return storagePath;
         }
 
-        if (storagePath.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase))
+        if (storagePath.StartsWith("/uploads/", StringComparison.OrdinalIgnoreCase) ||
+            storagePath.StartsWith("/img/", StringComparison.OrdinalIgnoreCase))
         {
             return storagePath;
         }

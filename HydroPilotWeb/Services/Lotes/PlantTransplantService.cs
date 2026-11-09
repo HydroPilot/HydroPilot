@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Services.Forecasting;
@@ -39,11 +40,13 @@ public class PlantTransplantService
 {
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly ILogger<PlantTransplantService> _logger;
+    private readonly IMemoryCache? _cache;
 
-    public PlantTransplantService(IDbContextFactory<HydroPilotDbContext> dbFactory, ILogger<PlantTransplantService> logger)
+    public PlantTransplantService(IDbContextFactory<HydroPilotDbContext> dbFactory, ILogger<PlantTransplantService> logger, IMemoryCache? cache = null)
     {
         _dbFactory = dbFactory;
         _logger = logger;
+        _cache = cache;
     }
 
     /// <summary>Los mismos roles que crean lotes (Soporte Técnico no).</summary>
@@ -51,6 +54,10 @@ public class PlantTransplantService
 
     public async Task<TransplantPlan?> GetPlanAsync(int lotId, decimal lotGdd, CancellationToken ct = default)
     {
+        var cacheKey = $"transplant-plan:{lotId}:{Math.Round(lotGdd, 1)}:{LotViewCache.GlobalVersion}:{LotViewCache.GetLotVersion(lotId)}";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out TransplantPlan? cached) && cached is not null)
+            return cached;
+
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var lot = await context.Lots.AsNoTracking().Include(l => l.Status).FirstOrDefaultAsync(l => l.Id == lotId, ct);
         if (lot is null || lot.Status?.Name is not (LotStatusNames.Activo or LotStatusNames.EnPausa))
@@ -85,13 +92,16 @@ public class PlantTransplantService
 
         var proposal = TransplantRules.Propose(babyLeafRoute, plants.Count, lot.BabyLeafGoalPercent, room.Sum(r => r.FreeHoles),
             config.ScoreMinCandidate, alreadyBabyLeaf);
-        return new TransplantPlan(
+        var plan = new TransplantPlan(
             babyLeafRoute.Count > 0 && TransplantRules.IsDue(lotGdd, parameters.DecisionGdd, config.GddMax),
             parameters.DecisionGdd,
             proposal,
             room,
             parameters.CostPerPlant,
             plants.Count(p => p.TransplantedOn is not null));
+
+        _cache?.Set(cacheKey, plan, TimeSpan.FromSeconds(45));
+        return plan;
     }
 
     /// <param name="circuitOrder">
@@ -197,6 +207,7 @@ public class PlantTransplantService
         try
         {
             await context.SaveChangesAsync(ct);
+            LotViewCache.InvalidateLot(lotId);
         }
         catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
         {

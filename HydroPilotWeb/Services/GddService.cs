@@ -191,6 +191,7 @@ public class GddService
 
         var daily = usable
             .GroupBy(r => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(r.ObservedAtUtc, timeZone)))
+            .Where(g => g.Key >= lot.SowingDate)
             .Select(g => new DailyGddPoint(
                 g.Key,
                 DailyGdd(g.Max(r => r.Value), g.Min(r => r.Value), baseTemp),
