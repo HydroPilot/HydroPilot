@@ -16,6 +16,13 @@ var useLocalDb = builder.Configuration.GetValue("HydroPilot:UseLocalDb", false);
 var connectionStringName = useLocalDb ? "LocalSqlServer" : "AzureSql";
 var connectionString = builder.Configuration.GetConnectionString(connectionStringName)
     ?? throw new InvalidOperationException($"Falta la cadena de conexión '{connectionStringName}'.");
+if (useLocalDb && builder.Configuration.GetValue("SimulationEnvironment:Enabled", false))
+{
+    connectionString = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
+    {
+        InitialCatalog = "hydropilot_sim"
+    }.ConnectionString;
+}
 
 builder.Services.AddDbContextFactory<HydroPilotDbContext>(options =>
     options.UseSqlServer(connectionString, sqlOptions =>
