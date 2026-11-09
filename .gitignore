@@ -478,3 +478,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Plant image uploads
+**/wwwroot/uploads/**
+

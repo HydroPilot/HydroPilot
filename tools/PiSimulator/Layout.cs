@@ -13,7 +13,8 @@ public sealed record CircuitLayout(
     string EcKey,
     IReadOnlyDictionary<string, string> Pumps,
     int Plants,
-    double Days)
+    double Days,
+    IReadOnlyList<int>? PlantIds = null)
 {
     public static readonly string[] PumpKinds = ["ph-up", "ph-down", "nutrient", "nutrient-b", "water"];
 
@@ -33,7 +34,7 @@ public sealed record CircuitLayout(
         config.Circuits
             .Where(c => c.PhKey is not null && c.EcKey is not null)
             .Select(c => new CircuitLayout(c.Name, c.Kind, (double)c.Liters, c.PhKey!, c.EcKey!, c.Pumps, c.Plants,
-                c.LotDays ?? settings.DaysFor(0)))
+                c.LotDays ?? settings.DaysFor(0), c.PlantIds ?? []))
             .ToList();
 }
 
@@ -48,4 +49,5 @@ public sealed record DeviceCircuit(
     string? EcKey,
     Dictionary<string, string> Pumps,
     int Plants,
-    int? LotDays);
+    int? LotDays,
+    List<int>? PlantIds = null);

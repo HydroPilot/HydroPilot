@@ -2,6 +2,8 @@
 @attribute [Authorize(Policy = "RequireAssigned")]
 @rendermode InteractiveServer
 @using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Http
 @using HydroPilotWeb.Components.Lotes
 @using HydroPilotWeb.Services.Lotes
 @using HydroPilotWeb.Services.Dashboard
@@ -14,6 +16,13 @@
 @inject PlantTransplantService PlantTransplant
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<HydroPilotWeb.Data.HydroPilotDbContext> DbFactory
+@inject HydroPilotWeb.Services.Storage.IPlantImageStorageService ImageStorage
+@inject HydroPilotWeb.Services.Vision.BabyLeafPipelineService VisionPipeline
+@inject HydroPilotWeb.Services.GddService GddService
+@inject HydroPilotWeb.Services.Notifications.NotificationService NotificationService
+@inject HydroPilotWeb.Services.Lotes.LotDailyFlowService LotDailyFlow
+@inject Microsoft.Extensions.Logging.ILogger<HydroPilotWeb.Controllers.PlantImageController> ImageControllerLogger
 
 <PageTitle>Lotes</PageTitle>
 
@@ -471,6 +480,8 @@ else
     private string? highlightKey;
     private ElementReference popoverRef;
     private bool focusPopover;
+    private bool uploadingPlantImage;
+    private string? uploadPlantImageError;
     private string? error;
     private bool loading;
     private int loadVersion;
@@ -576,6 +587,8 @@ else
 
     private async Task SelectCellAsync(PlantCellDto cell)
     {
+        uploadPlantImageError = null;
+
         // El hueco del denso de una trasplantada abre la planta en su circuito de Adultas.
         if (cell.MovedTo is { } to)
         {
@@ -608,6 +621,7 @@ else
     {
         detail = null;
         selected = null;
+        uploadPlantImageError = null;
     }
 
     /// <summary>Circuito del mapa denso (null en lotes de antes de los circuitos).</summary>
@@ -624,9 +638,69 @@ else
              aria-label="@($"Detalle de la posición F{detail!.Row}-C{detail.Column}")"
              tabindex="-1" @ref="popoverRef" @onkeydown="OnPopoverKeyDown">
             @* Solo información: cosechar, descartar y trasplantar se hacen desde "Seleccionar". *@
-            <PlantDetailCard Detail="detail" OnClose="ClosePopover" />
+            <PlantDetailCard Detail="detail"
+                             OnClose="ClosePopover"
+                             UploadingImage="uploadingPlantImage"
+                             UploadError="@uploadPlantImageError"
+                             OnUploadImage="UploadSelectedPlantImageAsync" />
         </div>
     };
+
+    private async Task UploadSelectedPlantImageAsync(IBrowserFile file)
+    {
+        if (detail is not { PlantId: > 0 } currentDetail || selectedLotId is not { } lotId)
+            return;
+
+        uploadingPlantImage = true;
+        uploadPlantImageError = null;
+        StateHasChanged();
+
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 25_000_000);
+            var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            var formFile = new FormFile(ms, 0, ms.Length, "file", file.Name)
+            {
+                Headers = new HeaderDictionary(),
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType
+            };
+
+            var controller = new HydroPilotWeb.Controllers.PlantImageController(
+                DbFactory, ImageStorage, VisionPipeline, GddService, NotificationService, ImageControllerLogger);
+
+            var result = await controller.UploadImage(
+                formFile, lotId, currentDetail.PlantId, currentDetail.Row, currentDetail.Column,
+                DateTime.UtcNow, (double?)overview?.State.GddAccumulated, CancellationToken.None);
+
+            if (result is Microsoft.AspNetCore.Mvc.ObjectResult { StatusCode: >= 400 } errResult)
+            {
+                var errProp = errResult.Value?.GetType().GetProperty("error")?.GetValue(errResult.Value)?.ToString();
+                uploadPlantImageError = errProp ?? "Error al procesar la imagen.";
+                return;
+            }
+
+            await LotDailyFlow.RunDailyAsync(lotId, simDate);
+
+            overview = await LotOverview.GetOverviewAsync(lotId, simDate);
+            var cell = overview?.State.AllCells.FirstOrDefault(c => c.PlantId == currentDetail.PlantId);
+            if (cell is not null)
+            {
+                detail = await LoadDetailAsync(cell);
+            }
+        }
+        catch (Exception ex)
+        {
+            uploadPlantImageError = $"Error al subir la imagen: {ex.Message}";
+        }
+        finally
+        {
+            uploadingPlantImage = false;
+            StateHasChanged();
+        }
+    }
 
     private void OnPopoverKeyDown(KeyboardEventArgs e)
     {

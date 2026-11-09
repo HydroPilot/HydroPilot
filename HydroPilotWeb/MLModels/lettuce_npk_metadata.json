@@ -1,0 +1,45 @@
+{
+  "model_name": "LettuceNPKClassifier",
+  "architecture": "MobileNetV3-Small",
+  "hardware_trained": "NVIDIA GeForce RTX 3060 Ti",
+  "version": "1.0.0",
+  "task": "Nutrient Deficiency & Health Classification",
+  "classes": [
+    "FN",
+    "-N",
+    "-P",
+    "-K"
+  ],
+  "class_descriptions": {
+    "FN": "Sana / Nutricion Completa",
+    "-N": "Deficiencia de Nitrogeno (Clorosis foliar)",
+    "-P": "Deficiencia de Fosforo (Retraso y pigmentacion purpura)",
+    "-K": "Deficiencia de Potasio (Clorosis marginal y necrosis de bordes)"
+  },
+  "input_shape": [
+    1,
+    3,
+    224,
+    224
+  ],
+  "input_name": "input",
+  "output_name": "probabilities",
+  "normalization": {
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "val_accuracy": 0.9524,
+  "macro_f1": 0.96,
+  "trained_samples": 166,
+  "val_samples": 42,
+  "total_samples": 208,
+  "date_utc": "2026-09-03T21:28:00Z"
+}

@@ -224,6 +224,9 @@ public sealed class SimulationEnvironmentService
                     _logger.LogWarning("  Dataset: {Issue}", issue);
                 summary += issues.Count == 0 ? " Todo quedó como en el Excel." : $" {issues.Count} cosa(s) no quedaron como en el Excel.";
             }
+
+            LotViewCache.InvalidateAll();
+
             return new(true, summary, watch.Elapsed, data.Story, issues);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -674,7 +677,7 @@ public sealed class SimulationEnvironmentService
             dates.Add(end);
             foreach (var date in dates.Distinct())
             {
-                await forecasts.GetForecastAsync(lot.Id, date == today ? null : date, persistSnapshot: true, ct);
+                await forecasts.GetForecastAsync(lot.Id, date, persistSnapshot: true, ct);
                 count++;
             }
         }

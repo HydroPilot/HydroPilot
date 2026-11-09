@@ -1,5 +1,6 @@
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Services.Lotes;
 using Microsoft.EntityFrameworkCore;
 
 namespace HydroPilotWeb.Services.Admin;
@@ -128,6 +129,7 @@ COMMIT TRANSACTION;
         {
             var rowsAffected = await context.Database.ExecuteSqlRawAsync(sql, ct);
             _logger.LogInformation("Limpieza de datos transaccionales ejecutada con éxito. Filas afectadas: {Rows}", rowsAffected);
+            LotViewCache.InvalidateAll();
             return new MaintenanceActionResult(true, "Datos transaccionales y de prueba eliminados con éxito. Se preservaron usuarios, catálogos e infraestructura.", rowsAffected);
         }
         catch (Exception ex)
@@ -181,6 +183,8 @@ COMMIT TRANSACTION;
 
             // Crear el lote demo usando la lógica centralizada de DbInitializer
             DbInitializer.SeedDemoLot(context);
+
+            LotViewCache.InvalidateAll();
 
             return new MaintenanceActionResult(true, "Lote Demo 01 recreado correctamente con 60 posiciones de cultivo y asignación al nodo rpi-inv-01.");
         }

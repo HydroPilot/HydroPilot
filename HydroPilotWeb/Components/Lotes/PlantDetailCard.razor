@@ -1,5 +1,6 @@
 @using HydroPilotWeb.Models
 @using HydroPilotWeb.Services.Lotes
+@using Microsoft.AspNetCore.Components.Forms
 @namespace HydroPilotWeb.Components.Lotes
 
 <div class="card plant-detail h-100">
@@ -49,7 +50,7 @@
             </div>
 
             @* Solo datos de la planta: GDD, pH y CE son del lote y ya están en la vista. *@
-            <details class="mt-2">
+            <details class="mt-2" open>
                 <summary>Detalle de la planta</summary>
                 <dl class="plant-facts">
                     <div>
@@ -82,7 +83,59 @@
                         {
                             <dd>Sin imagen</dd>
                         }
+                        @if (OnUploadImage.HasDelegate)
+                        {
+                            <div>
+                                <InputFile OnChange="HandleFileSelected" accept=".png,.jpg,.jpeg,.webp,image/*" disabled="@UploadingImage" class="d-none" id="@($"plant-img-upload-{Detail.PlantId}")" />
+                                <label for="@($"plant-img-upload-{Detail.PlantId}")" class="btn btn-outline-primary btn-sm mt-1 @(UploadingImage ? "disabled" : "")">
+                                    @if (UploadingImage)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                        <span>Analizando...</span>
+                                    }
+                                    else
+                                    {
+                                        <span>Subir / actualizar foto</span>
+                                    }
+                                </label>
+                                @if (!string.IsNullOrWhiteSpace(UploadError))
+                                {
+                                    <div class="text-danger small mt-1">@UploadError</div>
+                                }
+                            </div>
+                        }
                     </div>
+                    @if (!string.IsNullOrEmpty(Detail.VisionPredominantClass) || !string.IsNullOrEmpty(Detail.VisionHealthClass))
+                    {
+                        <div>
+                            <dt>Nutrición NPK</dt>
+                            <dd>
+                                <span class="badge @GetVisionBadgeClass(Detail.VisionPredominantClass)">
+                                    @(Detail.VisionPredominantClass ?? "—")
+                                    @(Detail.VisionConfidence.HasValue ? $" ({Detail.VisionConfidence.Value:P0})" : "")
+                                </span>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Sanidad</dt>
+                            <dd>
+                                <span class="badge @(Detail.VisionHealthClass == "Healthy" ? "bg-success text-white" : "bg-danger text-white")">
+                                    @(Detail.VisionHealthClass ?? "—")
+                                </span>
+                            </dd>
+                        </div>
+                    }
+                    @if (Detail.VisionFoliarArea.HasValue || Detail.VisionLeafLength.HasValue)
+                    {
+                        <div>
+                            <dt>Área foliar</dt>
+                            <dd>@(Detail.VisionFoliarArea.HasValue ? $"{Detail.VisionFoliarArea.Value:0.##} cm²" : "—")</dd>
+                        </div>
+                        <div>
+                            <dt>Longitud hoja</dt>
+                            <dd>@(Detail.VisionLeafLength.HasValue ? $"{Detail.VisionLeafLength.Value:0.##} cm" : "—")</dd>
+                        </div>
+                    }
                 </dl>
 
                 @if (Detail.History.Count > 0)
@@ -126,6 +179,18 @@
     /// <summary>Si se pasa, muestra un botón × para cerrar (uso como popover en la vista Lotes).</summary>
     [Parameter] public EventCallback OnClose { get; set; }
 
+    [Parameter] public EventCallback<IBrowserFile> OnUploadImage { get; set; }
+    [Parameter] public bool UploadingImage { get; set; }
+    [Parameter] public string? UploadError { get; set; }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        if (e.File is not null && OnUploadImage.HasDelegate)
+        {
+            await OnUploadImage.InvokeAsync(e.File);
+        }
+    }
+
     private RenderFragment? CloseButton => OnClose.HasDelegate
         ? @<button type="button" class="btn-close btn-sm" aria-label="Cerrar detalle" @onclick="OnClose"></button>
         : null;
@@ -152,4 +217,13 @@
     };
 
     private static string When(DateOnly? date) => date is { } d ? $" · {LotFormat.Day(d)}" : string.Empty;
+
+    private static string GetVisionBadgeClass(string? predClass) => predClass switch
+    {
+        "FN" => "bg-success text-white",
+        "-N" => "bg-warning text-dark",
+        "-P" => "bg-primary text-white",
+        "-K" => "bg-danger text-white",
+        _ => "bg-secondary text-white"
+    };
 }

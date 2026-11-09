@@ -64,7 +64,10 @@ public class PlantLifecycleService
         Harvest(context, plant, adult, harvestDate ?? Today, DateTime.UtcNow, "harvest", destination, babyLeaf);
 
         await context.SaveChangesAsync(ct);
-        await CloseLotIfDoneAsync(context, plant.LotId, ct);
+        var closedAs = await CloseLotIfDoneAsync(context, plant.LotId, ct);
+        LotViewCache.InvalidateLot(plant.LotId);
+        if (closedAs is not null)
+            LotViewCache.InvalidateAll();
         return plant;
     }
 
@@ -95,6 +98,9 @@ public class PlantLifecycleService
 
         await context.SaveChangesAsync(ct);
         var closedAs = plants.Count > 0 ? await CloseLotIfDoneAsync(context, lotId, ct) : null;
+        LotViewCache.InvalidateLot(lotId);
+        if (closedAs is not null)
+            LotViewCache.InvalidateAll();
         return new PlantBatchResult(babyLeaf, plants.Count - babyLeaf, 0, closedAs);
     }
 
@@ -115,7 +121,10 @@ public class PlantLifecycleService
         Discard(context, plant, reason, discardDate ?? Today, DateTime.UtcNow);
 
         await context.SaveChangesAsync(ct);
-        await CloseLotIfDoneAsync(context, plant.LotId, ct);
+        var closedAs = await CloseLotIfDoneAsync(context, plant.LotId, ct);
+        LotViewCache.InvalidateLot(plant.LotId);
+        if (closedAs is not null)
+            LotViewCache.InvalidateAll();
         return plant;
     }
 
@@ -133,6 +142,9 @@ public class PlantLifecycleService
 
         await context.SaveChangesAsync(ct);
         var closedAs = plants.Count > 0 ? await CloseLotIfDoneAsync(context, lotId, ct) : null;
+        LotViewCache.InvalidateLot(lotId);
+        if (closedAs is not null)
+            LotViewCache.InvalidateAll();
         return new PlantBatchResult(0, 0, plants.Count, closedAs);
     }
 
