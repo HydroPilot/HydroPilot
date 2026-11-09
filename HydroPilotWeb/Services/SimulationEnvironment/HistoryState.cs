@@ -275,6 +275,22 @@ internal sealed record ResolvedAnomalyRule(string Code, string Name, int Consecu
 /// <summary>Lecturas de un paso que la Pi no pudo mandar (sin conexión): las manda al volver.</summary>
 internal sealed record PendingBatch(DateTime ObservedAtUtc, long Sequence, List<(SimSensor Sensor, decimal Value)> Values);
 
+/// <summary>Con un dataset: a dónde va cada planta (lo que dice el Excel), para guiar su crecimiento y sus movimientos.</summary>
+internal enum PlantFate
+{
+    /// <summary>Sin dataset, o activa en el denso hoy sin mapa: crece como siempre (con tope de tamaño).</summary>
+    None,
+    CutBabyLeaf1,
+    CutBabyLeaf2,
+    DenseDiscard,
+    TransplantActive,
+    TransplantCut,
+    TransplantDiscard,
+    ActiveDeveloping,
+    ActiveCandidate,
+    ActiveBabyLeaf,
+}
+
 /// <summary>Una planta durante el recorrido: en su hueco del circuito denso o, trasplantada, en uno de Adultas.</summary>
 internal sealed class PlantRun(Plant plant, double vigor)
 {
@@ -311,6 +327,22 @@ internal sealed class PlantRun(Plant plant, double vigor)
     public bool EvaluatedApt { get; set; }
     public bool WasApt { get; set; }
     public bool CutAsBabyLeaf { get; set; }
+
+    // --- Con un dataset ---
+    public PlantFate Fate { get; set; }
+
+    /// <summary>Tamaño al que tiene que llegar (300 = el ideal de Baby Leaf) y cuándo: el crecimiento se guía hasta ahí.</summary>
+    public double? TargetSize { get; set; }
+    public DateOnly? TargetDate { get; set; }
+
+    /// <summary>Motivo del descarte que le toca (decide cómo crece: grande si se pasa de tamaño, enferma si es Pythium…).</summary>
+    public string? FateReason { get; set; }
+    public DateOnly? FateDate { get; set; }
+
+    public bool Transplants => Fate is PlantFate.TransplantActive or PlantFate.TransplantCut or PlantFate.TransplantDiscard;
+
+    /// <summary>Las que el Excel corta o muestra como Baby Leaf: sin daños que les bajen el score.</summary>
+    public bool Protected => Fate is PlantFate.CutBabyLeaf1 or PlantFate.CutBabyLeaf2 or PlantFate.ActiveBabyLeaf or PlantFate.ActiveCandidate;
 
     public bool Active => Plant.OperationalState == PlantOperationalState.Activa;
 }

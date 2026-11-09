@@ -42,6 +42,10 @@ public static class GreenhouseClimate
         return new DayNormal(Blend(OutdoorMaxByMonth), Blend(OutdoorMinByMonth), Blend(OutdoorRhByMonth));
     }
 
+    /// <summary>La normal de un mes con otra máxima y mínima de afuera (la hoja Clima del dataset); la humedad, la del SMN.</summary>
+    public static DayNormal MonthlyNormal(int month, double outdoorMax, double outdoorMin) =>
+        new(outdoorMax, outdoorMin, OutdoorRhByMonth[month - 1]);
+
     /// <summary>Máxima y mínima adentro para un día afuera con esta anomalía (°C; + más calor que lo normal).</summary>
     public static InsideDay Inside(DayNormal normal, double anomaly, double rhAnomaly = 0)
     {

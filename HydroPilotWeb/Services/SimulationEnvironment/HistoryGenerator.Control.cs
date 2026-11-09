@@ -86,8 +86,8 @@ public sealed partial class HistoryGenerator
             ControlContract.ModeAuto,
             true,
             bench.LastPollUtc,
-            ControlContract.DefaultReservoirLiters,
-            ControlContract.DefaultSourceWaterEc,
+            bench.Bench.ReservoirLiters,
+            bench.Bench.SourceWaterEc,
             new ControlEngine.Magnitude(ph, bench.Points(ControlContract.ParameterPh, since, t), bench.OpenPauses.ContainsKey(ControlContract.ParameterPh)),
             new ControlEngine.Magnitude(ec, bench.Points(ControlContract.ParameterEc, since, t), bench.OpenPauses.ContainsKey(ControlContract.ParameterEc)),
             Pumps(bench, t),
@@ -173,7 +173,7 @@ public sealed partial class HistoryGenerator
         }
         var pump = bench.Pumps[kind];
         var effect = nutrient?.MixEffect ?? pump.Effect ?? ControlContract.DefaultFor(kind)?.Effect ?? 1m;
-        if (ControlEngine.RawDose(kind, value, aim, ControlContract.DefaultReservoirLiters, effect, ControlContract.DefaultSourceWaterEc) is not { } raw
+        if (ControlEngine.RawDose(kind, value, aim, bench.Bench.ReservoirLiters, effect, bench.Bench.SourceWaterEc) is not { } raw
             || raw <= 0m)
             return;
 
@@ -261,8 +261,8 @@ public sealed partial class HistoryGenerator
             ControllerVersion = decision is null ? ControlContract.ControllerManual : ControlContract.ControllerAuto,
             Strength = decision?.Strength,
             ExpectedEffect = decision?.ExpectedEffect
-                ?? (trigger is null ? null : ControlEngine.ExpectedEffect(kind, amount, ControlContract.DefaultReservoirLiters, effect,
-                    trigger.Value, ControlContract.DefaultSourceWaterEc)),
+                ?? (trigger is null ? null : ControlEngine.ExpectedEffect(kind, amount, bench.Bench.ReservoirLiters, effect,
+                    trigger.Value, bench.Bench.SourceWaterEc)),
         };
 
         if (bench.IsOffline(created))
@@ -334,8 +334,8 @@ public sealed partial class HistoryGenerator
             var beforeAt = run.TriggerAtUtc ?? command.CreatedAtUtc;
             var drift = ControlEngine.TrendPerHour(bench.Points(command.Parameter, beforeAt.AddMinutes(-_control.TrendMinutes), beforeAt));
             var pump = bench.Pumps[run.Kind];
-            var expected = command.ExpectedEffect ?? ControlEngine.ExpectedEffect(run.Kind, amount, ControlContract.DefaultReservoirLiters,
-                pump.Effect ?? 1m, before, ControlContract.DefaultSourceWaterEc);
+            var expected = command.ExpectedEffect ?? ControlEngine.ExpectedEffect(run.Kind, amount, bench.Bench.ReservoirLiters,
+                pump.Effect ?? 1m, before, bench.Bench.SourceWaterEc);
             var measure = ControlEngine.MeasureEffect(before, after.Value, drift, (decimal)(after.ObservedAtUtc - beforeAt).TotalHours, expected);
 
             command.ExpectedEffect = expected;
@@ -346,7 +346,7 @@ public sealed partial class HistoryGenerator
             touched.Add(command.Parameter);
 
             if (measure.Effective
-                && ControlEngine.Calibrate(run.Kind, pump.Effect, measure.Observed, amount, ControlContract.DefaultReservoirLiters) is { } calibrated
+                && ControlEngine.Calibrate(run.Kind, pump.Effect, measure.Observed, amount, bench.Bench.ReservoirLiters) is { } calibrated
                 && calibrated != pump.Effect)
             {
                 pump.Effect = calibrated;

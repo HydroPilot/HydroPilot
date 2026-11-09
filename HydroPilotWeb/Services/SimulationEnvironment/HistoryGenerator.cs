@@ -6,6 +6,7 @@ using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Control;
 using HydroPilotWeb.Services.Forecasting;
 using HydroPilotWeb.Services.Lotes;
+using HydroPilotWeb.Services.SimulationEnvironment.Dataset;
 using HydroPilotWeb.Services.SimulationEnvironment.Model;
 using Microsoft.Extensions.Options;
 
@@ -25,6 +26,9 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 ///   (<see cref="TransplantRules"/>); el corte Baby Leaf en el pico de aptas (<see cref="BabyLeafOptimumRules"/>), el de
 ///   las adultas en su óptimo, y los descartes;
 /// - anomalías (<see cref="AnomalyEvaluator"/>) y notificaciones de lo que pasó.
+/// Con un dataset (<see cref="DemoScript"/>, el Excel de la demo) los lotes, sus fechas y cuántas plantas van a cada
+/// destino salen del Excel: el clima, las lecturas, el control, las evaluaciones y las alertas se generan igual, y el
+/// crecimiento de cada planta se guía para que llegue a su destino (ver HistoryGenerator.Script.cs).
 /// </summary>
 public sealed partial class HistoryGenerator
 {
@@ -42,6 +46,7 @@ public sealed partial class HistoryGenerator
     private readonly TelemetryValidationService _validation = new(Microsoft.Extensions.Options.Options.Create(new TelemetryOptions()));
     private readonly int _stepMinutes;
     private readonly Action<HistoryData>? _flushTelemetry;
+    private readonly DemoScript? _script;
 
     /// <summary>Lecturas acumuladas a partir de las cuales se descargan (ver <see cref="Generate"/>).</summary>
     public const int TelemetryChunk = 50_000;
@@ -56,9 +61,11 @@ public sealed partial class HistoryGenerator
         _rejectionId, _setpointId, _pauseId, _anomalyId, _alertId, _deliveryId,
         _attemptId, _forecastId, _weatherId, _priceId;
 
-    private HistoryGenerator(SimWorld world, SimulationEnvironmentOptions options, DateTime nowUtc, Action<HistoryData>? flushTelemetry)
+    private HistoryGenerator(SimWorld world, SimulationEnvironmentOptions options, DateTime nowUtc, Action<HistoryData>? flushTelemetry,
+        DemoScript? script)
     {
         _flushTelemetry = flushTelemetry;
+        _script = script;
         _w = world;
         _o = options;
         _nowUtc = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc);
@@ -71,11 +78,12 @@ public sealed partial class HistoryGenerator
     /// Genera el historial. <paramref name="flushTelemetry"/>: cada <see cref="TelemetryChunk"/> lecturas se le pasa lo
     /// que ya no cambia (lecturas, lotes de telemetría, imágenes, análisis, evaluaciones e historial de plantas) para que
     /// lo guarde y vacíe esas listas; si no, queda todo en memoria (alcanza para historiales cortos de prueba).
+    /// <paramref name="script"/>: el dataset de la demo ya controlado (<see cref="DemoDatasetPlanner"/>); null = al azar.
     /// </summary>
     public static HistoryData Generate(SimWorld world, SimulationEnvironmentOptions options, DateTime nowUtc,
-        Action<HistoryData>? flushTelemetry = null)
+        Action<HistoryData>? flushTelemetry = null, DemoScript? script = null)
     {
-        var generator = new HistoryGenerator(world, options, nowUtc, flushTelemetry);
+        var generator = new HistoryGenerator(world, options, nowUtc, flushTelemetry, script);
         generator.Run();
         return generator._data;
     }
@@ -86,22 +94,35 @@ public sealed partial class HistoryGenerator
 
     private void Run()
     {
-        var historyStart = _today.AddMonths(-Math.Clamp(_o.HistoryMonths, 2, 36));
-        _climate = HistoryPlanner.Climate(historyStart.AddDays(-150), _today.AddDays(8), _rng);
-        _autoStart = _today.AddDays(-190);
-
-        // Lotes en curso: mesada A cerca de la ventana Baby Leaf; mesada B recién sembrada. Solo se siembra en las
-        // mesadas densas; las de Adultas reciben las trasplantadas.
-        var plans = new List<PlannedLot>();
-        var dense = 0;
-        for (var i = 0; i < _w.Benches.Count; i++)
+        DateOnly historyStart;
+        List<PlannedLot> plans;
+        if (_script is { } script)
         {
-            if (_w.Benches[i].IsAdult)
-                continue;
-            plans.AddRange(HistoryPlanner.Plan(_climate, i, _today.AddDays(dense == 0 ? -12 : -4 - 4 * (dense - 1)), historyStart));
-            dense++;
+            // Con un dataset: sus lotes, su clima y desde cuándo el control es automático.
+            historyStart = script.Lots.Min(l => l.Lot.Sowing).AddDays(-7);
+            _climate = HistoryPlanner.ScriptedClimate(historyStart.AddDays(-150), _today.AddDays(8), script.Dataset.Climate, _rng);
+            _autoStart = script.General.AutomaticFrom ?? _today.AddDays(-190);
+            plans = ScriptedPlans(script);
         }
-        plans = HistoryPlanner.AssignIncidents(plans, _climate, _autoStart, _today);
+        else
+        {
+            historyStart = _today.AddMonths(-Math.Clamp(_o.HistoryMonths, 2, 36));
+            _climate = HistoryPlanner.Climate(historyStart.AddDays(-150), _today.AddDays(8), _rng);
+            _autoStart = _today.AddDays(-190);
+
+            // Lotes en curso: mesada A cerca de la ventana Baby Leaf; mesada B recién sembrada. Solo se siembra en las
+            // mesadas densas; las de Adultas reciben las trasplantadas.
+            plans = [];
+            var dense = 0;
+            for (var i = 0; i < _w.Benches.Count; i++)
+            {
+                if (_w.Benches[i].IsAdult)
+                    continue;
+                plans.AddRange(HistoryPlanner.Plan(_climate, i, _today.AddDays(dense == 0 ? -12 : -4 - 4 * (dense - 1)), historyStart));
+                dense++;
+            }
+            plans = HistoryPlanner.AssignIncidents(plans, _climate, _autoStart, _today);
+        }
 
         for (var i = 0; i < _w.Benches.Count; i++)
             _benches.Add(new BenchRun(_w.Benches[i], plans.Where(p => p.Bench == i).OrderBy(p => p.Sowing).ToList(), _rng));
@@ -161,7 +182,16 @@ public sealed partial class HistoryGenerator
             if (minute is >= 9 * 60 and < 9 * 60 + 20)
                 TopUp(bench, t);
             if (minute is >= 10 * 60 and < 10 * 60 + 10 && lot.HarvestCheckedOn != date)
-                Harvest(bench, t, local);
+            {
+                if (lot.Plan.Script is null)
+                    Harvest(bench, t, local);
+                else
+                    ScriptedHarvest(bench, t, local);
+            }
+            // Con un dataset el trasplante va a las 11, después de los cortes del día (un circuito de Adultas que se
+            // vacía hoy ya puede recibir).
+            if (minute is >= 11 * 60 and < 11 * 60 + 10 && lot.Plan.Script is not null && bench == lot.DenseBench)
+                ScriptedTransplant(lot, date, t);
         }
     }
 
@@ -191,15 +221,18 @@ public sealed partial class HistoryGenerator
 
     private void StartLot(BenchRun bench, PlannedLot plan, DateTime t)
     {
-        // Meta Baby Leaf del ciclo: más convencional en verano (crece rápido), más Baby Leaf en invierno.
+        // Meta Baby Leaf del ciclo: más convencional en verano (crece rápido), más Baby Leaf en invierno. Con un
+        // dataset, la del Excel (vacía: la de la estación).
         var bl = plan.Sowing.Month switch
         {
             12 or 1 or 2 => 60m,
             6 or 7 or 8 => 80m,
             _ => 70m,
         };
-        if (_rng.NextDouble() < 0.2)
+        if (plan.Script is null && _rng.NextDouble() < 0.2)
             bl += 10m;
+        if (plan.Script?.Lot.BabyLeafGoal is { } goal)
+            bl = goal;
 
         var lot = new Lot
         {
@@ -207,7 +240,7 @@ public sealed partial class HistoryGenerator
             GreenhouseId = _w.GreenhouseId,
             CropTypeId = _w.Crop.Id,
             StatusId = _w.LotStatusIds[LotStatusNames.Activo],
-            Name = LotName(bench, plan),
+            Name = plan.Script?.Lot.Name ?? LotName(bench, plan),
             SowingDate = plan.Sowing,
             // Superficie de la mesada densa (huecos × separación²): la usa el rendimiento por m² del pronóstico.
             PlantedAreaM2 = Math.Round(bench.Bench.Holes * _w.TransplantOrDefault.DenseHoleM2, 2),
@@ -215,7 +248,7 @@ public sealed partial class HistoryGenerator
             GridColumns = bench.Bench.GridColumns,
             BabyLeafHarvestTargetPercent = 70m,
             BabyLeafGoalPercent = bl,
-            ExpectedActivePercent = 90m,
+            ExpectedActivePercent = plan.Script?.Lot.ActiveGoal ?? 90m,
             CreatedAt = t.AddDays(-1).AddHours(14),
             AppliedPhenologicalStageId = _w.Stages[0].Id,
             PredominantPhenologicalStageId = _w.Stages[0].Id,
@@ -242,7 +275,10 @@ public sealed partial class HistoryGenerator
             EcBias = plan.Incident == Incident.HeatTipburn ? 0.3 : Math.Round(-0.25 + _rng.NextDouble() * 0.45, 2),
             DenseBench = bench,
         };
-        AddPlants(run, bench, t);
+        if (plan.Script is null)
+            AddPlants(run, bench, t);
+        else
+            AddScriptedPlants(run, bench, t);
         bench.Lot = run;
         bench.Assignment = assignment;
         bench.Day = new DayStats();
@@ -275,12 +311,13 @@ public sealed partial class HistoryGenerator
 
         // Solución nueva: CE de la etapa de establecimiento (más la costumbre del operario) y pH ~6.
         var stage = _w.Stages[0];
-        bench.Tank = new NutrientTank(500, 5.95 + _rng.NextDouble() * 0.15, (double)stage.EcObjective + run.EcBias * 0.5);
+        bench.Tank = new NutrientTank((double)bench.Bench.ReservoirLiters, 5.95 + _rng.NextDouble() * 0.15, (double)stage.EcObjective + run.EcBias * 0.5);
         bench.Mode = DateOnly.FromDateTime(ToLocal(t)) >= _autoStart ? ControlContract.ModeAuto : ControlContract.ModeManual;
 
         run.Recipe = ComputeRecipe(run, t, previous: null);
         RecordSetpoint(run, t);
-        _data.Story.Add($"{lot.Name}: siembra {plan.Sowing:dd/MM/yyyy}{(plan.Incident != Incident.None ? $" · {IncidentText(plan.Incident)}" : null)}");
+        _data.Story.Add($"{lot.Name}: siembra {plan.Sowing:dd/MM/yyyy}{(plan.Incident != Incident.None ? $" · {IncidentText(plan.Incident)}" : null)}"
+                        + (plan.Script is not null ? $" · {run.Plants.Count} plantas (dataset)" : null));
     }
 
     /// <summary>
@@ -346,7 +383,7 @@ public sealed partial class HistoryGenerator
             var (blPrice, convPrice) = PricesOn(date);
             lot.HarvestBabyLeafPricePerKg = blPrice;
             lot.HarvestConventionalPricePerKg = convPrice;
-            lot.HarvestPriceCurrency = "ARS";
+            lot.HarvestPriceCurrency = _w.Currency;
             lot.ActualYieldKg = Math.Round((bl * _w.BabyLeafGramsPerPlant + conventional * _w.ConventionalGramsPerPlant) / 1000m, 2);
         }
         else

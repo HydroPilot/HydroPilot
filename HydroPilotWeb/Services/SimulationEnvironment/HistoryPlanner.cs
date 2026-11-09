@@ -1,4 +1,5 @@
 using HydroPilotWeb.Services.Lotes;
+using HydroPilotWeb.Services.SimulationEnvironment.Dataset;
 using HydroPilotWeb.Services.SimulationEnvironment.Model;
 
 namespace HydroPilotWeb.Services.SimulationEnvironment;
@@ -38,7 +39,9 @@ internal enum Incident
     NutrientEmpty,
 }
 
-internal sealed record PlannedLot(int Bench, int Number, DateOnly Sowing, DateOnly PlannedEnd, Incident Incident = Incident.None);
+/// <summary>Un lote planificado: al azar o, con un dataset, su fila de Lotes (<paramref name="Script"/>).</summary>
+internal sealed record PlannedLot(int Bench, int Number, DateOnly Sowing, DateOnly PlannedEnd, Incident Incident = Incident.None,
+    DemoLotScript? Script = null);
 
 /// <summary>
 /// Clima del período y calendario de lotes por mesada densa (lógica pura). Los lotes de una mesada van uno detrás del
@@ -79,6 +82,28 @@ internal static class HistoryPlanner
             var normal = GreenhouseClimate.Normal(date);
             days[date] = new ClimateDay(date, normal, GreenhouseClimate.Inside(normal, total, rh + rain), total,
                 name ?? (rain > 0 ? "lluvia" : null));
+        }
+        return days;
+    }
+
+    /// <summary>
+    /// Clima de un dataset: la normal de cada mes de la hoja Clima y sus olas de calor y frentes fríos, más un ruido diario
+    /// más chico que el del historial al azar, para que el GDD quede cerca del que estima el Excel.
+    /// </summary>
+    public static Dictionary<DateOnly, ClimateDay> ScriptedClimate(DateOnly from, DateOnly to, DemoClimate climate, Random rng)
+    {
+        var days = new Dictionary<DateOnly, ClimateDay>();
+        double anomaly = 0, rh = 0;
+        for (var date = from; date <= to; date = date.AddDays(1))
+        {
+            anomaly = 0.7 * anomaly + Gaussian(rng) * 0.8;
+            rh = 0.6 * rh + Gaussian(rng) * 5;
+            var rain = rng.NextDouble() < 0.06 ? 14 : 0;
+            var scripted = climate.Events.FirstOrDefault(e => e.From <= date && date <= e.To);
+            var total = anomaly + DemoClimateModel.Anomaly(climate, date) - (rain > 0 ? 0.8 : 0);
+            var normal = DemoClimateModel.Normal(climate, date);
+            days[date] = new ClimateDay(date, normal, GreenhouseClimate.Inside(normal, total, rh + rain), total,
+                scripted?.Kind.ToLowerInvariant() ?? (rain > 0 ? "lluvia" : null));
         }
         return days;
     }

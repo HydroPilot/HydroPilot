@@ -23,7 +23,9 @@ public sealed record SimBench(
     string CircuitName = "",
     string Kind = CircuitKinds.Dense,
     int GridRows = 6,
-    int GridColumns = 10)
+    int GridColumns = 10,
+    decimal ReservoirLiters = ControlContract.DefaultReservoirLiters,
+    decimal SourceWaterEc = ControlContract.DefaultSourceWaterEc)
 {
     /// <summary>La mesada que manda la temperatura y la humedad del invernadero (una sola).</summary>
     public bool HasAmbient => Sensors.ContainsKey(AnomalyContract.SensorTypeTemperatura);
@@ -55,7 +57,9 @@ public sealed record SimWorld(
     IReadOnlyList<SimUser> Recipients,
     decimal BabyLeafGramsPerPlant,
     decimal ConventionalGramsPerPlant,
-    TransplantParameters? Transplant = null) // trasplante a Adultas (Ajustes > Parámetros); null = de fábrica
+    TransplantParameters? Transplant = null, // trasplante a Adultas (Ajustes > Parámetros); null = de fábrica
+    IReadOnlyDictionary<int, string>? EmailMinSeverity = null, // usuario → desde qué gravedad recibe correo; null = la productora, Alta
+    string Currency = "ARS")
 {
     public TransplantParameters TransplantOrDefault => Transplant ?? TransplantParameters.Defaults;
 }
@@ -93,7 +97,16 @@ public sealed class HistoryData
 
     /// <summary>Resumen para el log y la vista de mantenimiento.</summary>
     public List<string> Story { get; } = [];
+
+    /// <summary>Con un dataset: cada movimiento del guion como quedó (GDD del lote ese día y plantas).</summary>
+    public List<ScriptedEventRecord> ScriptedEvents { get; } = [];
 }
+
+/// <summary>
+/// Un movimiento del dataset ya hecho: el GDD medido del lote ese día y cuántas plantas. <paramref name="NotReady"/>: en
+/// los cortes Baby Leaf, las que la última evaluación no dio Baby Leaf.
+/// </summary>
+public sealed record ScriptedEventRecord(int LotId, string Lot, string Event, DateOnly Date, decimal Gdd, int Plants, int NotReady = 0);
 
 public sealed record NodeFinalState(
     int NodeId,

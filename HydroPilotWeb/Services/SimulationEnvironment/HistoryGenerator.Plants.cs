@@ -125,20 +125,25 @@ public sealed partial class HistoryGenerator
             };
             var health = plant.InfectedDays is { } d ? Math.Max(0.2, 1 - 0.15 * d) : 1.0;
             var efficiency = plant.AdultRoute && stressed ? 0 : plant.Vigor * quality * health;
+            if (_script is not null)
+                efficiency = GuidedEfficiency(plant, date, grown, efficiency);
             plant.Size += Math.Max(0, grown) * efficiency;
             plant.QualitySum += quality;
             plant.QualityDays++;
             plant.RecentEfficiency.Enqueue(efficiency);
             while (plant.RecentEfficiency.Count > 3)
                 plant.RecentEfficiency.Dequeue();
-            if (tipburnDay && _rng.NextDouble() < 0.25)
-                plant.Damage = Math.Min(80, plant.Damage + 2 + _rng.NextDouble() * 3);
-            plant.Yellowing = Math.Clamp(plant.Yellowing + yellowing, 0, 60);
+            if (tipburnDay && _rng.NextDouble() < 0.25 && !(_script is not null && plant.Protected))
+                plant.Damage = Math.Min(_script is null || FatedTo(plant, "Tipburn") ? 80 : 12, plant.Damage + 2 + _rng.NextDouble() * 3);
+            plant.Yellowing = Math.Clamp(plant.Yellowing + yellowing, 0, _script is not null && plant.Protected ? 5 : 60);
             if (plant.InfectedDays is { } infected)
                 plant.InfectedDays = infected + 1;
+            if (_script is not null)
+                ScriptedDamage(plant, date);
         }
 
-        Discards(run, date, t, meanT, day);
+        if (_script is null)
+            Discards(run, date, t, meanT, day);
 
         // Con tipburn en un cuarto de las plantas, la productora baja la CE (deja su costumbre de CE alta).
         if (run.Plan.Incident == Incident.HeatTipburn && run.EcBias > 0
@@ -189,13 +194,17 @@ public sealed partial class HistoryGenerator
             run.AptCurve.Add(new AptCurvePoint(date, Math.Round(gdd, 1), evaluated.Count(p => p.EvaluatedApt), evaluated.Count));
         }
 
-        // La que se pasó de tamaño o no se cortó antes de cerrar la ventana: sin lugar para seguir como adulta.
-        foreach (var (plant, reason) in toDiscard)
-            Discard(run, plant, date, t.AddMinutes(25), reason);
+        // La que se pasó de tamaño o no se cortó antes de cerrar la ventana: sin lugar para seguir como adulta. Con un
+        // dataset, los descartes y el trasplante son los del Excel (ScriptedHarvest y ScriptedTransplant).
+        if (_script is null)
+        {
+            foreach (var (plant, reason) in toDiscard)
+                Discard(run, plant, date, t.AddMinutes(25), reason);
 
-        // Trasplante a Adultas desde el GDD de decisión (una vez).
-        if (!run.TransplantDone && TransplantRules.IsDue(gdd, _w.TransplantOrDefault.DecisionGdd, _w.Config.GddMax))
-            Transplant(run, date, t.AddMinutes(40));
+            // Trasplante a Adultas desde el GDD de decisión (una vez).
+            if (!run.TransplantDone && TransplantRules.IsDue(gdd, _w.TransplantOrDefault.DecisionGdd, _w.Config.GddMax))
+                Transplant(run, date, t.AddMinutes(40));
+        }
 
         // Predominancia sobre activas (Mixto ante empate), como LotDailyFlowService.
         var counts = run.Plants.Where(p => p.Active)
@@ -262,9 +271,19 @@ public sealed partial class HistoryGenerator
 
         var byId = run.Plants.ToDictionary(p => p.Plant.Id);
         var queue = new Queue<PlantRun>(proposal.PlantIds.Select(id => byId[id]).OrderBy(p => p.Plant.Row).ThenBy(p => p.Plant.Column));
+        MoveToAdults(run, free, queue, date, t);
+
+        run.StressUntil = date.AddDays(_w.TransplantOrDefault.StressDays);
+        run.Lot.TransplantCostPerPlant = _w.TransplantOrDefault.CostPerPlant;
+        run.Events.Add((t, "transplant", $"{proposal.PlantIds.Count} a Adultas, {proposal.NoRoom} sin lugar"));
+    }
+
+    /// <summary>Las plantas de la cola pasan, en orden, a los huecos de las mesadas de Adultas (cada una con su asignación).</summary>
+    private void MoveToAdults(LotRun run, IEnumerable<BenchRun> benches, Queue<PlantRun> queue, DateOnly date, DateTime t)
+    {
         // Como en la app: la trasplantada queda "En desarrollo" en la ruta Adulta.
         var developing = _w.CommercialStageIds[CommercialStageNames.EnDesarrollo];
-        foreach (var bench in free)
+        foreach (var bench in benches)
         {
             if (queue.Count == 0)
                 break;
@@ -298,10 +317,6 @@ public sealed partial class HistoryGenerator
                 });
             }
         }
-
-        run.StressUntil = date.AddDays(_w.TransplantOrDefault.StressDays);
-        run.Lot.TransplantCostPerPlant = _w.TransplantOrDefault.CostPerPlant;
-        run.Events.Add((t, "transplant", $"{proposal.PlantIds.Count} a Adultas, {proposal.NoRoom} sin lugar"));
     }
 
     /// <summary>La mesada de Adultas recibe al lote: su asignación desde ahora y la solución de la etapa en el tanque.</summary>
@@ -324,7 +339,7 @@ public sealed partial class HistoryGenerator
         foreach (var sensor in bench.Bench.Sensors.Values.Where(s => s.Type is AnomalyContract.SensorTypePh or AnomalyContract.SensorTypeCe))
             bench.Calibrations[sensor.Id] = t.AddMinutes(-30);
         bench.PhProbeOffset = 0;
-        bench.Tank = new NutrientTank(500, 5.95 + _rng.NextDouble() * 0.15, (double)run.Stage.EcObjective + run.EcBias * 0.5);
+        bench.Tank = new NutrientTank((double)bench.Bench.ReservoirLiters, 5.95 + _rng.NextDouble() * 0.15, (double)run.Stage.EcObjective + run.EcBias * 0.5);
         bench.Mode = DateOnly.FromDateTime(ToLocal(t)) >= _autoStart ? ControlContract.ModeAuto : ControlContract.ModeManual;
     }
 
@@ -337,7 +352,7 @@ public sealed partial class HistoryGenerator
             return;
 
         var chance = run.Plan.Incident == Incident.Pythium ? 0.12 * (run.WarmDays - 2) : 0.004;
-        foreach (var plant in run.Plants.Where(p => p.Active && p.InfectedDays is null))
+        foreach (var plant in run.Plants.Where(p => p.Active && p.InfectedDays is null && _script is null))
         {
             if (_rng.NextDouble() < chance)
                 plant.InfectedDays = 0;
