@@ -24,8 +24,10 @@
     </PackageReference>
     <PackageReference Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.1" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.1" ExcludeAssets="build;buildTransitive" />
   </ItemGroup>
+
+  <Target Name="SixLabors_ValidateLicense" />
 
   <ItemGroup>
     <Content Update="MLModels\**" CopyToOutputDirectory="PreserveNewest" />

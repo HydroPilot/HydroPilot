@@ -41,6 +41,25 @@ public sealed class VirtualPi
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
     private readonly object _consoleGate = new();
 
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".webp"
+    };
+
+    private static readonly string[] UnhealthyFolders =
+    [
+        "deficiencia_nitrogeno",
+        "deficiencia_fosforo",
+        "deficiencia_potasio",
+        "mildew_velloso",
+        "oidio_polvoriento",
+        "pulgones_afidos",
+        "septoriosis"
+    ];
+
+    private readonly List<(string Path, string Category)> _healthyImages = [];
+    private readonly List<(string Path, string Category)> _unhealthyImages = [];
+
     /// <summary>Resultado de cada commandId ya procesado: la Pi nunca ejecuta dos veces el mismo comando.</summary>
     private readonly ConcurrentDictionary<Guid, CommandResult> _results = new();
 
@@ -72,6 +91,8 @@ public sealed class VirtualPi
             var label = Label(i);
             tanks[i].Refilled += liters => Print(ConsoleColor.DarkCyan, $"· {label}: el flotante repuso {liters.ToString("0", Es)} L de agua de red");
         }
+
+        LoadImages();
     }
 
     private string Label(int index) => _circuits[index].Name;
@@ -90,8 +111,21 @@ public sealed class VirtualPi
         }
     }
 
-    public Task RunAsync(CancellationToken ct) =>
-        Task.WhenAll(TankLoopAsync(ct), ReadingsLoopAsync(ct), CommandsLoopAsync(ct), KeysLoopAsync(ct), RefreshLoopAsync(ct));
+    public Task RunAsync(CancellationToken ct)
+    {
+        var tasks = new List<Task>
+        {
+            TankLoopAsync(ct),
+            ReadingsLoopAsync(ct),
+            CommandsLoopAsync(ct),
+            KeysLoopAsync(ct),
+            RefreshLoopAsync(ct)
+        };
+        if (_settings.ImageSeconds > 0 && (_healthyImages.Count > 0 || _unhealthyImages.Count > 0))
+            tasks.Add(ImagesLoopAsync(ct));
+
+        return Task.WhenAll(tasks);
+    }
 
     // ------------------------------------------------------------------
     // Circuitos (cada minuto, lo que dice la web)
@@ -124,8 +158,13 @@ public sealed class VirtualPi
                 if (index < 0)
                     continue; // un circuito nuevo: hay que reiniciar la Pi virtual
                 var previous = _circuits[index];
+                var plantIdsChanged = !PlantIdsEqual(previous.PlantIds, circuit.PlantIds);
                 if (previous.Plants == circuit.Plants && Math.Abs(previous.Days - circuit.Days) < 1)
+                {
+                    if (plantIdsChanged)
+                        _circuits[index] = circuit;
                     continue;
+                }
                 // Lote nuevo en el circuito: estaba vacío o tiene menos días que antes.
                 var newLot = (previous.Plants == 0 && circuit.Plants > 0) || circuit.Days < previous.Days - 1;
                 _tanks[index].Sync(circuit.Plants, circuit.Days, newLot);
@@ -199,6 +238,9 @@ public sealed class VirtualPi
                         foreach (var each in _tanks)
                             each.Acceleration = next > 0 ? next : Accelerations[0];
                         Print(ConsoleColor.Magenta, $"· tiempo de las plantas ×{_tanks[0].Acceleration:0}");
+                        break;
+                    case 'i':
+                        await SendRandomPlantImageAsync(preferSelected: true, ct);
                         break;
                     case 'x':
                         _manualOffline = !_manualOffline;
@@ -435,6 +477,165 @@ public sealed class VirtualPi
     }
 
     private static string Amount(double value, string unit) => $"{value.ToString("0.#", Es)} {unit}";
+
+    private static bool PlantIdsEqual(IReadOnlyList<int>? a, IReadOnlyList<int>? b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a is null || b is null) return false;
+        return a.SequenceEqual(b);
+    }
+
+    // ------------------------------------------------------------------
+    // Imágenes de plantas
+    // ------------------------------------------------------------------
+
+    private async Task ImagesLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_settings.ImageSeconds));
+        while (await Tick(timer, ct))
+        {
+            if (Offline)
+                continue;
+            await SendRandomPlantImageAsync(preferSelected: false, ct);
+        }
+    }
+
+    private async Task SendRandomPlantImageAsync(bool preferSelected, CancellationToken ct)
+    {
+        if (Offline)
+        {
+            if (preferSelected)
+                Print(ConsoleColor.Yellow, "· sin conexión: no se puede mandar imagen");
+            return;
+        }
+
+        if (_healthyImages.Count == 0 && _unhealthyImages.Count == 0)
+        {
+            if (preferSelected)
+                Print(ConsoleColor.Yellow, "· no se encontraron imágenes de prueba");
+            return;
+        }
+
+        CircuitLayout? circuit = null;
+        if (preferSelected && _circuits.Length > _selected && _circuits[_selected].PlantIds is { Count: > 0 })
+        {
+            circuit = _circuits[_selected];
+        }
+        else
+        {
+            var candidates = _circuits.Where(c => c.PlantIds is { Count: > 0 }).ToList();
+            if (candidates.Count > 0)
+                circuit = candidates[Random.Shared.Next(candidates.Count)];
+        }
+
+        if (circuit is null || circuit.PlantIds is not { Count: > 0 } plantIds)
+        {
+            if (preferSelected)
+                Print(ConsoleColor.Yellow, $"· {Label(_selected)}: no tiene plantas activas para mandar imagen");
+            return;
+        }
+
+        var plantId = plantIds[Random.Shared.Next(plantIds.Count)];
+
+        (string Path, string Category) chosen;
+        var rollHealthy = Random.Shared.NextDouble() < (_settings.HealthyPercent / 100.0);
+        if (rollHealthy && _healthyImages.Count > 0)
+        {
+            chosen = _healthyImages[Random.Shared.Next(_healthyImages.Count)];
+        }
+        else if (!rollHealthy && _unhealthyImages.Count > 0)
+        {
+            chosen = _unhealthyImages[Random.Shared.Next(_unhealthyImages.Count)];
+        }
+        else if (_healthyImages.Count > 0)
+        {
+            chosen = _healthyImages[Random.Shared.Next(_healthyImages.Count)];
+        }
+        else
+        {
+            chosen = _unhealthyImages[Random.Shared.Next(_unhealthyImages.Count)];
+        }
+
+        try
+        {
+            var resumen = await _transport.SendPlantImageAsync(plantId, chosen.Path, ct);
+            Print(ConsoleColor.Green,
+                $"→ imagen     {circuit.Name} planta #{plantId} · {Path.GetFileName(chosen.Path)} ({chosen.Category}) → {resumen ?? "ok"}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Print(ConsoleColor.Red, $"→ imagen     {circuit.Name} planta #{plantId}: no se pudo mandar ({ex.Message})");
+        }
+    }
+
+    private void LoadImages()
+    {
+        var imagesDir = FindImagesDirectory(_settings.ImagesPath);
+        if (imagesDir is null || !Directory.Exists(imagesDir))
+            return;
+
+        var sanaDir = Path.Combine(imagesDir, "sana_control");
+        if (Directory.Exists(sanaDir))
+        {
+            foreach (var file in Directory.EnumerateFiles(sanaDir, "*.*", SearchOption.AllDirectories))
+            {
+                if (ImageExtensions.Contains(Path.GetExtension(file)))
+                    _healthyImages.Add((file, "sana_control"));
+            }
+        }
+
+        foreach (var folder in UnhealthyFolders)
+        {
+            var folderDir = Path.Combine(imagesDir, folder);
+            if (Directory.Exists(folderDir))
+            {
+                foreach (var file in Directory.EnumerateFiles(folderDir, "*.*", SearchOption.AllDirectories))
+                {
+                    if (ImageExtensions.Contains(Path.GetExtension(file)))
+                        _unhealthyImages.Add((file, folder));
+                }
+            }
+        }
+
+        if (_healthyImages.Count > 0 || _unhealthyImages.Count > 0)
+        {
+            Print(ConsoleColor.DarkCyan,
+                $"· imágenes: {_healthyImages.Count} sanas, {_unhealthyImages.Count} con patologías ({Path.GetFileName(imagesDir)})");
+        }
+    }
+
+    private static string? FindImagesDirectory(string? customPath)
+    {
+        if (!string.IsNullOrWhiteSpace(customPath) && Directory.Exists(customPath))
+            return Path.GetFullPath(customPath);
+
+        string[] candidateSubpaths =
+        [
+            Path.Combine("HydroPilot", "HydroPilotWeb", "wwwroot", "img", "prueba"),
+            Path.Combine("HydroPilotWeb", "wwwroot", "img", "prueba"),
+            Path.Combine("wwwroot", "img", "prueba"),
+            "img-prueba",
+            Path.Combine("..", "img-prueba")
+        ];
+
+        string[] startDirs = [AppContext.BaseDirectory, Directory.GetCurrentDirectory()];
+        foreach (var startDir in startDirs)
+        {
+            var dir = new DirectoryInfo(startDir);
+            while (dir is not null && dir.Exists)
+            {
+                foreach (var candidate in candidateSubpaths)
+                {
+                    var full = Path.Combine(dir.FullName, candidate);
+                    if (Directory.Exists(full))
+                        return Path.GetFullPath(full);
+                }
+                dir = dir.Parent;
+            }
+        }
+
+        return null;
+    }
 
     private void Print(ConsoleColor color, string text)
     {

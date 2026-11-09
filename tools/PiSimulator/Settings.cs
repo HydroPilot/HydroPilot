@@ -17,6 +17,9 @@ public sealed class Settings
     public Scenario Scenario { get; private set; } = Scenario.Normal;
     public int ReadingSeconds { get; private set; } = 15;
     public int PollSeconds { get; private set; } = 5;
+    public int ImageSeconds { get; private set; } = 20;
+    public double HealthyPercent { get; private set; } = 80;
+    public string? ImagesPath { get; private set; }
     public double Liters { get; private set; } = 500;
     public double Ph { get; private set; } = 6.0;
     public double Ec { get; private set; } = 1.5;
@@ -70,6 +73,9 @@ public sealed class Settings
           --plantas <n>          con --circuitos: plantas de cada mesada (200)
           --lecturas <s>         cada cuántos segundos manda lecturas (15)
           --consulta <s>         cada cuántos segundos pide comandos (5)
+          --imagenes <s>         cada cuántos segundos manda una imagen de planta (20; 0 = desactivado)
+          --sanas <%>            porcentaje de imágenes en buenas condiciones (80)
+          --carpeta-imagenes <r> carpeta de imágenes de prueba (por defecto busca wwwroot/img/prueba)
           --litros <L>           volumen de cada tanque (500)
           --ph <valor>           pH inicial (6,0)
           --ce <valor>           CE inicial en mS/cm (1,5)
@@ -80,7 +86,7 @@ public sealed class Settings
 
         Teclas: 1–9 = elegir el circuito de las teclas siguientes (1)
                 p = pH +0,5 · b = pH −0,5 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · a = cambiar aceleración
-                x = cortar/reanudar conexión · q = salir
+                i = mandar imagen ahora · x = cortar/reanudar conexión · q = salir
         """;
 
     public static Settings Parse(string[] args)
@@ -99,6 +105,9 @@ public sealed class Settings
                 case "escenario": settings.Scenario = ParseScenario(Next()); break;
                 case "lecturas": settings.ReadingSeconds = Math.Max(1, int.Parse(Next(), CultureInfo.InvariantCulture)); break;
                 case "consulta": settings.PollSeconds = Math.Max(1, int.Parse(Next(), CultureInfo.InvariantCulture)); break;
+                case "imagenes": settings.ImageSeconds = Math.Max(0, int.Parse(Next(), CultureInfo.InvariantCulture)); break;
+                case "sanas" or "buenas": settings.HealthyPercent = Math.Clamp(ParseNumber(Next()), 0, 100); break;
+                case "carpeta-imagenes": settings.ImagesPath = Next(); break;
                 case "litros": settings.Liters = Math.Max(1, ParseNumber(Next())); break;
                 case "ph": settings.Ph = ParseNumber(Next()); break;
                 case "ce": settings.Ec = ParseNumber(Next()); break;
