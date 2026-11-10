@@ -405,7 +405,7 @@ public class ReportSqlServerTests
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId, rows: 2, columns: 2);
 
-        await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
+        await AddPlantAsync(context, lot, 1, 1, "Activa");
         await AddPlantAsync(context, lot, 1, 2, "Baby Leaf", score: 88m);
         // Descartada: no participa de la predominancia.
         await AddPlantAsync(context, lot, 2, 1, "Riesgo / fuera de ventana", PlantOperationalState.Descartada);
@@ -434,7 +434,7 @@ public class ReportSqlServerTests
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId, rows: 2, columns: 2);
 
-        var p1 = await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
+        var p1 = await AddPlantAsync(context, lot, 1, 1, "Activa");
         var p2 = await AddPlantAsync(context, lot, 2, 1, "Baby Leaf",
             PlantOperationalState.Cosechada, score: 90m);
 
@@ -445,13 +445,13 @@ public class ReportSqlServerTests
             {
                 PlantId = p1.Id, BabyLeafConfigId = config.Id,
                 EvaluatedAtUtc = DateTime.UtcNow.AddDays(-2), BabyLeafScore = 40m,
-                Result = "En desarrollo", Confidence = 0.8m, MandatoryCriteriaMet = true
+                Result = "Activa", Confidence = 0.8m, MandatoryCriteriaMet = true
             },
             new BabyLeafEvaluation
             {
                 PlantId = p1.Id, BabyLeafConfigId = config.Id,
                 EvaluatedAtUtc = DateTime.UtcNow, BabyLeafScore = 75m,
-                Result = "En desarrollo", Confidence = 0.9m, MandatoryCriteriaMet = true
+                Result = "Activa", Confidence = 0.9m, MandatoryCriteriaMet = true
             });
         await context.SaveChangesAsync();
 
@@ -490,7 +490,7 @@ public class ReportSqlServerTests
         await using var context = _fixture.NewContext();
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId);
-        await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
+        await AddPlantAsync(context, lot, 1, 1, "Activa");
 
         var service = BuildService();
         var result = await service.GetStageChangesAsync(lotId: lot.Id);
@@ -506,9 +506,9 @@ public class ReportSqlServerTests
         await using var context = _fixture.NewContext();
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId);
-        var plant = await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
+        var plant = await AddPlantAsync(context, lot, 1, 1, "Activa");
 
-        var enDesarrollo = await context.CommercialStages.FirstAsync(s => s.Name == "En desarrollo");
+        var enDesarrollo = await context.CommercialStages.FirstAsync(s => s.Name == "Activa");
         var candidata = await context.CommercialStages.FirstAsync(s => s.Name == "Candidata Baby Leaf");
         var apta = await context.CommercialStages.FirstAsync(s => s.Name == "Baby Leaf");
 

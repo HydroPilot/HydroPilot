@@ -67,7 +67,7 @@ public sealed class LotesSqlFixture : IAsyncLifetime
             new PhenologicalStage { CropTypeId = crop.Id, Name = "Formación y madurez", Order = 3, GddMin = 450, GddMax = 750, EcMin = 1.5m, EcObjective = 1.7m, EcMax = 1.8m });
 
         context.CommercialStages.AddRange(
-            new CommercialStage { CropTypeId = crop.Id, Name = "En desarrollo" },
+            new CommercialStage { CropTypeId = crop.Id, Name = "Activa" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Candidata Baby Leaf" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Baby Leaf" },
             new CommercialStage { CropTypeId = crop.Id, Name = "Adulta" },

@@ -72,6 +72,8 @@ public static class DemoDatasetPlanner
                 warnings.Add($"El historial termina el {g.Today:dd/MM/yyyy} (\"Correr las fechas\" en No): desde ahí no hay lecturas.");
             }
         }
+        // El nombre lleva la fecha de siembra ya corrida ("Lote B26 · 08/10/2026"), así siempre coincide.
+        dataset = dataset.WithSowingInNames();
         var general = dataset.General;
 
         // Circuitos
@@ -118,9 +120,10 @@ public static class DemoDatasetPlanner
             }
             if (dense.Kind != CircuitKinds.Dense)
                 errors.Add($"{where}: el circuito {dense.Name} no es Denso.");
+            // Un lote nunca empieza con posiciones vacías: una planta por hueco del circuito.
             var plants = lot.Plants ?? dense.Holes;
-            if (plants > dense.Holes)
-                errors.Add($"{where}: {plants} plantas y el circuito tiene {dense.Holes} huecos.");
+            if (plants != dense.Holes)
+                errors.Add($"{where}: {plants} plantas y el circuito tiene {dense.Holes} huecos (se siembra una por hueco).");
             CheckLot(lot, plants, general, climate, where, errors);
             var map = maps.FirstOrDefault(m => m.Lot.Equals(lot.Name, StringComparison.OrdinalIgnoreCase));
             if (map is not null)

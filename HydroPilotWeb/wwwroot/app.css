@@ -3106,6 +3106,76 @@ button {
     }
 }
 
+/* Selector de lote con búsqueda (LotPicker): input con la flecha del select y la lista como el menú del select. */
+.lot-picker {
+    position: relative;
+    width: min(100%, 20rem);
+}
+
+.lot-picker__input {
+    width: 100%;
+    text-overflow: ellipsis;
+}
+
+.lot-picker__input::placeholder {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.lot-picker__list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 1000;
+    min-width: 100%;
+    max-height: min(320px, 50vh);
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    overflow-y: auto;
+    border: 1px solid var(--border-input);
+    border-radius: 12px;
+    background: var(--bg-picker);
+    color: var(--text-primary);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-scrollbar) transparent;
+}
+
+.lot-picker__group {
+    padding: 8px 12px 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.lot-picker__option {
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.lot-picker__option:hover,
+.lot-picker__option.is-active {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.lot-picker__option.is-selected {
+    background: var(--accent-bg-subtle);
+    color: var(--accent);
+    font-weight: 650;
+}
+
+.lot-picker__empty {
+    padding: 7px 12px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
 /* Cargando otro lote: el contenido anterior queda atenuado y sin clics hasta que llega el nuevo. */
 .lot-loading {
     display: inline-flex;

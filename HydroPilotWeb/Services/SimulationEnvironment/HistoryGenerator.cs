@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using HydroPilotWeb.Models;
@@ -18,9 +19,8 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 /// cada paso hace lo que pasaría de verdad, con las reglas de la app:
 /// - el tanque y las plantas (<see cref="NutrientTank"/>, <see cref="LettuceUptake"/>, <see cref="GreenhouseClimate"/>);
 /// - la Pi manda lecturas, clasificadas como la ingesta (<see cref="TelemetryValidationService"/>);
-/// - el control: en la época manual un operario corrige 3 veces por día; después, el motor automático
-///   (<see cref="ControlEngine"/>) con la receta aprendida (<see cref="RecipeRules"/>), medición de efecto,
-///   calibración y pausas;
+/// - el control, siempre automático (como si nunca hubiera estado en manual): el motor (<see cref="ControlEngine"/>)
+///   con la receta aprendida (<see cref="RecipeRules"/>), medición de efecto, calibración y pausas;
 /// - una vez por día, la evaluación de cada planta (score con <see cref="BabyLeafScoreCalculator"/>) y el flujo
 ///   diario (<see cref="PlantDecisionEngine"/>); a los 250 GDD, el trasplante a las mesadas de Adultas
 ///   (<see cref="TransplantRules"/>); el corte Baby Leaf en el pico de aptas (<see cref="BabyLeafOptimumRules"/>), el de
@@ -32,7 +32,6 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 /// </summary>
 public sealed partial class HistoryGenerator
 {
-    private static readonly System.Globalization.CultureInfo Es = System.Globalization.CultureInfo.GetCultureInfo("es-AR");
     private const int ExpectedIntervalSeconds = 300;
     private const string Firmware = "pi-1.4.2";
 
@@ -52,14 +51,13 @@ public sealed partial class HistoryGenerator
     public const int TelemetryChunk = 50_000;
 
     private Dictionary<DateOnly, ClimateDay> _climate = [];
-    private DateOnly _autoStart;
     private readonly List<BenchRun> _benches = [];
     private readonly List<LotRun> _closedLots = [];
 
     // Id de cada tabla (el historial se inserta con sus Id).
     private int _lotId, _assignmentId, _plantId, _historyId, _imageId, _analysisId, _evaluationId, _batchId, _readingId,
         _rejectionId, _setpointId, _pauseId, _anomalyId, _alertId, _deliveryId,
-        _attemptId, _forecastId, _weatherId, _priceId;
+        _attemptId, _forecastId, _weatherId, _priceId, _commentId;
 
     private HistoryGenerator(SimWorld world, SimulationEnvironmentOptions options, DateTime nowUtc, Action<HistoryData>? flushTelemetry,
         DemoScript? script)
@@ -98,17 +96,15 @@ public sealed partial class HistoryGenerator
         List<PlannedLot> plans;
         if (_script is { } script)
         {
-            // Con un dataset: sus lotes, su clima y desde cuándo el control es automático.
+            // Con un dataset: sus lotes y su clima.
             historyStart = script.Lots.Min(l => l.Lot.Sowing).AddDays(-7);
             _climate = HistoryPlanner.ScriptedClimate(historyStart.AddDays(-150), _today.AddDays(8), script.Dataset.Climate, _rng);
-            _autoStart = script.General.AutomaticFrom ?? _today.AddDays(-190);
             plans = ScriptedPlans(script);
         }
         else
         {
             historyStart = _today.AddMonths(-Math.Clamp(_o.HistoryMonths, 2, 36));
             _climate = HistoryPlanner.Climate(historyStart.AddDays(-150), _today.AddDays(8), _rng);
-            _autoStart = _today.AddDays(-190);
 
             // Lotes en curso: mesada A cerca de la ventana Baby Leaf; mesada B recién sembrada. Solo se siembra en las
             // mesadas densas; las de Adultas reciben las trasplantadas.
@@ -121,11 +117,12 @@ public sealed partial class HistoryGenerator
                 plans.AddRange(HistoryPlanner.Plan(_climate, i, _today.AddDays(dense == 0 ? -12 : -4 - 4 * (dense - 1)), historyStart));
                 dense++;
             }
-            plans = HistoryPlanner.AssignIncidents(plans, _climate, _autoStart, _today);
+            plans = HistoryPlanner.AssignIncidents(plans, _climate, _today);
         }
 
         for (var i = 0; i < _w.Benches.Count; i++)
-            _benches.Add(new BenchRun(_w.Benches[i], plans.Where(p => p.Bench == i).OrderBy(p => p.Sowing).ToList(), _rng));
+            _benches.Add(new BenchRun(_w.Benches[i], plans.Where(p => p.Bench == i).OrderBy(p => p.Sowing).ToList(), _rng,
+                exactSensor: _script is not null));
 
         AddPriceHistory(historyStart);
 
@@ -134,6 +131,7 @@ public sealed partial class HistoryGenerator
         start = new DateTime(start.Ticks - start.Ticks % TimeSpan.FromMinutes(_stepMinutes).Ticks, DateTimeKind.Utc);
         var step = TimeSpan.FromMinutes(_stepMinutes);
 
+        var last = start;
         for (var t = start; t <= _nowUtc; t += step)
         {
             var local = ToLocal(t);
@@ -141,6 +139,19 @@ public sealed partial class HistoryGenerator
                 RefreshRecipes(t);
             foreach (var bench in _benches)
                 StepBench(bench, t, local);
+            last = t;
+        }
+
+        // La evaluación de hoy aunque se regenere antes de las 8 (desde 2026-11-10): el historial llega a hoy con el estado
+        // del día. Si no, la última evaluación sería la de ayer y, por ejemplo, un lote en su día de corte no lo mostraría.
+        var lastLocal = ToLocal(last);
+        if (DateOnly.FromDateTime(lastLocal) == _today)
+        {
+            foreach (var bench in _benches)
+            {
+                if (bench.Lot is { Closed: false } lot && lot.EvaluatedOn != _today)
+                    DailyFlow(bench, last, lastLocal);
+            }
         }
 
         Finish(historyStart);
@@ -176,7 +187,7 @@ public sealed partial class HistoryGenerator
 
         if (lot is not null && !lot.Closed)
         {
-            Control(bench, t, local);
+            Control(bench, t);
             if (minute is >= 8 * 60 and < 8 * 60 + 10 && lot.EvaluatedOn != date)
                 DailyFlow(bench, t, local);
             if (minute is >= 9 * 60 and < 9 * 60 + 20)
@@ -255,6 +266,19 @@ public sealed partial class HistoryGenerator
         };
         lot.CircuitId = bench.Bench.CircuitId;
         _data.Lots.Add(lot);
+        // El comentario del Excel sobre la siembra: de la productora, a la mañana del día que se sembró.
+        if (plan.Script?.Lot.Comment is { } comment)
+        {
+            _data.Comments.Add(new LotComment
+            {
+                Id = ++_commentId,
+                LotId = lot.Id,
+                UserId = _w.Producer.Id,
+                AuthorName = _w.Producer.Name,
+                Text = comment,
+                CreatedAtUtc = ToUtc(plan.Sowing.ToDateTime(new TimeOnly(9, 15))),
+            });
+        }
 
         var assignment = new CircuitAssignment
         {
@@ -270,8 +294,7 @@ public sealed partial class HistoryGenerator
         var run = new LotRun(plan, lot, assignment, _w.Stages[0])
         {
             StartUtc = t,
-            // Costumbres del operario en la época manual: cada lote trabaja un poco distinto (el del calor, con CE alta).
-            PhBias = Math.Round(-0.3 + _rng.NextDouble() * 0.55, 2),
+            // CE con la que se arma el tanque: cada lote arranca un poco distinto (el del calor, con CE alta).
             EcBias = plan.Incident == Incident.HeatTipburn ? 0.3 : Math.Round(-0.25 + _rng.NextDouble() * 0.45, 2),
             DenseBench = bench,
         };
@@ -312,7 +335,7 @@ public sealed partial class HistoryGenerator
         // Solución nueva: CE de la etapa de establecimiento (más la costumbre del operario) y pH ~6.
         var stage = _w.Stages[0];
         bench.Tank = new NutrientTank((double)bench.Bench.ReservoirLiters, 5.95 + _rng.NextDouble() * 0.15, (double)stage.EcObjective + run.EcBias * 0.5);
-        bench.Mode = DateOnly.FromDateTime(ToLocal(t)) >= _autoStart ? ControlContract.ModeAuto : ControlContract.ModeManual;
+        bench.Mode = ControlContract.ModeAuto;
 
         run.Recipe = ComputeRecipe(run, t, previous: null);
         RecordSetpoint(run, t);
@@ -342,11 +365,9 @@ public sealed partial class HistoryGenerator
             CloseLot(run, t);
     }
 
-    private static string LotName(BenchRun bench, PlannedLot plan)
-    {
-        var month = plan.Sowing.ToDateTime(TimeOnly.MinValue).ToString("MMM yy", Es).Replace(".", string.Empty);
-        return $"Lote {bench.Bench.Letter}{plan.Number:00} · {month}";
-    }
+    /// <summary>"Lote B26 · 08/10/2026": mesada, número de lote en la mesada y fecha de siembra.</summary>
+    private static string LotName(BenchRun bench, PlannedLot plan) =>
+        $"Lote {bench.Bench.Letter}{plan.Number:00} · {plan.Sowing.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
 
     /// <summary>El lote deja la mesada: se cierra su asignación, se resuelve lo abierto en sus sondas y se vacía el tanque.</summary>
     private void ReleaseBench(BenchRun bench, LotRun run, DateTime t)

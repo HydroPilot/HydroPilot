@@ -78,7 +78,7 @@ public sealed class SimulationEnvironmentSqlFixture : IAsyncLifetime
         Services = services.BuildServiceProvider();
 
         NowUtc = DateTime.UtcNow;
-        Result = await Services.GetRequiredService<SimulationEnvironmentService>().RegenerateAsync();
+        Result = await Services.GetRequiredService<SimulationEnvironmentService>().RegenerateRandomAsync();
     }
 
     public async Task DisposeAsync()

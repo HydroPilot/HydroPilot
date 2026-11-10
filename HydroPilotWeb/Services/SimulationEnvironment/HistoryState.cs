@@ -10,11 +10,13 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 /// <summary>Una mesada durante el recorrido: su lote en curso, el tanque, las bombas y lo que sabe la web de ella.</summary>
 internal sealed class BenchRun
 {
-    public BenchRun(SimBench bench, List<PlannedLot> plans, Random rng)
+    /// <param name="exactSensor">Con un dataset el sensor de temperatura no tiene desvío: el GDD medido sigue al del Excel.</param>
+    public BenchRun(SimBench bench, List<PlannedLot> plans, Random rng, bool exactSensor = false)
     {
         Bench = bench;
         Plans = plans;
-        TemperatureOffset = Math.Round(-0.3 + rng.NextDouble() * 0.6, 2);
+        var offset = Math.Round(-0.3 + rng.NextDouble() * 0.6, 2);
+        TemperatureOffset = exactSensor ? 0 : offset;
         foreach (var actuator in bench.Actuators)
         {
             Pumps[actuator.Kind] = new PumpRun(actuator)
@@ -31,7 +33,8 @@ internal sealed class BenchRun
     public int NextPlan { get; set; }
     public LotRun? Lot { get; set; }
     public NutrientTank? Tank { get; set; }
-    public string Mode { get; set; } = ControlContract.ModeManual;
+    /// <summary>Siempre automático en el historial (también las mesadas de Adultas que quedan vacías).</summary>
+    public string Mode { get; set; } = ControlContract.ModeAuto;
     public double TemperatureOffset { get; }
     public Dictionary<string, PumpRun> Pumps { get; } = [];
     public List<CommandRun> Commands { get; } = [];
@@ -165,7 +168,6 @@ internal sealed class LotRun(PlannedLot plan, Lot lot, CircuitAssignment assignm
     public DateTime StartUtc { get; init; }
     public DateTime? EndUtc { get; set; }
     public bool Closed { get; set; }
-    public double PhBias { get; init; }
     public double EcBias { get; set; }
 
     public decimal Gdd { get; set; }
@@ -266,7 +268,6 @@ internal sealed class EpisodeRun(AnomalyEvent anomaly, ResolvedAnomalyRule rule)
     public AnomalyEvent Event { get; } = anomaly;
     public ResolvedAnomalyRule Rule { get; } = rule;
     public int Normals { get; set; }
-    public bool Answered { get; set; }
     public NotificationAlert? Alert { get; set; }
 }
 
@@ -306,6 +307,9 @@ internal sealed class PlantRun(Plant plant, double vigor)
     /// <summary>Crecimiento acumulado: GDD × eficiencia. Una planta perfecta llega a 300 en el óptimo Baby Leaf.</summary>
     public double Size { get; set; }
 
+    /// <summary>Lo que creció en el último día (en las mismas unidades que <see cref="Size"/>).</summary>
+    public double LastGrowth { get; set; }
+
     /// <summary>Hojas dañadas (tipburn, %).</summary>
     public double Damage { get; set; }
 
@@ -314,8 +318,6 @@ internal sealed class PlantRun(Plant plant, double vigor)
 
     /// <summary>Días desde que se infectó con Pythium (null: sana).</summary>
     public int? InfectedDays { get; set; }
-
-    public Queue<double> RecentEfficiency { get; } = new();
 
     /// <summary>Calidad promedio de los días que vivió (forma de la planta: compacta o estirada).</summary>
     public double QualitySum { get; set; }
@@ -331,9 +333,16 @@ internal sealed class PlantRun(Plant plant, double vigor)
     // --- Con un dataset ---
     public PlantFate Fate { get; set; }
 
-    /// <summary>Tamaño al que tiene que llegar (300 = el ideal de Baby Leaf) y cuándo: el crecimiento se guía hasta ahí.</summary>
-    public double? TargetSize { get; set; }
-    public DateOnly? TargetDate { get; set; }
+    /// <summary>
+    /// Tamaños a los que tiene que llegar (300 = el ideal de Baby Leaf) y cuándo, en orden: el crecimiento se guía al
+    /// próximo. Por ejemplo, la Baby Leaf: un poco debajo del umbral el día antes de volverse apta y su tamaño del corte; la
+    /// trasplantada: su tamaño del trasplante, justo debajo del de cosecha adulta el día antes de ser Adulta y el del corte.
+    /// </summary>
+    public List<(DateOnly Date, double Size)> Milestones { get; } = [];
+
+    /// <summary>Desde qué día tiene que verse Baby Leaf (o Adulta): si la evaluación no la da, se agranda su meta.</summary>
+    public DateOnly? BabyLeafFrom { get; set; }
+    public DateOnly? AdultFrom { get; set; }
 
     /// <summary>Motivo del descarte que le toca (decide cómo crece: grande si se pasa de tamaño, enferma si es Pythium…).</summary>
     public string? FateReason { get; set; }

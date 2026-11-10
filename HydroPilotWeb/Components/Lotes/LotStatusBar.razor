@@ -52,7 +52,7 @@
         {
             var apta = CommercialStagePalette.ForStage(CommercialStageNames.BabyLeafApta);
             var candidate = CommercialStagePalette.ForStage(CommercialStageNames.CandidataBabyLeaf);
-            var developing = CommercialStagePalette.ForStage(CommercialStageNames.EnDesarrollo);
+            var developing = CommercialStagePalette.ForStage(CommercialStageNames.Activa);
             var conventional = CommercialStagePalette.ForStage(CommercialStageNames.CosechaConvencional);
             var risk = CommercialStagePalette.ForStage(CommercialStageNames.RiesgoFueraDeVentana);
             return
@@ -60,7 +60,7 @@
                 new("Cosechadas Baby Leaf", Plants.HarvestedAsBabyLeaf, apta.Background, apta.Color, Striped: true),
                 new("Baby Leafs", Plants.Apta, apta.Background, apta.Color),
                 new("Candidatas", Plants.Candidate, candidate.Background, candidate.Color),
-                new("En desarrollo", Plants.Developing, developing.Background, developing.Color),
+                new("Activa", Plants.Developing, developing.Background, developing.Color),
                 new("Cosechadas adultas", Plants.Harvested - Plants.HarvestedAsBabyLeaf, conventional.Background, conventional.Color, Striped: true),
                 new("Adultas", Plants.Conventional, conventional.Background, conventional.Color),
                 new("En riesgo", Plants.Risk, risk.Background, risk.Color),

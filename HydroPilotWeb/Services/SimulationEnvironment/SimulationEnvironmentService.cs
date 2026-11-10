@@ -27,19 +27,16 @@ public sealed record LoadedDataset(string FileName, DateTime LoadedAtUtc);
 /// Arma el entorno de simulación en la base configurada: borra los datos de lotes, telemetría, control, anomalías,
 /// optimización, notificaciones y precios, y carga el historial generado (<see cref="HistoryGenerator"/>). Después
 /// calcula los pronósticos de cada lote con ForecastService (la lógica real). Solo con
-/// <see cref="SimulationEnvironmentOptions.Enabled"/> y contra LocalDB: nunca toca Azure. El historial es al azar o sale
-/// del dataset de la demo (<see cref="ImportAsync"/>, el Excel de notas/demo/dataset-demo.xlsx).
+/// <see cref="SimulationEnvironmentOptions.Enabled"/> y contra LocalDB: nunca toca Azure. El historial sale del dataset
+/// de la demo que está en el repositorio (<see cref="SimulationEnvironmentOptions.DatasetFile"/>, el Excel con los lotes)
+/// o, si no está, es al azar.
 /// </summary>
 public sealed class SimulationEnvironmentService
 {
     public const string SeededAtKey = "SimulationEnvironment:SeededAtUtc";
 
-    /// <summary>"archivo|fecha" del último dataset cargado; no está si el historial es al azar.</summary>
+    /// <summary>"archivo|fecha" del dataset con que se generó el historial; no está si el historial es al azar.</summary>
     public const string DatasetKey = "SimulationEnvironment:Dataset";
-
-    /// <summary>Copia del último dataset cargado, para volver a cargarlo otro día (fuera del repositorio).</summary>
-    public static readonly string DatasetPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HydroPilot", "simulacion", "dataset-demo.xlsx");
 
     /// <summary>Tamaño máximo del Excel del dataset.</summary>
     public const long MaxDatasetBytes = 20 * 1024 * 1024;
@@ -64,21 +61,32 @@ public sealed class SimulationEnvironmentService
         IServiceScopeFactory scopes,
         IOptions<SimulationEnvironmentOptions> options,
         IConfiguration configuration,
-        ILogger<SimulationEnvironmentService> logger)
+        ILogger<SimulationEnvironmentService> logger,
+        IHostEnvironment? environment = null)
     {
         _dbFactory = dbFactory;
         _scopes = scopes;
         _options = options.Value;
         _useLocalDb = configuration.GetValue("HydroPilot:UseLocalDb", false);
         _logger = logger;
+        // La carpeta del proyecto con dotnet run; sin host (pruebas), la de los binarios, donde no está el dataset.
+        DatasetPath = Path.Combine(environment?.ContentRootPath ?? AppContext.BaseDirectory, _options.DatasetFile);
     }
+
+    /// <summary>El dataset del repositorio (ruta completa).</summary>
+    public string DatasetPath { get; }
+
+    public bool HasDataset => File.Exists(DatasetPath);
 
     /// <summary>Encendido y contra LocalDB.</summary>
     public bool Enabled => _options.Enabled && _useLocalDb;
 
     public SimulationEnvironmentOptions Options => _options;
 
-    /// <summary>Al arrancar: si el entorno está encendido y la base todavía no tiene el historial, lo genera.</summary>
+    /// <summary>
+    /// Al arrancar: si el entorno está encendido y la base todavía no tiene el historial, lo genera con el dataset del
+    /// repositorio. Si el dataset no cierra, lo avisa en el log y genera uno al azar, para que la app arranque igual.
+    /// </summary>
     public async Task EnsureSeededAsync(CancellationToken ct = default)
     {
         if (!Enabled)
@@ -89,6 +97,13 @@ public sealed class SimulationEnvironmentService
                 return;
         }
         var result = await RegenerateAsync(ct);
+        if (!result.Succeeded && HasDataset)
+        {
+            _logger.LogWarning("Entorno de simulación: el dataset {Path} no cierra; se genera al azar. {Message}", DatasetPath, result.Message);
+            foreach (var issue in result.Issues ?? Array.Empty<string>())
+                _logger.LogWarning("  Dataset: {Issue}", issue);
+            result = await RegenerateRandomAsync(ct);
+        }
         if (!result.Succeeded)
             throw new InvalidOperationException(result.Message);
     }
@@ -100,40 +115,52 @@ public sealed class SimulationEnvironmentService
         return DateTime.TryParse(value, null, System.Globalization.DateTimeStyles.RoundtripKind, out var at) ? at : null;
     }
 
-    /// <summary>Borra lo transaccional y genera el historial de nuevo, hasta hoy (al azar).</summary>
-    public Task<SimulationEnvironmentResult> RegenerateAsync(CancellationToken ct = default) => RunAsync(null, null, ct);
+    /// <summary>
+    /// Borra lo transaccional y genera el historial de nuevo, hasta hoy: con el dataset del repositorio (con las fechas
+    /// corridas a hoy si el Excel lo pide) o, si no está, al azar. Si el dataset no cierra, no toca nada.
+    /// </summary>
+    public async Task<SimulationEnvironmentResult> RegenerateAsync(CancellationToken ct = default)
+    {
+        if (!HasDataset)
+            return await RegenerateRandomAsync(ct);
+        var bytes = await File.ReadAllBytesAsync(DatasetPath, ct);
+        return await GenerateFromAsync(bytes, Path.GetFileName(DatasetPath), save: false, ct);
+    }
+
+    /// <summary>El historial al azar de siempre (sin el dataset).</summary>
+    public Task<SimulationEnvironmentResult> RegenerateRandomAsync(CancellationToken ct = default) => RunAsync(null, null, ct);
 
     /// <summary>
-    /// Carga el dataset de la demo: lee el Excel, lo controla (<see cref="DemoDatasetPlanner"/>) y, si cierra, reemplaza el
-    /// historial por uno generado con sus lotes. Guarda una copia para volver a cargarlo otro día.
+    /// Carga otro Excel: lo controla (<see cref="DemoDatasetPlanner"/>) y, si cierra, reemplaza el dataset del repositorio
+    /// (para compartirlo, se sube a git) y genera el historial con sus lotes. Si no cierra, no toca nada.
     /// </summary>
     public async Task<SimulationEnvironmentResult> ImportAsync(Stream xlsx, string fileName, CancellationToken ct = default)
     {
-        if (!Enabled)
-            return Off;
         using var buffer = new MemoryStream();
         await xlsx.CopyToAsync(buffer, ct);
-        var read = DemoDatasetReader.Read(new MemoryStream(buffer.ToArray()));
-        if (read.Dataset is null)
-            return new(false, "El Excel tiene errores: no se cargó nada.", TimeSpan.Zero, [], read.Errors);
-        var plan = DemoDatasetPlanner.Plan(read.Dataset, await LocalTodayAsync(ct));
-        if (plan.Script is null)
-            return new(false, "El dataset no cierra: no se cargó nada.", TimeSpan.Zero, [], [.. plan.Errors, .. plan.Warnings]);
-
-        Directory.CreateDirectory(Path.GetDirectoryName(DatasetPath)!);
-        await File.WriteAllBytesAsync(DatasetPath, buffer.ToArray(), ct);
-        var result = await RunAsync(plan.Script, fileName, ct);
-        return result with { Issues = [.. plan.Warnings, .. (result.Issues ?? Array.Empty<string>())] };
+        return await GenerateFromAsync(buffer.ToArray(), fileName, save: true, ct);
     }
 
-    /// <summary>Vuelve a cargar el último dataset (con las fechas corridas a hoy si el Excel lo pide).</summary>
-    public async Task<SimulationEnvironmentResult> ReimportAsync(CancellationToken ct = default)
+    private async Task<SimulationEnvironmentResult> GenerateFromAsync(byte[] xlsx, string fileName, bool save, CancellationToken ct)
     {
-        var last = await LastDatasetAsync(ct);
-        if (last is null || !File.Exists(DatasetPath))
-            return new(false, "No hay un dataset cargado para volver a cargar.", TimeSpan.Zero, []);
-        await using var file = File.OpenRead(DatasetPath);
-        return await ImportAsync(file, last.FileName, ct);
+        if (!Enabled)
+            return Off;
+        var read = DemoDatasetReader.Read(new MemoryStream(xlsx));
+        if (read.Dataset is null)
+            return new(false, $"{fileName} tiene errores: no se cargó nada.", TimeSpan.Zero, [], read.Errors);
+        var plan = DemoDatasetPlanner.Plan(read.Dataset, await LocalTodayAsync(ct));
+        if (plan.Script is null)
+            return new(false, $"El dataset {fileName} no cierra: no se cargó nada.", TimeSpan.Zero, [], [.. plan.Errors, .. plan.Warnings]);
+
+        var saved = new List<string>();
+        if (save)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(DatasetPath)!);
+            await File.WriteAllBytesAsync(DatasetPath, xlsx, ct);
+            saved.Add($"Se guardó como el dataset del repositorio ({_options.DatasetFile}): subilo a git para que el resto tenga los mismos lotes.");
+        }
+        var result = await RunAsync(plan.Script, fileName, ct);
+        return result with { Issues = [.. saved, .. plan.Warnings, .. (result.Issues ?? Array.Empty<string>())] };
     }
 
     public async Task<LoadedDataset?> LastDatasetAsync(CancellationToken ct = default)
@@ -247,7 +274,7 @@ public sealed class SimulationEnvironmentService
     /// <summary>Tablas que carga el historial: sus claves foráneas se apagan durante la carga.</summary>
     private static readonly Type[] LoadedTypes =
     [
-        typeof(Lot), typeof(CircuitAssignment), typeof(Plant), typeof(PlantStageHistory), typeof(PlantImage),
+        typeof(Lot), typeof(LotComment), typeof(CircuitAssignment), typeof(Plant), typeof(PlantStageHistory), typeof(PlantImage),
         typeof(PlantImageAnalysis), typeof(BabyLeafEvaluation), typeof(TelemetryBatch), typeof(SensorReading),
         typeof(TelemetryRejection), typeof(ActuatorCommand), typeof(LotSetpointHistory), typeof(LotRecipe),
         typeof(ControlPause), typeof(AnomalyEvent), typeof(NotificationAlert), typeof(NotificationDelivery), typeof(NotificationAttempt),
@@ -275,7 +302,7 @@ public sealed class SimulationEnvironmentService
         "ActuatorCommands", "ControlPauses", "SensorFaults", "LotSetpointHistories", "LotRecipes",
         "NotificationAttempts", "NotificationDeliveries", "NotificationAlerts",
         "SensorReadings", "CircuitAssignments", "Predictions", "TelemetryRejections", "TelemetryBatches",
-        "CostPriceCatalogs", "Lots", "DailyWeatherForecasts", "WeatherRecords",
+        "CostPriceCatalogs", "LotComments", "Lots", "DailyWeatherForecasts", "WeatherRecords",
     ];
 
     /// <summary>Tablas sin identidad (clave Guid o el Id del lote): no se les reinicia el contador.</summary>
@@ -318,6 +345,7 @@ public sealed class SimulationEnvironmentService
             ? await DefaultCircuitsAsync(context, greenhouse.Id, pi.Id, ct)
             : await DatasetCircuitsAsync(context, greenhouse.Id, pi.Id, script, ct);
         await CircuitSetup.EnsureAmbientSensorsAsync(context, greenhouse.Id, pi.Id, ct);
+        await SingleAmbientSensorsAsync(context, greenhouse.Id, ct);
 
         var (producer, @operator, emailPrefs) = script is null
             ? await DefaultUsersAsync(context, ct)
@@ -326,7 +354,7 @@ public sealed class SimulationEnvironmentService
         return await WorldAsync(context, greenhouse, circuits, producer, @operator, emailPrefs, script, ct);
     }
 
-    /// <summary>Las 2 mesadas densas de 10 × 20 y las 5 de Adultas de 4 × 5 (se agregan las que falten).</summary>
+    /// <summary>Las 2 mesadas densas de 10 × 20 y las 5 de Adultas de 4 × 5 (se agregan las que falten; las demás se borran).</summary>
     private static async Task<List<Circuit>> DefaultCircuitsAsync(HydroPilotDbContext context, int greenhouseId, int piId, CancellationToken ct)
     {
         var existing = await context.Circuits
@@ -354,22 +382,38 @@ public sealed class SimulationEnvironmentService
         foreach (var circuit in adults)
             (circuit.GridRows, circuit.GridColumns) = (4, 5);
         await context.SaveChangesAsync(ct);
-        return dense.Concat(adults).ToList();
+        var circuits = dense.Concat(adults).ToList();
+        await DeleteOtherCircuitsAsync(context, greenhouseId, circuits, ct);
+        return circuits;
     }
 
     /// <summary>
-    /// Los circuitos de la hoja Circuitos (se crean los que falten, con sus sondas y bombas; a los que ya están se les pone
-    /// la grilla, el tanque y el tipo del Excel). Los densos primero: el primero manda la temperatura y la humedad. Los
-    /// circuitos que no están en el Excel quedan inactivos.
+    /// Los circuitos de la hoja Circuitos, todos activos y con el nombre, la grilla, el tanque y el tipo del Excel. Se usa
+    /// primero el que ya tiene ese nombre; si no, uno que ya esté del mismo tipo (se le cambia el nombre, así la base no
+    /// junta circuitos viejos); si no, se crea con sus sondas y bombas. Los densos primero: el primero manda la temperatura
+    /// y la humedad. Los circuitos que no están en el Excel se borran.
     /// </summary>
     private static async Task<List<Circuit>> DatasetCircuitsAsync(HydroPilotDbContext context, int greenhouseId, int piId, DemoScript script, CancellationToken ct)
     {
-        var existing = await context.Circuits.Where(c => c.GreenhouseId == greenhouseId).ToListAsync(ct);
+        var existing = await context.Circuits.Where(c => c.GreenhouseId == greenhouseId).OrderBy(c => c.Id).ToListAsync(ct);
+        var rows = script.Dataset.Circuits.OrderBy(c => c.Kind == CircuitKinds.Dense ? 0 : 1).ThenBy(c => c.Row).ToList();
+        var byName = rows.ToDictionary(
+            r => r,
+            r => existing.FirstOrDefault(c => c.Name.Equals(r.Name, StringComparison.OrdinalIgnoreCase)));
+        var free = existing.Where(c => !byName.Values.Contains(c)).ToList();
         var circuits = new List<Circuit>();
-        foreach (var row in script.Dataset.Circuits.OrderBy(c => c.Kind == CircuitKinds.Dense ? 0 : 1).ThenBy(c => c.Row))
+        foreach (var row in rows)
         {
-            var circuit = existing.FirstOrDefault(c => c.Name.Equals(row.Name, StringComparison.OrdinalIgnoreCase))
-                          ?? await CircuitSetup.CreateAsync(context, greenhouseId, piId, row.Name, row.Liters, ct, row.Kind, row.Rows, row.Columns);
+            var circuit = byName[row] ?? free.FirstOrDefault(c => c.Kind == row.Kind);
+            if (circuit is not null)
+            {
+                free.Remove(circuit);
+                circuit.Name = row.Name;
+            }
+            else
+            {
+                circuit = await CircuitSetup.CreateAsync(context, greenhouseId, piId, row.Name, row.Liters, ct, row.Kind, row.Rows, row.Columns);
+            }
             circuit.Kind = row.Kind;
             circuit.GridRows = row.Rows;
             circuit.GridColumns = row.Columns;
@@ -378,10 +422,49 @@ public sealed class SimulationEnvironmentService
             circuit.IsActive = true;
             circuits.Add(circuit);
         }
-        foreach (var other in existing.Where(c => c.IsActive && !circuits.Contains(c)))
-            other.IsActive = false;
         await context.SaveChangesAsync(ct);
+        await DeleteOtherCircuitsAsync(context, greenhouseId, circuits, ct);
         return circuits;
+    }
+
+    /// <summary>
+    /// Borra los circuitos del invernadero que el historial no usa, con sus sondas y bombas, así la lista queda igual a la
+    /// del historial (sin inactivos de pruebas o de Excel anteriores). Lo que colgaba de ellos (lecturas, fallas, comandos,
+    /// pausas, asignaciones, plantas y lotes) ya se borró al empezar; las visitas a esos circuitos se borran también.
+    /// </summary>
+    private static async Task DeleteOtherCircuitsAsync(HydroPilotDbContext context, int greenhouseId, IReadOnlyCollection<Circuit> keep, CancellationToken ct)
+    {
+        var keepIds = keep.Select(c => c.Id).ToList();
+        var others = await context.Circuits
+            .Where(c => c.GreenhouseId == greenhouseId && !keepIds.Contains(c.Id))
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+        if (others.Count == 0)
+            return;
+        await context.Sensors.Where(s => s.CircuitId != null && others.Contains(s.CircuitId.Value)).ExecuteDeleteAsync(ct);
+        await context.Actuators.Where(a => others.Contains(a.CircuitId)).ExecuteDeleteAsync(ct);
+        await context.UserRecentVisits.Where(v => v.CircuitId != null && others.Contains(v.CircuitId.Value)).ExecuteDeleteAsync(ct);
+        await context.Circuits.Where(c => others.Contains(c.Id)).ExecuteDeleteAsync(ct);
+    }
+
+    /// <summary>
+    /// Temperatura y humedad del invernadero: uno de cada uno y activos. Los repetidos (los de la segunda Pi que se unificó
+    /// en una, inactivos y sin lecturas) se borran: activos quedarían sin datos y darían alertas de "sensor sin datos".
+    /// Las lecturas ya se borraron al empezar a generar.
+    /// </summary>
+    private static async Task SingleAmbientSensorsAsync(HydroPilotDbContext context, int greenhouseId, CancellationToken ct)
+    {
+        var ambient = await context.Sensors
+            .Where(s => s.CircuitId == null && s.Node!.GreenhouseId == greenhouseId)
+            .OrderBy(s => s.Id)
+            .ToListAsync(ct);
+        foreach (var group in ambient.GroupBy(s => s.SensorTypeId))
+        {
+            var keep = group.FirstOrDefault(s => s.IsActive) ?? group.First();
+            keep.IsActive = true;
+            context.Sensors.RemoveRange(group.Where(s => s != keep));
+        }
+        await context.SaveChangesAsync(ct);
     }
 
     private static async Task<(User Producer, User Operator, IReadOnlyDictionary<int, string>? Email)> DefaultUsersAsync(
@@ -573,6 +656,7 @@ public sealed class SimulationEnvironmentService
         context.Database.SetCommandTimeout(TimeSpan.FromMinutes(10));
         await BulkWriter.WriteAsync(context, data.Prices, ct);
         await BulkWriter.WriteAsync(context, data.Lots, ct);
+        await BulkWriter.WriteAsync(context, data.Comments, ct);
         await BulkWriter.WriteAsync(context, data.Assignments, ct);
         await BulkWriter.WriteAsync(context, data.Plants, ct);
         await BulkWriter.WriteAsync(context, data.StageHistories, ct);

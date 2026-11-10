@@ -408,8 +408,8 @@ public class ForecastSqlServerTests
         // 2 aptas de 4 activas = 50% < 70%.
         await AddPlantAsync(context, lot, 1, 1, "Baby Leaf");
         await AddPlantAsync(context, lot, 1, 2, "Baby Leaf");
-        await AddPlantAsync(context, lot, 2, 1, "En desarrollo");
-        await AddPlantAsync(context, lot, 2, 2, "En desarrollo");
+        await AddPlantAsync(context, lot, 2, 1, "Activa");
+        await AddPlantAsync(context, lot, 2, 2, "Activa");
 
         var result = await _fixture.Forecast.GetForecastAsync(lot.Id, Today.AddDays(-339));
 
@@ -448,7 +448,7 @@ public class ForecastSqlServerTests
         var lot = await ForecastTestData.CreateActiveLotAsync(context, Today.AddDays(-410));
 
         await AddPlantAsync(context, lot, 1, 1, "Baby Leaf");
-        await AddPlantAsync(context, lot, 1, 2, "En desarrollo");
+        await AddPlantAsync(context, lot, 1, 2, "Activa");
         await AddPlantAsync(context, lot, 2, 1, "Baby Leaf", PlantOperationalState.Cosechada);
         await AddPlantAsync(context, lot, 2, 2, "Riesgo / fuera de ventana", PlantOperationalState.Descartada);
 
@@ -457,7 +457,7 @@ public class ForecastSqlServerTests
         Assert.NotNull(result);
         var byStage = result.CommercialCounts.ToDictionary(c => c.StageName);
         Assert.Equal(1, byStage["Baby Leaf"].Count);
-        Assert.Equal(1, byStage["En desarrollo"].Count);
+        Assert.Equal(1, byStage["Activa"].Count);
         Assert.False(byStage.ContainsKey("Riesgo / fuera de ventana")); // la descartada no cuenta
         // 1 vs 1 → Mixto.
         Assert.True(result.IsCommercialStageMixed);

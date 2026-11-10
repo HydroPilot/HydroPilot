@@ -7,11 +7,14 @@ namespace HydroPilotWeb.Services.Lotes;
 ///
 /// Orden (desde 2026-10-26, con el trasplante a Adultas):
 /// 1. Riesgo (anomalía) o GDD sobre sobremadurez → Riesgo / fuera de ventana.
-/// 2. Trasplantada (ruta Adulta) → Adulta: se corta como adulta.
+/// 2. Trasplantada (ruta Adulta): Activa hasta la etapa adulta (cuando cierra la ventana Baby Leaf); ahí, como las
+///    candidatas y las aptas de Baby Leaf, Adulta la que llegó al tamaño de cosecha adulta y Activa (posible adulta) la que
+///    no. Sin medición de tamaño, Adulta cuando el lote llega al corte de adultas. Desde 2026-11-09 (antes era Adulta
+///    apenas se trasplantaba).
 /// 3. Ruta Baby Leaf (sigue en el circuito denso):
 ///    - ventana cerrada sin cortarse → se descarta (no hay lugar para seguir como adulta);
 ///    - en la ventana: se pasó del tamaño máximo → se descarta; si no, por score: Baby Leaf / candidata / en desarrollo;
-///    - antes de la ventana → En desarrollo.
+///    - antes de la ventana → Activa.
 ///
 /// UMBRALES: 250, 450, 750, 60, 80 y el tamaño máximo son configurables (valores de arranque), nunca
 /// constantes ocultas: llegan por PlantDecisionThresholds desde los catálogos y los parámetros.
@@ -25,7 +28,9 @@ public static class PlantDecisionEngine
         decimal OvermaturityGdd,    // GddMax de la última etapa fenológica (arranque 750)
         decimal ScoreMinCandidate,  // ConfiguracionBabyLeaf.ScoreMinCandidate (arranque 60)
         decimal ScoreMinReady,      // ConfiguracionBabyLeaf.ScoreMinReady (arranque 80)
-        decimal? MaxSizeFactor = null); // tamaño máximo Baby Leaf × el ideal (arranque 1,3); null = sin control
+        decimal? MaxSizeFactor = null,  // tamaño máximo Baby Leaf × el ideal (arranque 1,3); null = sin control
+        decimal? AdultReadySize = null, // tamaño de cosecha adulta × el ideal Baby Leaf (arranque 2); null = por GDD
+        decimal AdultCutGdd = 650m);    // corte de adultas: sin medición de tamaño, Adulta desde acá
 
     /// <summary>
     /// Entradas de evaluación de una planta ACTIVA.
@@ -54,9 +59,18 @@ public static class PlantDecisionEngine
             return new PlantDecision(CommercialStageNames.RiesgoFueraDeVentana,
                 $"GDD {input.LotGdd} supera el umbral de sobremadurez ({thresholds.OvermaturityGdd})");
 
-        // 2. Ruta Adulta: se corta como adulta en su óptimo.
+        // 2. Ruta Adulta: Activa hasta que llega a adulta en la etapa adulta; Adulta = apta para cortar.
         if (input.IsAdultRoute)
-            return new PlantDecision(CommercialStageNames.CosechaConvencional, "Trasplantada a Adultas: se corta como adulta");
+        {
+            if (input.LotGdd < thresholds.BabyLeafGddMax)
+                return new PlantDecision(CommercialStageNames.Activa, "Trasplantada: crece en Adultas hasta la etapa adulta");
+            var ready = thresholds.AdultReadySize is { } readySize && input.SizeRatio is { } size
+                ? size >= readySize
+                : input.LotGdd >= thresholds.AdultCutGdd;
+            return ready
+                ? new PlantDecision(CommercialStageNames.CosechaConvencional, "Llegó al tamaño de cosecha adulta: apta para cortar")
+                : new PlantDecision(CommercialStageNames.Activa, "Posible adulta: todavía no llega al tamaño de cosecha adulta");
+        }
 
         // 3. Ruta Baby Leaf: la ventana cerró sin cortarla → descarte.
         if (input.LotGdd >= thresholds.BabyLeafGddMax)
@@ -71,7 +85,7 @@ public static class PlantDecisionEngine
                     $"Se pasó del tamaño Baby Leaf ({size:0.##} veces el ideal; máximo {maxSize:0.##})", Discard: true);
 
             if (input.BabyLeafScore is null)
-                return new PlantDecision(CommercialStageNames.EnDesarrollo,
+                return new PlantDecision(CommercialStageNames.Activa,
                     $"Sin evaluación de score disponible (GDD {input.LotGdd} en ventana Baby Leaf)");
 
             if (input.BabyLeafScore >= thresholds.ScoreMinReady)
@@ -89,12 +103,12 @@ public static class PlantDecisionEngine
                 return new PlantDecision(CommercialStageNames.CandidataBabyLeaf,
                     $"Score {input.BabyLeafScore} en banda candidata ({thresholds.ScoreMinCandidate}–{thresholds.ScoreMinReady})");
 
-            return new PlantDecision(CommercialStageNames.EnDesarrollo,
+            return new PlantDecision(CommercialStageNames.Activa,
                 $"Score {input.BabyLeafScore} por debajo del umbral candidata ({thresholds.ScoreMinCandidate})");
         }
 
         // Antes de la ventana Baby Leaf.
-        return new PlantDecision(CommercialStageNames.EnDesarrollo,
+        return new PlantDecision(CommercialStageNames.Activa,
             $"GDD {input.LotGdd} por debajo de la ventana Baby Leaf ({thresholds.BabyLeafGddMin})");
     }
 }

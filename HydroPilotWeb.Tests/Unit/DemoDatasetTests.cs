@@ -55,7 +55,7 @@ internal static class DemoDatasets
     public static readonly DateOnly Today = DateOnly.FromDateTime(ShortHistory.Now);
 
     public static DemoGeneral General(DateOnly? today = null) => new(
-        today ?? Today, ShiftDates: false, AutomaticFrom: (today ?? Today).AddDays(-40), "Invernadero Principal", "ARS",
+        today ?? Today, ShiftDates: false, "Invernadero Principal", "ARS",
         30m, 280m, 25_000m, 25_000m, 250m, 3, 1.3m, 6.5m, 22.5m, 2,
         new Dictionary<string, int> { ["pH"] = 14, ["CE"] = 30, ["Temperatura"] = 90, ["Humedad"] = 90 }, null);
 
@@ -93,10 +93,10 @@ internal static class DemoDatasets
     public static (DemoDataset Dataset, DemoLot Closed, DemoLot Open) ClosedAndOpen()
     {
         var sowing = Today.AddDays(-75);
-        // Con margen dentro de cada ventana: el GDD medido se aparta unos 10 del estimado por el ruido del clima.
+        // Cortes en la segunda mitad de la ventana Baby Leaf (lo normal), con margen dentro de cada ventana.
         var transplant = DayAt(sowing, 275);
-        var cut1 = DayAt(sowing, 330);
-        var cut2 = DayAt(sowing, 375);
+        var cut1 = DayAt(sowing, 365);
+        var cut2 = DayAt(sowing, 400);
         var closed = Lot(3, "Lote A01", "Circuito 1", sowing, transplant: new DemoEvent(transplant, 40),
             cut1: new DemoEvent(cut1, 110), cut2: new DemoEvent(cut2, 30), denseDiscard: new DemoEvent(cut2, 20),
             adultCut: new DemoEvent(DayAt(sowing, 700), 37), adultDiscard: new DemoEvent(DayAt(sowing, 700), 3));
@@ -108,7 +108,7 @@ internal static class DemoDatasets
         var open = Lot(4, "Lote A02", "Circuito 1", openSowing, transplant: new DemoEvent(DayAt(openSowing, 275), 40));
         var codes = new Dictionary<(int, int), string>();
         var n = 0;
-        foreach (var (code, count) in new[] { (DemoMapCodes.Adult, 40), (DemoMapCodes.BabyLeaf, 60), (DemoMapCodes.Candidate, 50), (DemoMapCodes.Developing, 50) })
+        foreach (var (code, count) in new[] { (DemoMapCodes.Adult, 40), (DemoMapCodes.BabyLeaf, 60), (DemoMapCodes.Candidate, 50), (DemoMapCodes.Active, 50) })
         {
             for (var i = 0; i < count; i++, n++)
                 codes[(n / 20 + 1, n % 20 + 1)] = code;
@@ -207,9 +207,9 @@ public class DemoDatasetPlannerTests
 
         Assert.Empty(plan.Errors);
         var scripts = plan.Script!.Lots;
-        Assert.Equal(new[] { "Adultas 1", "Adultas 2" }, scripts.Single(s => s.Lot == closed).AdultCircuits); // 40 plantas en circuitos de 20
+        Assert.Equal(new[] { "Adultas 1", "Adultas 2" }, scripts.Single(s => s.Lot.Row == closed.Row).AdultCircuits); // 40 plantas en circuitos de 20
         // Cuando trasplanta el segundo, las adultas del primero ya salieron: vuelve a empezar por Adultas 1.
-        Assert.Equal(new[] { "Adultas 1", "Adultas 2" }, scripts.Single(s => s.Lot == open).AdultCircuits);
+        Assert.Equal(new[] { "Adultas 1", "Adultas 2" }, scripts.Single(s => s.Lot.Row == open.Row).AdultCircuits);
     }
 
     [Fact]
@@ -231,10 +231,10 @@ public class DemoDatasetPlannerTests
         var plan = DemoDatasetPlanner.Plan(DemoDatasets.Dataset(lots), today);
 
         Assert.Null(plan.Script);
-        Assert.Contains(plan.Errors, e => e.Contains("(Cuentas)") && e.Contains("salen del denso 210"));
-        Assert.Contains(plan.Errors, e => e.Contains("(Segundo)") && e.Contains("días de limpieza"));
+        Assert.Contains(plan.Errors, e => e.Contains("(Cuentas · ") && e.Contains("salen del denso 210"));
+        Assert.Contains(plan.Errors, e => e.Contains("(Segundo · ") && e.Contains("días de limpieza"));
         // 120 trasplantadas y 100 huecos en Adultas (5 circuitos de 20).
-        Assert.Contains(plan.Errors, e => e.Contains("(Segundo)") && e.Contains("hay 100 huecos"));
+        Assert.Contains(plan.Errors, e => e.Contains("(Segundo · ") && e.Contains("hay 100 huecos"));
     }
 
     [Fact]
@@ -248,7 +248,7 @@ public class DemoDatasetPlannerTests
 
         var plan = DemoDatasetPlanner.Plan(dataset, DemoDatasets.Today);
 
-        Assert.Contains(plan.Errors, e => e.Contains("(Lote A01)") && e.Contains("fuera de la ventana"));
+        Assert.Contains(plan.Errors, e => e.Contains("(Lote A01 · ") && e.Contains("fuera de la ventana"));
         Assert.Contains(plan.Errors, e => e.StartsWith("Mapas") && e.Contains("total de plantas, 199 en el mapa y 200 en Lotes"));
     }
 
@@ -302,18 +302,18 @@ public class DemoDatasetHistoryTests
         var issues = DemoDatasetVerifier.Verify(script, data, SimulationWorlds.Seeded().CommercialStageIds);
 
         Assert.Empty(issues);
-        var closed = data.Lots.Single(l => l.Name == "Lote A01");
+        var closed = data.Lots.Single(l => l.Name!.StartsWith("Lote A01 · "));
         Assert.Equal(1 + 1, data.Lots.Count);
         Assert.Equal(2, closed.StatusId); // Cosechado
         Assert.Equal(Math.Round((140 * 30m + 37 * 280m) / 1000m, 2), closed.ActualYieldKg);
-        Assert.Null(data.Lots.Single(l => l.Name == "Lote A02").ActualHarvestDate);
+        Assert.Null(data.Lots.Single(l => l.Name!.StartsWith("Lote A02 · ")).ActualHarvestDate);
     }
 
     [Fact]
     public void Las_cortadas_como_Baby_Leaf_lo_eran_y_las_trasplantadas_eran_las_de_score_mas_bajo()
     {
         var (_, data) = History.Value;
-        var closed = data.Lots.Single(l => l.Name == "Lote A01");
+        var closed = data.Lots.Single(l => l.Name!.StartsWith("Lote A01 · "));
         var plants = data.Plants.Where(p => p.LotId == closed.Id).ToList();
         var transplantDay = plants.First(p => p.TransplantedOn is not null).TransplantedOn!.Value;
 
@@ -344,20 +344,121 @@ public class DemoDatasetHistoryTests
             };
             Assert.InRange(e.Gdd, min, max);
         });
-        Assert.Contains(data.ScriptedEvents, e => e.Event == "Trasplante" && e.Lot == "Lote A02" && e.Plants == 40);
+        Assert.Contains(data.ScriptedEvents, e => e.Event == "Trasplante" && e.Lot.StartsWith("Lote A02 · ") && e.Plants == 40);
+    }
+
+    [Fact]
+    public void Con_los_umbrales_de_la_vision_tambien_queda_como_el_Excel()
+    {
+        // Desde 2026-11-09 la configuración trae candidata 45 y Baby Leaf 70 (antes 60 y 80).
+        var (dataset, _, _) = DemoDatasets.ClosedAndOpen();
+        var plan = DemoDatasetPlanner.Plan(dataset, DemoDatasets.Today);
+        var world = SimulationWorlds.Seeded();
+        world = world with { Config = new BabyLeafConfig
+        {
+            Id = 1, CropTypeId = 1, Name = "Baby Leaf Butterhead v1", GddMin = 250, GddMax = 450, ScoreMinCandidate = 45, ScoreMinReady = 70,
+        } };
+
+        var data = HistoryGenerator.Generate(world, new SimulationEnvironmentOptions(), ShortHistory.Now, script: plan.Script);
+
+        Assert.Empty(DemoDatasetVerifier.Verify(plan.Script!, data, world.CommercialStageIds));
+        Assert.Equal(plan.Script!.Lots.Single(l => l.Lot.Name.StartsWith("Lote A01 · ")).Lot.Cut1!.Date, AppPeak(data, "Lote A01")!.Date);
+    }
+
+    [Fact]
+    public void La_cosecha_optima_del_lote_cerrado_es_el_dia_de_su_primer_corte()
+    {
+        var (script, data) = History.Value;
+        var cut1 = script.Lots.Single(l => l.Lot.Name.StartsWith("Lote A01 · ")).Lot.Cut1!;
+
+        var peak = AppPeak(data, "Lote A01")!;
+
+        Assert.Equal(cut1.Date, peak.Date);
+        Assert.True(peak.Gdd >= 350, $"pico a los {peak.Gdd} GDD: antes de la mitad de la ventana");
+        Assert.InRange(data.Lots.Single(l => l.Name!.StartsWith("Lote A01 · ")).BabyLeafPeakGdd!.Value, 350m, 450m);
+    }
+
+    /// <summary>El pico de la curva de aptas como lo arma la app (BabyLeafOptimumService): por día, las evaluadas Baby Leaf.</summary>
+    private static AptCurvePoint? AppPeak(HistoryData data, string lotName)
+    {
+        var lotId = data.Lots.Single(l => l.Name!.StartsWith(lotName + " · ")).Id;
+        var plants = data.Plants.Where(p => p.LotId == lotId).Select(p => p.Id).ToHashSet();
+        var curve = data.Evaluations.Where(e => plants.Contains(e.PlantId))
+            .GroupBy(e => DateOnly.FromDateTime(e.EvaluatedAtUtc))
+            .Select(g => new AptCurvePoint(g.Key, Math.Round(g.Average(e => e.GddAtEvaluation), 1),
+                g.Count(e => e.Result == CommercialStageNames.BabyLeafApta), g.Count()))
+            .OrderBy(p => p.Date)
+            .ToList();
+        return BabyLeafOptimumRules.Peak(curve);
     }
 
     [Fact]
     public void El_lote_en_curso_queda_con_los_estados_de_su_mapa()
     {
         var (_, data) = History.Value;
-        var open = data.Lots.Single(l => l.Name == "Lote A02");
+        var open = data.Lots.Single(l => l.Name!.StartsWith("Lote A02 · "));
         var plants = data.Plants.Where(p => p.LotId == open.Id).ToList();
         var stages = SimulationWorlds.Seeded().CommercialStageIds;
 
         Assert.Equal(60, plants.Count(p => p.TransplantedOn is null && p.CommercialStageId == stages[CommercialStageNames.BabyLeafApta]));
         Assert.Equal(50, plants.Count(p => p.TransplantedOn is null && p.CommercialStageId == stages[CommercialStageNames.CandidataBabyLeaf]));
-        Assert.Equal(50, plants.Count(p => p.TransplantedOn is null && p.CommercialStageId == stages[CommercialStageNames.EnDesarrollo]));
+        Assert.Equal(50, plants.Count(p => p.TransplantedOn is null && p.CommercialStageId == stages[CommercialStageNames.Activa]));
         Assert.Equal(40, plants.Count(p => p.TransplantedOn is not null && p.OperationalState == PlantOperationalState.Activa));
+        // Todavía en la ventana Baby Leaf: las trasplantadas son Activa, no Adulta.
+        Assert.All(plants.Where(p => p.TransplantedOn is not null), p => Assert.Equal(stages[CommercialStageNames.Activa], p.CommercialStageId));
+        Assert.Equal(200, plants.Count);   // una planta por hueco
+    }
+
+    [Fact]
+    public void Las_trasplantadas_pasan_de_Activa_a_Adulta_de_a_poco_antes_de_su_corte()
+    {
+        var (script, data) = History.Value;
+        var lot = script.Lots.Single(l => l.Lot.Name.StartsWith("Lote A01 · ")).Lot;
+        var lotId = data.Lots.Single(l => l.Name!.StartsWith("Lote A01 · ")).Id;
+        var stages = SimulationWorlds.Seeded().CommercialStageIds;
+        var adults = data.Plants.Where(p => p.LotId == lotId && p.TransplantedOn is not null).Select(p => p.Id).ToHashSet();
+        var cut = data.Plants.Where(p => adults.Contains(p.Id) && p.OperationalState == PlantOperationalState.Cosechada).Select(p => p.Id).ToHashSet();
+
+        // Primero Activa al trasplantar; después, en el flujo diario, Adulta, cada una su día (todas antes del corte).
+        var becameAdult = data.StageHistories
+            .Where(h => cut.Contains(h.PlantId) && h.NewCommercialStageId == stages[CommercialStageNames.CosechaConvencional] && h.Source == "daily-flow")
+            .GroupBy(h => h.PlantId)
+            .Select(g => DateOnly.FromDateTime(g.Min(h => h.ChangedAtUtc)))
+            .ToList();
+        Assert.All(data.StageHistories.Where(h => adults.Contains(h.PlantId) && h.Source == "transplant"),
+            h => Assert.Equal(stages[CommercialStageNames.Activa], h.NewCommercialStageId));
+        var cutAdults = lot.AdultCut!.Plants;
+        Assert.Equal(cutAdults, becameAdult.Count);
+        Assert.True(becameAdult.Distinct().Count() > 2, "todas pasaron a Adulta el mismo día");
+        Assert.All(becameAdult, day => Assert.True(day <= lot.AdultCut.Date));
+        Assert.Contains(data.ScriptedEvents, e => e.Event == "Corte de adultas" && e.Plants == cutAdults && e.NotReady == 0);
+    }
+}
+
+/// <summary>El dataset de la demo del repositorio (HydroPilotWeb/SimulationData): lo usan el arranque y "Regenerar historial".</summary>
+public class RepositoryDatasetTests
+{
+    [Fact]
+    public void El_dataset_del_repositorio_se_lee_y_cierra()
+    {
+        using var file = File.OpenRead(FindRepositoryFile(Path.Combine("HydroPilotWeb", "SimulationData", "dataset-demo.xlsx")));
+
+        var read = DemoDatasetReader.Read(file);
+
+        Assert.Empty(read.Errors);
+        var plan = DemoDatasetPlanner.Plan(read.Dataset!, read.Dataset!.General.Today);
+        Assert.Empty(plan.Errors);
+        Assert.Empty(plan.Warnings);
+    }
+
+    private static string FindRepositoryFile(string relative)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+        throw new FileNotFoundException($"No está {relative} en el repositorio.");
     }
 }

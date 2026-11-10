@@ -93,7 +93,6 @@ public static class DemoDatasetReader
         return new DemoGeneral(
             today.Value,
             shift is null || !shift.StartsWith("N", StringComparison.OrdinalIgnoreCase),
-            DateValue(Value("Desde cuándo el control es automático")),
             Value("Invernadero")?.Text.Trim() is { Length: > 0 } name ? name : null,
             Value("Moneda")?.Text.Trim() is { Length: > 0 } currency ? currency.ToUpperInvariant() : "ARS",
             Positive(Value("Peso por planta Baby Leaf (g)"), $"{where}: peso Baby Leaf", errors) ?? ParameterDefaults.BabyLeafGramsPerPlant,
@@ -167,6 +166,9 @@ public static class DemoDatasetReader
         for (var r = header + 1; r <= sheet.LastRow; r++)
         {
             if (sheet.Text(r, col["Nombre"]) is not { } name)
+                continue;
+            // Las notas de abajo de la tabla (solo texto en la primera columna) no son circuitos.
+            if (sheet.Text(r, col["Tipo"]) is null && sheet[r, col["Filas"]] is null && sheet[r, col["Columnas"]] is null)
                 continue;
             var where = $"Circuitos, fila {r}";
             var kind = sheet.Text(r, col["Tipo"]) switch
@@ -246,6 +248,8 @@ public static class DemoDatasetReader
         var daDate = Col("Descartes|Fecha#2");
         var daReason = Col("Descartes|Motivo#2");
         var incident = Col("Otros|Incidente");
+        // Opcional (los Excel anteriores no la tienen): queda como comentario del lote el día de la siembra.
+        var comment = keys.GetValueOrDefault("Otros|Comentario");
         if (new[] { name, circuit, sowing, plants, blGoal, activeGoal, trDate, trPlants, trCircuits, c1Date, c1Plants, c2Date, c2Plants,
                 adDate, adPlants, ddPlants, ddDate, ddReason, daPlants, daDate, daReason, incident }.Contains(0))
             return [];
@@ -272,6 +276,9 @@ public static class DemoDatasetReader
                 }
                 return new DemoEvent(date.Value, count.Value);
             }
+            var commentText = comment > 0 ? sheet.Text(r, comment)?.Trim() : null;
+            if (commentText is { Length: > LotComment.TextMaxLength })
+                errors.Add($"{where}: el comentario tiene más de {LotComment.TextMaxLength} caracteres.");
             var incidentText = sheet.Text(r, incident);
             if (incidentText is not null && !incidentText.Equals("Ninguno", StringComparison.OrdinalIgnoreCase)
                 && !Incidents.ContainsKey(incidentText))
@@ -294,7 +301,8 @@ public static class DemoDatasetReader
                 sheet.Text(r, ddReason),
                 Event(daDate, daPlants, "descarte en Adultas"),
                 sheet.Text(r, daReason),
-                incidentText is null || incidentText.Equals("Ninguno", StringComparison.OrdinalIgnoreCase) ? null : incidentText));
+                incidentText is null || incidentText.Equals("Ninguno", StringComparison.OrdinalIgnoreCase) ? null : incidentText,
+                string.IsNullOrEmpty(commentText) ? null : commentText));
         }
         return lots;
     }
@@ -322,6 +330,8 @@ public static class DemoDatasetReader
                     if (sheet.Text(row, c) is not { } text)
                         continue;
                     var code = text.ToUpperInvariant();
+                    if (code == DemoMapCodes.OldActive)
+                        code = DemoMapCodes.Active;
                     if (!DemoMapCodes.All.Contains(code))
                         errors.Add($"Mapas, fila {row}: el código \"{text}\" no está en la lista (hoja Listas).");
                     codes[(gridRow, gridColumn)] = code;
@@ -392,6 +402,9 @@ public static class DemoDatasetReader
             for (var r = header + 1; r <= sheet.LastRow && !col.ContainsValue(0); r++)
             {
                 var where = $"Clima, fila {r}";
+                // Las notas de abajo de la tabla (solo texto en la primera columna) no son eventos.
+                if (sheet[r, col["Hasta"]] is null && sheet[r, col["°C"]] is null && sheet.Text(r, col["Tipo"]) is null)
+                    continue;
                 if (DateValue(sheet[r, col["Desde"]], $"{where}: desde", errors) is not { } from)
                     continue;
                 var to = DateValue(sheet[r, col["Hasta"]], $"{where}: hasta", errors);

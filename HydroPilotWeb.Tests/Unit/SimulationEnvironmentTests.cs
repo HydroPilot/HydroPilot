@@ -29,7 +29,7 @@ internal static class SimulationWorlds
         ];
         var commercial = new Dictionary<string, int>
         {
-            [CommercialStageNames.EnDesarrollo] = 1,
+            [CommercialStageNames.Activa] = 1,
             [CommercialStageNames.CandidataBabyLeaf] = 2,
             [CommercialStageNames.BabyLeafApta] = 3,
             [CommercialStageNames.CosechaConvencional] = 4,

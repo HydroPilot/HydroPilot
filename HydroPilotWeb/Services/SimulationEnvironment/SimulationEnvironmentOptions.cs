@@ -19,4 +19,10 @@ public sealed class SimulationEnvironmentOptions
 
     /// <summary>Semilla: el mismo número da el mismo historial.</summary>
     public int Seed { get; set; } = 5301;
+
+    /// <summary>
+    /// El dataset de la demo (el Excel con los lotes), relativo a la carpeta del proyecto. Está en el repositorio: con él
+    /// se arma el historial al arrancar y con "Regenerar historial"; si no está, el historial es al azar.
+    /// </summary>
+    public string DatasetFile { get; set; } = Path.Combine("SimulationData", "dataset-demo.xlsx");
 }

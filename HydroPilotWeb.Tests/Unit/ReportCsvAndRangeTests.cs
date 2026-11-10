@@ -130,7 +130,7 @@ public class ReportCsvAndRangeTests
                 CurrentPh: 6.0m, CurrentEc: 1.5m, EcObjective: 1.5m,
                 GridRows: 2, GridColumns: 2, TotalConfiguredPositions: 4,
                 TotalPlants: 3, ActivePlants: 1, HarvestedPlants: 1, DiscardedPlants: 1, EmptyPositions: 1,
-                CommercialCounts: [new StageCountDto("En desarrollo", 1)],
+                CommercialCounts: [new StageCountDto("Activa", 1)],
                 Cells: [], HarvestReadiness: null, Warnings: []),
             Warnings: []);
 

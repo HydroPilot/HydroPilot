@@ -20,7 +20,7 @@ else
         @* El tramo de la fase actual va en color pleno; el resto, atenuado. *@
         <div class="lot-timeline__bar">
             <div class="lot-timeline__seg lot-timeline__seg--dev @Current(CyclePhase.Desarrollo)" style="width: @Css(Width(t.SowingDate, t.BabyLeafOpens.Date))%;"
-                 title="Desarrollo: de la siembra a la apertura de la ventana Baby Leaf">desarrollo</div>
+                 title="Desarrollo: de la siembra a la apertura de la ventana Baby Leaf">En desarrollo</div>
             @if (t.BabyLeafOpens.Date is { } opens)
             {
                 <div class="lot-timeline__seg lot-timeline__seg--bl @Current(CyclePhase.VentanaBabyLeaf)" style="width: @Css(Width(opens, t.BabyLeafCloses.Date))%;"
@@ -29,7 +29,7 @@ else
             @if (t.BabyLeafCloses.Date is { } closes)
             {
                 <div class="lot-timeline__seg lot-timeline__seg--conv @Current(CyclePhase.VentanaConvencional)" style="width: @Css(Width(closes, t.Overmaturity.Date))%;"
-                     title="@($"Ventana adulta: {Range(t.BabyLeafCloses, t.Overmaturity)}")">adulta</div>
+                     title="@($"Ventana adulta: {Range(t.BabyLeafCloses, t.Overmaturity)}")">Adulta</div>
             }
         </div>
         <div class="lot-timeline__today" style="left: @Css(Pos(t.AsOfDate))%;"></div>

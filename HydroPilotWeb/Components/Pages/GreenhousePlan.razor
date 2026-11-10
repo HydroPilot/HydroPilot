@@ -20,10 +20,12 @@
                     en la misma superficie. Es solo una cuenta: no cambia los circuitos.
                 </span>
                 <span class="hp-info__list">
-                    <span><b>Superficie de circuitos (m²):</b> el lugar a repartir; vacío = la de los circuitos activos de hoy.
+                    <span><b>Superficie de circuitos (m²):</b> el lugar a repartir; viene de Ajustes &gt; Parámetros (Plan del
+                        invernadero) y se puede cambiar acá para probar; vacía = la de los circuitos activos de hoy.
                         Un circuito ocupa sus huecos × la separación² (6,5 cm el denso y 22,5 cm el de Adultas): 200 huecos ≈
                         0,85 m² y 20 huecos ≈ 1 m².</span>
-                    <span><b>Precio por semilla:</b> lo que cuesta cada planta sembrada.</span>
+                    <span><b>Precio por semilla:</b> lo que cuesta cada planta sembrada (semilla pelleteada más el cubo de
+                        sustrato); viene de Ajustes &gt; Parámetros y se puede cambiar acá para probar.</span>
                     <span><b>Baby Leaf que podés vender (kg/mes):</b> el tope del mercado; vacío = lo vendido por mes en los
                         últimos 12 meses. Las <span class="hp-info__swatch" style="background: #2d7dd2;"></span>Baby Leaf que
                         pasan el tope van a Adultas si hay lugar o se descartan. Las
@@ -200,15 +202,17 @@
 
     private GreenhousePlanResult? plan;
     private decimal? area;
-    private decimal? seedPrice = GreenhousePlanService.DefaultSeedPrice;
+    private decimal? seedPrice;
     private decimal? babyLeafKg;
     private bool running;
 
-    // Precarga la superficie de hoy y lo vendido de Baby Leaf; el plan se calcula recién con "Calcular".
+    // Precarga la superficie y el precio por planta sembrada de Parámetros y lo vendido de Baby Leaf; el plan se calcula
+    // recién con "Calcular".
     protected override async Task OnInitializedAsync()
     {
         var defaults = await PlanService.DefaultsAsync();
         area = defaults.AreaM2;
+        seedPrice = defaults.PricePerSeed;
         babyLeafKg = defaults.SoldBabyLeafKgPerMonth;
     }
 

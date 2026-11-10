@@ -18,7 +18,6 @@
         "environmentVariables": {
           "ASPNETCORE_ENVIRONMENT": "Development",
           "HydroPilot__UseLocalDb": "true",
-          "ConnectionStrings__LocalSqlServer": "Server=(localdb)\\MSSQLLocalDB;Database=hydropilot_sim;Trusted_Connection=True;TrustServerCertificate=True",
           "SimulationEnvironment__Enabled": "true",
           "Email__Provider": "Logging"
         }

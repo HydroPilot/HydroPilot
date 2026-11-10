@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace HydroPilotWeb.Services.SimulationEnvironment.Dataset;
 
 /// <summary>
@@ -26,7 +28,6 @@ public sealed record DemoDataset(
             General = General with
             {
                 Today = Move(General.Today),
-                AutomaticFrom = MoveOptional(General.AutomaticFrom),
                 AmbientCalibration = MoveOptional(General.AmbientCalibration),
             },
             Circuits = Circuits.Select(c => c with { PhCalibration = MoveOptional(c.PhCalibration), EcCalibration = MoveOptional(c.EcCalibration) }).ToList(),
@@ -44,13 +45,39 @@ public sealed record DemoDataset(
             Climate = Climate with { Events = Climate.Events.Select(e => e with { From = Move(e.From), To = Move(e.To) }).ToList() },
         };
     }
+
+    /// <summary>
+    /// Cada lote con su fecha de siembra en el nombre ("Lote B26 · 08/10/2026"): se reemplaza lo que haya después del
+    /// primer " · " (o se agrega). Se aplica después de correr las fechas, así el nombre siempre coincide con la siembra.
+    /// Los mapas siguen a su lote.
+    /// </summary>
+    public DemoDataset WithSowingInNames()
+    {
+        static string Base(string name)
+        {
+            var cut = name.IndexOf(" · ", StringComparison.Ordinal);
+            return (cut < 0 ? name : name[..cut]).Trim();
+        }
+
+        var renamed = Lots
+            .Select(l => (Old: l.Name, Lot: l with { Name = $"{Base(l.Name)} · {l.Sowing.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}" }))
+            .ToList();
+        var byOldName = renamed
+            .GroupBy(r => r.Old, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() == 1)
+            .ToDictionary(g => g.Key, g => g.Single().Lot.Name, StringComparer.OrdinalIgnoreCase);
+        return this with
+        {
+            Lots = renamed.Select(r => r.Lot).ToList(),
+            Maps = Maps.Select(m => byOldName.TryGetValue(m.Lot, out var name) ? m with { Lot = name } : m).ToList(),
+        };
+    }
 }
 
 /// <summary>Hoja General: la fecha de la demo y los parámetros (Ajustes &gt; Parámetros).</summary>
 public sealed record DemoGeneral(
     DateOnly Today,
     bool ShiftDates,
-    DateOnly? AutomaticFrom,
     string? GreenhouseName,
     string Currency,
     decimal BabyLeafGrams,
@@ -107,7 +134,8 @@ public sealed record DemoLot(
     string? DenseReason,
     DemoEvent? AdultDiscard,
     string? AdultReason,
-    string? Incident)
+    string? Incident,
+    string? Comment = null)
 {
     public int Transplanted => Transplant?.Plants ?? 0;
     public int CutAsBabyLeaf => (Cut1?.Plants ?? 0) + (Cut2?.Plants ?? 0);
@@ -131,7 +159,9 @@ public sealed record DemoLot(
 /// <summary>Códigos de la hoja Mapas: el estado de cada planta en su hueco del denso.</summary>
 public static class DemoMapCodes
 {
-    public const string Developing = "ED";
+    /// <summary>Activa en el denso (antes "ED", "En desarrollo"; el lector acepta los dos).</summary>
+    public const string Active = "ACT";
+    public const string OldActive = "ED";
     public const string Candidate = "CAN";
     public const string BabyLeaf = "BL";
     public const string Adult = "AD";
@@ -142,11 +172,11 @@ public static class DemoMapCodes
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>
     {
-        Developing, Candidate, BabyLeaf, Adult, CutBabyLeaf, CutAdult, DiscardedDense, DiscardedAdult,
+        Active, Candidate, BabyLeaf, Adult, CutBabyLeaf, CutAdult, DiscardedDense, DiscardedAdult,
     };
 
     /// <summary>Activas en el denso hoy.</summary>
-    public static readonly IReadOnlySet<string> ActiveDense = new HashSet<string> { Developing, Candidate, BabyLeaf };
+    public static readonly IReadOnlySet<string> ActiveDense = new HashSet<string> { Active, Candidate, BabyLeaf };
 
     /// <summary>Trasplantadas (estén activas, cortadas o descartadas).</summary>
     public static readonly IReadOnlySet<string> Transplanted = new HashSet<string> { Adult, CutAdult, DiscardedAdult };

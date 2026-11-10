@@ -117,7 +117,7 @@ public class BabyLeafOutlookRulesTests
     [Fact]
     public void Estado_Actual_Pesa_Segun_Cuanto_Falta_Para_El_Optimo()
     {
-        // En desarrollo no pesa (como A26 en 245 GDD, con todas "En desarrollo"): solo el histórico.
+        // En desarrollo no pesa (como A26 en 245 GDD, con todas "Activa"): solo el histórico.
         Assert.Equal(0m, BabyLeafOutlookRules.CurrentStateWeight(120m, 250m, 300m));
         Assert.Equal(0m, BabyLeafOutlookRules.CurrentStateWeight(245m, 250m, 317m));
         // Desde que abre la ventana crece hasta el óptimo.

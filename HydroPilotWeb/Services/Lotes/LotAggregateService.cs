@@ -338,8 +338,9 @@ public class LotAggregateService
     }
 
     /// <summary>
-    /// Cambio legible: si cambió el estado operativo (cosecha/descarte) se muestra ese
-    /// cambio (el comercial queda congelado); si no, los nombres de las etapas comerciales.
+    /// Cambio legible: si cambió el estado operativo (cosecha/descarte) se muestra la etapa comercial que tenía
+    /// ("Baby Leaf → Cosechada", "Adulta → Cosechada"; el comercial queda congelado); si no, los nombres de las
+    /// etapas comerciales.
     /// </summary>
     private static PlantHistoryEntryDto DescribeChange(PlantStageHistory h, IReadOnlyDictionary<int, string> stageNames)
     {
@@ -350,7 +351,12 @@ public class LotAggregateService
             && h.PreviousOperationalState != h.NewOperationalState;
 
         return operationalChanged
-            ? new PlantHistoryEntryDto(h.ChangedAtUtc, h.Source, h.PreviousOperationalState, h.NewOperationalState, h.Reason)
+            ? new PlantHistoryEntryDto(
+                h.ChangedAtUtc,
+                h.Source,
+                Stage(h.PreviousCommercialStageId) ?? h.PreviousOperationalState,
+                h.NewOperationalState,
+                h.Reason)
             : new PlantHistoryEntryDto(
                 h.ChangedAtUtc,
                 h.Source,

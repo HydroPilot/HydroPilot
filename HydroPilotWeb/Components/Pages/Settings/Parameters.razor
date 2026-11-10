@@ -50,6 +50,64 @@
         <article class="panel settings-panel">
             <div class="settings-panel__header">
                 <div>
+                    <span class="settings-eyebrow">Plan del invernadero</span>
+                    <h3>Superficie y semillas</h3>
+                    <p class="panel__subtitle">
+                        Con estos valores arranca el Plan del invernadero: la superficie de circuitos a repartir y lo que
+                        cuesta cada planta sembrada (semilla pelleteada más el cubo de sustrato).
+                    </p>
+                </div>
+                @if (!canEdit)
+                {
+                    <span class="settings-readonly-badge">Solo lectura</span>
+                }
+            </div>
+
+            @if (current is not null)
+            {
+                <div class="lot-editor">
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-greenhouse-area">Superficie de circuitos del invernadero (m²)</label>
+                        <input id="param-greenhouse-area" type="number" class="form-control" min="0" step="0.1"
+                               @bind="greenhouseArea" @bind:event="oninput" disabled="@(!canEdit)" placeholder="La de los circuitos activos" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-seed-price">Precio por planta sembrada (@current.Currency)</label>
+                        <input id="param-seed-price" type="number" class="form-control" min="0" step="0.01"
+                               @bind="seedPrice" @bind:event="oninput" disabled="@(!canEdit)" placeholder="Sin definir" />
+                    </div>
+                </div>
+
+                @if (planErrors.Count > 0)
+                {
+                    <div class="alert alert-danger py-2 mt-3 mb-0 small">
+                        <ul class="mb-0">
+                            @foreach (var planError in planErrors)
+                            {
+                                <li>@planError</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (canEdit)
+                {
+                    <div class="lot-editor__actions">
+                        @if (!string.IsNullOrEmpty(planSavedMessage))
+                        {
+                            <span class="lot-muted mt-0 me-auto">@planSavedMessage</span>
+                        }
+                        <button class="btn btn-success btn-sm" @onclick="SavePlanAsync" disabled="@savingPlan">
+                            @(savingPlan ? "Guardando…" : "Guardar")
+                        </button>
+                    </div>
+                }
+            }
+        </article>
+
+        <article class="panel settings-panel">
+            <div class="settings-panel__header">
+                <div>
                     <span class="settings-eyebrow">Gastos del sistema</span>
                     <h3>Precio de nutrientes</h3>
                     <p class="panel__subtitle">
@@ -146,6 +204,10 @@
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="param-max-size">Tamaño máximo Baby Leaf (× ideal)</label>
                         <input id="param-max-size" type="number" class="form-control" min="1" step="0.05" @bind="transplant.MaxSizeFactor" disabled="@(!canEdit)" />
+                    </div>
+                    <div class="lot-editor__field">
+                        <label class="form-label mb-1" for="param-adult-size">Tamaño de cosecha adulta (× ideal Baby Leaf)</label>
+                        <input id="param-adult-size" type="number" class="form-control" min="1" max="5" step="0.1" @bind="transplant.AdultReadySize" disabled="@(!canEdit)" />
                     </div>
                     <div class="lot-editor__field">
                         <label class="form-label mb-1" for="param-dense-spacing">Separación entre huecos denso (cm)</label>
@@ -404,6 +466,12 @@
     private IReadOnlyList<string> nutrientErrors = [];
     private string? nutrientSavedMessage;
 
+    private decimal? greenhouseArea;
+    private decimal? seedPrice;
+    private bool savingPlan;
+    private IReadOnlyList<string> planErrors = [];
+    private string? planSavedMessage;
+
     private IReadOnlyList<AnomalyRuleOverview> anomalyRules = [];
 
     // Trasplante a Adultas (editable en el formulario; se valida al guardar).
@@ -417,18 +485,19 @@
         public decimal DenseSpacingCm { get; set; }
         public decimal AdultSpacingCm { get; set; }
         public int DenseCleaningDays { get; set; }
+        public decimal AdultReadySize { get; set; }
 
         public static TransplantRow From(TransplantParameters p) => new()
         {
             DecisionGdd = p.DecisionGdd,
             PlantsPerHour = p.PlantsPerHour, LaborCostPerHour = p.LaborCostPerHour, StressDays = p.StressDays,
             MaxSizeFactor = p.MaxSizeFactor, DenseSpacingCm = p.DenseSpacingCm, AdultSpacingCm = p.AdultSpacingCm,
-            DenseCleaningDays = p.DenseCleaningDays,
+            DenseCleaningDays = p.DenseCleaningDays, AdultReadySize = p.AdultReadySize,
         };
 
         public static TransplantParameters ToParameters(TransplantRow r) => new(
             r.DecisionGdd, r.PlantsPerHour, r.LaborCostPerHour, r.StressDays, r.MaxSizeFactor, r.DenseSpacingCm, r.AdultSpacingCm,
-            r.DenseCleaningDays);
+            r.DenseCleaningDays, r.AdultReadySize);
     }
 
     private TransplantRow? transplant;
@@ -464,6 +533,7 @@
             canEdit = SystemParametersService.CanEdit(user);
             current = await ParametersService.GetYieldParametersAsync();
             await LoadNutrientPricesAsync();
+            await LoadPlanParametersAsync();
             transplant = TransplantRow.From(await ParametersService.GetTransplantParametersAsync());
             await LoadCheckIntervalsAsync();
             await LoadFaultLimitsAsync();
@@ -588,6 +658,36 @@
     {
         var prices = await ParametersService.GetNutrientPricesAsync();
         (solutionAPrice, solutionBPrice) = (Trim(prices.SolutionAPerLiter), Trim(prices.SolutionBPerLiter));
+    }
+
+    private async Task LoadPlanParametersAsync()
+    {
+        var plan = await ParametersService.GetGreenhousePlanParametersAsync();
+        (greenhouseArea, seedPrice) = (Trim(plan.AreaM2), Trim(plan.PricePerSeed));
+    }
+
+    private async Task SavePlanAsync()
+    {
+        savingPlan = true;
+        planSavedMessage = null;
+        try
+        {
+            var result = await ParametersService.UpdateGreenhousePlanParametersAsync(new GreenhousePlanParameters(greenhouseArea, seedPrice), user);
+            planErrors = result.Errors;
+            if (result.Succeeded)
+            {
+                await LoadPlanParametersAsync();
+                planSavedMessage = "Guardado.";
+            }
+        }
+        catch (Exception ex)
+        {
+            planErrors = [$"No se pudo guardar: {ex.Message}"];
+        }
+        finally
+        {
+            savingPlan = false;
+        }
     }
 
     private async Task SaveNutrientPriceAsync()

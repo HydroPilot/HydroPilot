@@ -6,10 +6,11 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 
 /// <summary>
 /// El historial con un dataset (el Excel de la demo): cada planta nace con su destino (el del mapa o, sin mapa, uno por
-/// vigor según las cantidades de Lotes) y su crecimiento se guía para llegar a él. La que se corta como Baby Leaf llega
-/// al tamaño ideal el día del corte (la evaluación la da Baby Leaf); la que se trasplanta queda entre las de score más
-/// bajo el día del trasplante; la que se descarta por tamaño se pasa justo ese día. Los cortes, los descartes y el
-/// trasplante pasan en las fechas del Excel, con las plantas de ese destino.
+/// vigor según las cantidades de Lotes) y su crecimiento se guía para llegar a él. Las que se cortan como Baby Leaf se
+/// vuelven aptas de a poco, la última justo el día del corte: la curva de aptas sube hasta ahí y la cosecha óptima del
+/// lote cae en el corte. La que se trasplanta queda entre las de score más bajo el día del trasplante; la que se descarta
+/// por tamaño se pasa justo ese día. Los cortes, los descartes y el trasplante pasan en las fechas del Excel, con las
+/// plantas de ese destino.
 /// </summary>
 public sealed partial class HistoryGenerator
 {
@@ -75,7 +76,7 @@ public sealed partial class HistoryGenerator
         var denseReason = lot.DenseReason ?? DefaultReason(run.Plan.Incident, lot, adult: false);
         var adultReason = lot.AdultReason ?? DefaultReason(run.Plan.Incident, lot, adult: true);
         var gddToday = ExpectedGdd(lot.Sowing, _today);
-        var developing = _w.CommercialStageIds[CommercialStageNames.EnDesarrollo];
+        var developing = _w.CommercialStageIds[CommercialStageNames.Activa];
         foreach (var hole in holes)
         {
             var plant = new Plant
@@ -111,6 +112,132 @@ public sealed partial class HistoryGenerator
                 (runPlant.FateReason, runPlant.FateDate) = (adultReason, lot.AdultDiscard!.Date);
             SetTarget(runPlant, lot, gddToday);
             run.Plants.Add(runPlant);
+        }
+
+        // Cuándo se vuelve apta cada Baby Leaf: las del 1er corte desde que abre la ventana; las del 2do, después del 1er
+        // corte; las que hoy son Baby Leaf en el mapa, hasta hoy.
+        var windowOpens = DayAtGdd(lot.Sowing, (double)_w.Config.GddMin);
+        List<PlantRun> Of(PlantFate fate) => run.Plants.Where(p => p.Fate == fate).OrderByDescending(p => p.Vigor).ToList();
+        if (lot.Cut1 is { } cut1)
+            ScheduleBabyLeaf(Of(PlantFate.CutBabyLeaf1), lot.Sowing, windowOpens, cut1.Date);
+        if (lot.Cut2 is { } cut2)
+            ScheduleBabyLeaf(Of(PlantFate.CutBabyLeaf2), lot.Sowing, Max(windowOpens, (lot.Cut1?.Date ?? windowOpens).AddDays(1)), cut2.Date);
+        // Un lote en curso que todavía no cortó y hoy tiene la mitad o más del denso como Baby Leaf está en su día de corte
+        // (si no, ya se habría cortado): sus Baby Leaf se vuelven aptas hasta ayer y hoy casi no crecen, así el score
+        // general sube hasta ayer y hoy deja de mejorar (la app marca "Cortar ahora" sin perder plantas). Si no, se
+        // vuelven aptas hasta hoy (el score general sigue subiendo).
+        var babyLeafToday = Of(PlantFate.ActiveBabyLeaf);
+        var denseToday = run.Plants.Count(p => p.Fate is PlantFate.ActiveBabyLeaf or PlantFate.ActiveCandidate
+                                                   or PlantFate.ActiveDeveloping or PlantFate.None);
+        var cutToday = lot.CutAsBabyLeaf == 0 && babyLeafToday.Count > 0 && _today > windowOpens.AddDays(1)
+                       && babyLeafToday.Count >= denseToday * (double)BabyLeafOptimumRules.MinCutShare;
+        ScheduleBabyLeaf(babyLeafToday, lot.Sowing, windowOpens, cutToday ? _today.AddDays(-1) : _today);
+        if (cutToday)
+        {
+            // Hoy casi no crecen (el score general deja de mejorar), pero siguen aptas con margen: la evaluación de hoy es
+            // la que muestra la app (las que llegaron ayer, justo en el umbral, si no bajarían de Baby Leaf).
+            var keep = RatioForScore((double)_w.Config.ScoreMinReady + 5, ExpectedGdd(lot.Sowing, _today), quality: 0.75) * 300;
+            foreach (var plant in babyLeafToday)
+                plant.Milestones.Add((_today, Math.Max(plant.Milestones[^1].Size * 1.005, keep)));
+        }
+
+        // Las trasplantadas pasan de Activa a Adulta de a poco desde que empieza la etapa adulta (cierra la ventana Baby
+        // Leaf): las del corte de adultas, hasta ese día; las que siguen en Adultas hoy, hasta hoy.
+        var adultOpens = DayAtGdd(lot.Sowing, (double)_w.Config.GddMax);
+        if (lot.AdultCut is { } adultCut)
+            ScheduleAdults(Of(PlantFate.TransplantCut), adultOpens, adultCut.Date);
+        if (_today >= adultOpens)
+            ScheduleAdults(Of(PlantFate.TransplantActive), adultOpens, _today);
+    }
+
+    private static DateOnly Max(DateOnly a, DateOnly b) => a > b ? a : b;
+
+    /// <summary>El primer día cuya mañana llega a <paramref name="gdd"/> desde la siembra, con el clima del historial.</summary>
+    private DateOnly DayAtGdd(DateOnly sowing, double gdd)
+    {
+        var day = sowing.AddDays(1);
+        for (var i = 0; i < 400 && ExpectedGdd(sowing, day) < gdd; i++)
+            day = day.AddDays(1);
+        return day;
+    }
+
+    /// <summary>
+    /// Las Baby Leaf (de más vigor primero) se vuelven aptas entre <paramref name="start"/> y <paramref name="end"/>, más
+    /// cerca del final, y un 15 % justo en <paramref name="end"/>: la curva de aptas sube hasta ese día, que es el pico.
+    /// Cada una queda un poco debajo del umbral de Baby Leaf el día antes de volverse apta y después sigue creciendo,
+    /// más cuanto antes llegó (las primeras terminan en el tamaño ideal; las del final, apenas pasado el umbral).
+    /// </summary>
+    private void ScheduleBabyLeaf(List<PlantRun> plants, DateOnly sowing, DateOnly start, DateOnly end)
+    {
+        if (plants.Count == 0)
+            return;
+        if (start > end)
+            start = end;
+        var span = end.DayNumber - start.DayNumber;
+        var ready = (double)_w.Config.ScoreMinReady;
+        var onEnd = (int)Math.Ceiling(plants.Count * 0.15);
+        var days = Enumerable.Range(0, plants.Count)
+            .Select(i => i < onEnd ? end : end.AddDays(-(int)Math.Round(span * Math.Pow(_rng.NextDouble(), 2))))
+            .OrderBy(d => d)
+            .ToList();
+        // Calidad que se supone para las metas: la de un ciclo flojo (calor, CE alejada), así la evaluación da lo pedido.
+        const double quality = 0.8;
+        var gddEnd = ExpectedGdd(sowing, end);
+        for (var i = 0; i < plants.Count; i++)
+        {
+            var plant = plants[i];
+            var apt = days[i];
+            var full = 0.95 + _rng.NextDouble() * 0.17;
+            var share = span == 0 ? 0 : (end.DayNumber - apt.DayNumber) / (double)span;
+            plant.Milestones.Clear();
+            // Las que se vuelven aptas al abrir la ventana lo hacen por el salto del criterio de GDD: no necesitan el paso.
+            // Las demás: debajo del umbral dos días antes y arriba ese día (una planta no sube tanto en un día; sin esa meta
+            // dependen de lo que crezcan después y llegan tarde).
+            if (apt > start)
+            {
+                var before = Max(start, apt.AddDays(-2));
+                if (before < apt)
+                    plant.Milestones.Add((before, RatioForScore(ready - 3, ExpectedGdd(sowing, before), quality) * 300));
+                if (apt < end)
+                    plant.Milestones.Add((apt, RatioForScore(ready + 3, ExpectedGdd(sowing, apt), quality) * 300));
+            }
+            // Al final, con margen para el ruido de la evaluación: más cuanto antes llegó (2,5 puntos por día, hasta 12; la
+            // que llega ese día, 3,5 arriba). Desde 2026-11-10 el crecimiento es el acumulado y una planta chica pierde
+            // por los dos lados (forma y crecimiento), así que las que llegaron antes terminan cerca del tamaño ideal.
+            var margin = Math.Min(12, 3.5 + 2.5 * (end.DayNumber - apt.DayNumber));
+            var atEnd = RatioForScore(ready + margin, gddEnd, quality);
+            plant.Milestones.Add((end, Math.Max(atEnd, atEnd + (full - atEnd) * share) * 300));
+            plant.BabyLeafFrom = apt;
+        }
+    }
+
+    /// <summary>
+    /// Las trasplantadas (de más vigor primero) llegan al tamaño de cosecha adulta entre <paramref name="start"/> (empieza
+    /// la etapa adulta) y <paramref name="end"/>, más cerca del final y un 15 % justo ese día: hasta ahí son "Activa"
+    /// (posibles adultas) y desde ahí "Adulta" (aptas para cortar), como la Baby Leaf en su ventana.
+    /// </summary>
+    private void ScheduleAdults(List<PlantRun> plants, DateOnly start, DateOnly end)
+    {
+        if (plants.Count == 0 || end < start)
+            return;
+        var span = end.DayNumber - start.DayNumber;
+        var ready = (double)_w.TransplantOrDefault.AdultReadySize * 300;
+        var onEnd = (int)Math.Ceiling(plants.Count * 0.15);
+        var days = Enumerable.Range(0, plants.Count)
+            .Select(i => i < onEnd ? end : end.AddDays(-(int)Math.Round(span * Math.Pow(_rng.NextDouble(), 2))))
+            .OrderBy(d => d)
+            .ToList();
+        for (var i = 0; i < plants.Count; i++)
+        {
+            var plant = plants[i];
+            var adult = days[i];
+            var share = span == 0 ? 0 : (end.DayNumber - adult.DayNumber) / (double)span;
+            // El día antes, apenas debajo del tamaño de cosecha; ese día, apenas arriba; al final, más cuanto antes llegó.
+            plant.Milestones.Add((adult.AddDays(-1), ready * 0.985));
+            if (adult < end)
+                plant.Milestones.Add((adult, ready * 1.01));
+            plant.Milestones.Add((end, ready * (1.03 + 0.3 * share)));
+            plant.AdultFrom = adult;
         }
     }
 
@@ -178,31 +305,80 @@ public sealed partial class HistoryGenerator
         return lot.DenseDiscard is { } discard && ExpectedGdd(lot.Sowing, discard.Date) < 150 ? "Damping-off en plántula" : DefaultDenseReason;
     }
 
-    /// <summary>A qué tamaño (× el ideal de Baby Leaf) tiene que llegar y cuándo, según su destino.</summary>
+    /// <summary>
+    /// A qué tamaño (× el ideal de Baby Leaf) tiene que llegar y cuándo, según su destino. Los que dependen de un estado
+    /// (candidata, en desarrollo, las que se trasplantan por score bajo) salen de las bandas de score de la configuración
+    /// (candidata desde ScoreMinCandidate, Baby Leaf desde ScoreMinReady), con margen para el ruido de la evaluación.
+    /// </summary>
     private void SetTarget(PlantRun plant, DemoLot lot, double gddToday)
     {
         double Between(double low, double high) => low + _rng.NextDouble() * (high - low);
         double Natural() => plant.Vigor * gddToday * 0.95 / 300;
+        var candidate = (double)_w.Config.ScoreMinCandidate;
+        var ready = (double)_w.Config.ScoreMinReady;
+        double ForScore(DateOnly date, double low, double high) => RatioForScore(Between(low, high), ExpectedGdd(lot.Sowing, date));
         var reason = plant.FateReason ?? string.Empty;
         (DateOnly Date, double Ratio)? target = plant.Fate switch
         {
             PlantFate.CutBabyLeaf1 => (lot.Cut1!.Date, Between(0.95, 1.12)),
             PlantFate.CutBabyLeaf2 => (lot.Cut2!.Date, Between(0.95, 1.12)),
-            PlantFate.TransplantActive or PlantFate.TransplantCut or PlantFate.TransplantDiscard => (lot.Transplant!.Date, Between(0.25, 0.36)),
+            PlantFate.TransplantActive or PlantFate.TransplantCut or PlantFate.TransplantDiscard =>
+                (lot.Transplant!.Date, ForScore(lot.Transplant.Date, candidate - 12, candidate - 2)),
             PlantFate.DenseDiscard when reason.Contains("tamaño", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(1.33, 1.45)),
             PlantFate.DenseDiscard when reason.Contains("Damping", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(0.06, 0.18)),
             PlantFate.DenseDiscard when reason.Contains("Pythium", StringComparison.OrdinalIgnoreCase)
                                      || reason.Contains("Tipburn", StringComparison.OrdinalIgnoreCase)
                                      || reason.Contains("bolting", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(0.5, 0.8)),
-            PlantFate.DenseDiscard => (plant.FateDate!.Value, Between(0.45, 0.6)),
-            PlantFate.ActiveDeveloping => (_today, (decimal)gddToday >= _w.Config.GddMin ? Between(0.25, 0.38) : Math.Clamp(Natural(), 0.05, 0.9)),
-            PlantFate.ActiveCandidate => (_today, Between(0.55, 0.7)),
+            PlantFate.DenseDiscard => (plant.FateDate!.Value, ForScore(plant.FateDate!.Value, candidate + 4, ready - 5)),
+            PlantFate.ActiveDeveloping => (_today, (decimal)gddToday >= _w.Config.GddMin
+                ? ForScore(_today, candidate - 10, candidate - 4)
+                : Math.Clamp(Natural(), 0.05, 0.9)),
+            PlantFate.ActiveCandidate => (_today, ForScore(_today, candidate + 7, ready - 7)),
             PlantFate.ActiveBabyLeaf => (_today, Between(0.95, 1.1)),
             PlantFate.None => (_today, Math.Clamp(Natural(), 0.05, 1.1)),
             _ => null,
         };
         if (target is { } t)
-            (plant.TargetDate, plant.TargetSize) = (t.Date, t.Ratio * 300);
+            plant.Milestones.Add((t.Date, t.Ratio * 300));
+    }
+
+    /// <summary>
+    /// Tamaño (× el ideal) con el que la evaluación da más o menos <paramref name="score"/> en la ventana Baby Leaf, con el
+    /// crecimiento guiado: la ventana GDD suma completa, el estado visual según <paramref name="visual"/> (un poco de
+    /// amarillo o daño es lo común), y la morfología y el crecimiento suben casi en línea recta con el tamaño (morfología ≈
+    /// 100 × tamaño × (0,35 + 0,65 × calidad); crecimiento ≈ 100 × 300 × tamaño ÷ GDD a esa fecha, el acumulado).
+    /// <paramref name="quality"/>: la calidad promedio del ciclo que se supone (más baja = más tamaño).
+    /// </summary>
+    private double RatioForScore(double score, double gdd, double quality = 0.9, double visual = 0.9)
+    {
+        var criteria = _w.Criteria.Where(c => c.IsActive).ToList();
+        double Weight(string type) => (double)criteria.Where(c => c.DataType == type).Sum(c => c.Weight);
+        var total = Math.Max(1, (double)criteria.Sum(c => c.Weight));
+        var full = 100 * (Weight(BabyLeafScoreCalculator.DataTypeGdd) + Weight("VISUAL") * visual) / total;
+        var shape = 0.35 + 0.65 * Math.Min(1, quality);
+        var perRatio = 100 * (Weight("MORFOLOGIA") * shape + Weight("CRECIMIENTO") * Math.Min(1.6, 300 / Math.Max(1, gdd))) / total;
+        return Math.Clamp((score - full) / Math.Max(1, perRatio), 0.04, 1.1);
+    }
+
+    /// <summary>
+    /// Si ya tendría que verse Baby Leaf (o Adulta) y la evaluación de hoy no la da, se agrandan sus próximas metas: al día
+    /// siguiente lo es (un ciclo más caluroso o con la CE más lejos que lo supuesto la deja atrás).
+    /// </summary>
+    private void EnsureReady(PlantRun plant, DateOnly date)
+    {
+        var behind = plant.BabyLeafFrom is { } babyLeaf && date >= babyLeaf && !plant.EvaluatedApt
+                     || plant.AdultFrom is { } adult && date >= adult && SizeRatio(plant) < _w.TransplantOrDefault.AdultReadySize;
+        if (!behind)
+            return;
+        // Una Baby Leaf no se agranda más allá de la meseta de la forma: más grande deja de ser Baby Leaf y quedaría
+        // atrasada para siempre (cada día se agrandaría más).
+        var cap = plant.AdultRoute ? double.MaxValue : ShapePlateauEnd * 300;
+        for (var i = 0; i < plant.Milestones.Count; i++)
+        {
+            var (day, size) = plant.Milestones[i];
+            if (day > date)
+                plant.Milestones[i] = (day, Math.Max(size, Math.Min(cap, plant.Size * 1.12 + 12)));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -215,10 +391,14 @@ public sealed partial class HistoryGenerator
     /// </summary>
     private double GuidedEfficiency(PlantRun plant, DateOnly date, double grown, double natural)
     {
-        if (plant.TargetSize is not { } target || plant.TargetDate is not { } until || date > until)
-            return natural;
-        var remaining = Math.Max(0, grown) + ExpectedGdd(date, until);
-        return remaining < 0.5 ? natural : Math.Clamp((target - plant.Size) / remaining, 0.02, 1.6);
+        foreach (var (until, target) in plant.Milestones)
+        {
+            if (date > until)
+                continue;
+            var remaining = Math.Max(0, grown) + ExpectedGdd(date, until);
+            return remaining < 0.5 ? natural : Math.Clamp((target - plant.Size) / remaining, 0.02, 1.6);
+        }
+        return natural;
     }
 
     private static bool FatedTo(PlantRun plant, string reason) =>
@@ -258,7 +438,8 @@ public sealed partial class HistoryGenerator
             if (scripted?.Date != date)
                 return;
             var plants = run.Plants.Where(p => p.Active && p.Fate == fate).ToList();
-            var notReady = babyLeaf ? plants.Count(p => !p.EvaluatedApt) : 0;
+            var adultId = _w.CommercialStageIds[CommercialStageNames.CosechaConvencional];
+            var notReady = babyLeaf ? plants.Count(p => !p.EvaluatedApt) : plants.Count(p => p.Plant.CommercialStageId != adultId);
             foreach (var plant in plants)
                 HarvestPlant(run, plant, date, t.AddMinutes(minutes), babyLeaf);
             Record(run, name, date, plants.Count, notReady);

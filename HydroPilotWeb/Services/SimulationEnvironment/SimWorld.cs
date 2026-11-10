@@ -89,6 +89,9 @@ public sealed class HistoryData
     public List<WeatherRecord> Weather { get; } = [];
     public List<CostPriceCatalog> Prices { get; } = [];
 
+    /// <summary>Comentarios de los lotes (la columna Comentario del dataset), el día de la siembra.</summary>
+    public List<LotComment> Comments { get; } = [];
+
     /// <summary>Estado final de cada mesada: su circuito (modo), la Pi (última señal), las bombas (calibración) y sensores.</summary>
     public List<NodeFinalState> Nodes { get; } = [];
 

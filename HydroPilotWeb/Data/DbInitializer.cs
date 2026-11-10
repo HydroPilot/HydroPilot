@@ -9,6 +9,9 @@ namespace HydroPilotWeb.Data;
 
 public static class DbInitializer
 {
+    private const string ActivaDescription = "Planta activa que todavía no es candidata a Baby Leaf, Baby Leaf ni adulta.";
+    private const string AdultaDescription = "Trasplantada que llegó al tamaño de cosecha adulta (en la etapa adulta).";
+
     public static void Initialize(HydroPilotDbContext context, IConfiguration configuration)
     {
         // Migraciones que mueven datos (UnifyGreenhousePi pasa las lecturas de una Pi a otra) superan los 30 s por defecto.
@@ -199,10 +202,10 @@ public static class DbInitializer
         if (!context.CommercialStages.Any())
         {
             context.CommercialStages.AddRange(
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = "En desarrollo", Description = "Todavía no es cosechable." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.Activa, Description = ActivaDescription },
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Candidata Baby Leaf", Description = "Score en banda candidata (45-69) o Baby Leaf sin confirmar obligatorios." },
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.BabyLeafApta, Description = "Score >= 70 y criterios obligatorios aprobados." },
-                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.CosechaConvencional, Description = "Ventana adulta con madurez confirmada." },
+                new CommercialStage { CropTypeId = cultivoLote.Id, Name = CommercialStageNames.CosechaConvencional, Description = AdultaDescription },
                 new CommercialStage { CropTypeId = cultivoLote.Id, Name = "Riesgo / fuera de ventana", Description = "Anomalía, bolting, mal estado visual o sobremadurez." });
         }
 
@@ -233,6 +236,18 @@ public static class DbInitializer
             existingConfig.ScoreMinReady = 70;
             existingConfig.Description = "Ventana GDD 250-450; candidata 45, Baby Leaf 70. Valores de arranque calibrables.";
         }
+
+        // 2026-11-09: "En desarrollo" pasa a llamarse "Activa" (también en el resultado de las evaluaciones ya guardadas), y
+        // "Adulta" es la trasplantada que llegó al tamaño de cosecha adulta.
+        foreach (var stage in context.CommercialStages.Where(s => s.Name == "En desarrollo"))
+        {
+            stage.Name = CommercialStageNames.Activa;
+            stage.Description = ActivaDescription;
+        }
+        foreach (var stage in context.CommercialStages.Where(s => s.Name == CommercialStageNames.CosechaConvencional && s.Description != AdultaDescription))
+            stage.Description = AdultaDescription;
+        context.BabyLeafEvaluations.Where(e => e.Result == "En desarrollo")
+            .ExecuteUpdate(s => s.SetProperty(e => e.Result, CommercialStageNames.Activa));
 
         context.SaveChanges();
 
@@ -582,7 +597,7 @@ public static class DbInitializer
                 3 => (CommercialStageNames.BabyLeafApta, 85m),
                 4 => ("Candidata Baby Leaf", 72m),
                 5 => ("Candidata Baby Leaf", 66m),
-                _ => ("En desarrollo", 45m)
+                _ => ("Activa", 45m)
             };
             AddPlant(1, col, stage, score, 0.9m, true);
         }
@@ -592,26 +607,26 @@ public static class DbInitializer
         AddPlant(2, 2, CommercialStageNames.BabyLeafApta, 84m, 0.9m, true);
         AddPlant(2, 3, "Candidata Baby Leaf", 78m, 0.88m, true);
         AddPlant(2, 4, "Candidata Baby Leaf", 63m, 0.85m, true);
-        AddPlant(2, 5, "En desarrollo", 52m, 0.8m, true);
+        AddPlant(2, 5, "Activa", 52m, 0.8m, true);
         AddPlant(2, 6, "Riesgo / fuera de ventana", 30m, 0.7m, false, "Demo: bolting detectado");
 
         // Fila 3: apta sin confirmar obligatorios → candidata (caso documentado).
         AddPlant(3, 1, "Candidata Baby Leaf", 86m, 0.6m, false);
         AddPlant(3, 2, CommercialStageNames.BabyLeafApta, 90m, 0.93m, true);
         AddPlant(3, 3, "Candidata Baby Leaf", 70m, 0.87m, true);
-        AddPlant(3, 4, "En desarrollo", 58m, 0.82m, true);
+        AddPlant(3, 4, "Activa", 58m, 0.82m, true);
 
         // Fila 4: cosechada (congelada) y descartada (histórico).
         AddPlant(4, 1, CommercialStageNames.BabyLeafApta, 87m, 0.91m, true, harvested: true);
         AddPlant(4, 2, "Riesgo / fuera de ventana", 25m, 0.65m, false, "Demo: fuera de ventana por sobremadurez");
-        AddPlant(4, 3, "En desarrollo", 41m, 0.78m, true);
+        AddPlant(4, 3, "Activa", 41m, 0.78m, true);
 
         // Fila 5: en desarrollo y una apta.
-        AddPlant(5, 1, "En desarrollo", 48m, 0.79m, true);
+        AddPlant(5, 1, "Activa", 48m, 0.79m, true);
         AddPlant(5, 2, CommercialStageNames.BabyLeafApta, 83m, 0.89m, true);
 
         // Fila 6: una planta.
-        AddPlant(6, 1, "En desarrollo", 39m, 0.75m, true);
+        AddPlant(6, 1, "Activa", 39m, 0.75m, true);
 
         // El resto de las 60 posiciones quedan vacías (gris claro en el mapa).
     }

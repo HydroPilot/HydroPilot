@@ -109,11 +109,11 @@ public class LotesSqlServerTests
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId);
 
-        await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
+        await AddPlantAsync(context, lot, 1, 1, "Activa");
 
         await Assert.ThrowsAsync<DbUpdateException>(async () =>
         {
-            var stage = await context.CommercialStages.FirstAsync(s => s.Name == "En desarrollo");
+            var stage = await context.CommercialStages.FirstAsync(s => s.Name == "Activa");
             context.Plants.Add(new Plant { LotId = lot.Id, Row = 1, Column = 1, CommercialStageId = stage.Id });
             await context.SaveChangesAsync();
         });
@@ -126,7 +126,7 @@ public class LotesSqlServerTests
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId, rows: 3, columns: 4);
 
-        await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
+        await AddPlantAsync(context, lot, 1, 1, "Activa");
         await AddPlantAsync(context, lot, 1, 2, "Baby Leaf", score: 88m);
         await AddPlantAsync(context, lot, 2, 1, "Riesgo / fuera de ventana", PlantOperationalState.Descartada);
         await AddPlantAsync(context, lot, 3, 3, "Baby Leaf", PlantOperationalState.Cosechada, score: 90m);
@@ -152,10 +152,10 @@ public class LotesSqlServerTests
 
         // Conteos: solo activas.
         var byStage = state.CommercialCounts.ToDictionary(c => c.StageName);
-        Assert.Equal(1, byStage["En desarrollo"].Count);
+        Assert.Equal(1, byStage["Activa"].Count);
         Assert.Equal(1, byStage["Baby Leaf"].Count);
         Assert.False(byStage.ContainsKey("Riesgo / fuera de ventana")); // la descartada no cuenta
-        // 1 vs 1 (En desarrollo vs Baby Leaf apta) → empate → Mixto.
+        // 1 vs 1 (Activa vs Baby Leaf apta) → empate → Mixto.
         Assert.True(state.IsCommercialStageMixed);
         Assert.Equal(Services.Lotes.CommercialStageNames.Mixto, state.CommercialStageName);
     }
@@ -167,8 +167,8 @@ public class LotesSqlServerTests
         var (cropId, ghId) = await GetBaseAsync(context);
         var lot = await CreateLotAsync(context, cropId, ghId);
 
-        await AddPlantAsync(context, lot, 1, 1, "En desarrollo");
-        await AddPlantAsync(context, lot, 1, 2, "En desarrollo");
+        await AddPlantAsync(context, lot, 1, 1, "Activa");
+        await AddPlantAsync(context, lot, 1, 2, "Activa");
         await AddPlantAsync(context, lot, 2, 1, "Baby Leaf", score: 88m);
         await AddPlantAsync(context, lot, 2, 2, "Baby Leaf", score: 90m);
         // Descartada (no activa) no rompe el empate.
@@ -192,9 +192,9 @@ public class LotesSqlServerTests
         await LotesSqlFixture.SeedTemperatureReadingsAsync(
             context, ghId, LotesSqlFixture.SowingDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
 
-        var apta = await AddPlantAsync(context, lot, 1, 1, "En desarrollo", score: 90m, mandatoryMet: true);
-        var candidata = await AddPlantAsync(context, lot, 1, 2, "En desarrollo", score: 70m, mandatoryMet: true);
-        var enDesarrollo = await AddPlantAsync(context, lot, 2, 1, "En desarrollo", score: 40m, mandatoryMet: true);
+        var apta = await AddPlantAsync(context, lot, 1, 1, "Activa", score: 90m, mandatoryMet: true);
+        var candidata = await AddPlantAsync(context, lot, 1, 2, "Activa", score: 70m, mandatoryMet: true);
+        var enDesarrollo = await AddPlantAsync(context, lot, 2, 1, "Activa", score: 40m, mandatoryMet: true);
 
         var flow = BuildFlow();
         var result = await flow.RunDailyAsync(lot.Id);
@@ -207,7 +207,7 @@ public class LotesSqlServerTests
         var byId = await check.Plants.ToDictionaryAsync(p => p.Id);
         Assert.Equal("Baby Leaf", (await check.CommercialStages.FindAsync(byId[apta.Id].CommercialStageId))!.Name);
         Assert.Equal("Candidata Baby Leaf", (await check.CommercialStages.FindAsync(byId[candidata.Id].CommercialStageId))!.Name);
-        Assert.Equal("En desarrollo", (await check.CommercialStages.FindAsync(byId[enDesarrollo.Id].CommercialStageId))!.Name);
+        Assert.Equal("Activa", (await check.CommercialStages.FindAsync(byId[enDesarrollo.Id].CommercialStageId))!.Name);
 
         // Historial registrado por el flujo diario.
         var history = await check.PlantStageHistories.CountAsync(h => h.Source == "daily-flow");
@@ -234,7 +234,7 @@ public class LotesSqlServerTests
             context, ghId, LotesSqlFixture.SowingDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
 
         // Cosechada congelada como "Baby Leaf" pero con score que la haría
-        // "En desarrollo" si estuviera activa: el flujo NO debe tocar su estado.
+        // "Activa" si estuviera activa: el flujo NO debe tocar su estado.
         var harvested = await AddPlantAsync(context, lot, 1, 1, "Baby Leaf",
             PlantOperationalState.Cosechada, score: 30m);
         var discarded = await AddPlantAsync(context, lot, 1, 2, "Riesgo / fuera de ventana",
@@ -304,7 +304,7 @@ public class LotesSqlServerTests
         Assert.Single(await _fixture.NewContext().PlantStageHistories.Where(h => h.PlantId == plant.Id && h.Source == "harvest").ToListAsync());
 
         // Descartar una planta distinta.
-        var plant2 = await AddPlantAsync(context, lot, 2, 1, "En desarrollo");
+        var plant2 = await AddPlantAsync(context, lot, 2, 1, "Activa");
         var discarded = await lifecycle.DiscardPlantAsync(plant2.Id, "test bolting");
         Assert.Equal(PlantOperationalState.Descartada, discarded!.OperationalState);
         Assert.Equal("test bolting", discarded.DiscardReason);

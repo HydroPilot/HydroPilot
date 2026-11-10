@@ -13,7 +13,7 @@ public static class CommercialStagePalette
 
     public static CellStyle ForStage(string? stageName) => stageName switch
     {
-        "En desarrollo" => new CellStyle("#2e9e4f", "#ffffff", "ED", "En desarrollo"),
+        CommercialStageNames.Activa => new CellStyle("#2e9e4f", "#ffffff", "ACT", "Activa"),
         "Candidata Baby Leaf" => new CellStyle("#e8a33d", "#3d2800", "CAN", "Candidata Baby Leaf"),
         CommercialStageNames.BabyLeafApta => new CellStyle("#2d7dd2", "#ffffff", "BL", "Baby Leaf"),
         CommercialStageNames.CosechaConvencional => new CellStyle("#8a4fd3", "#ffffff", "AD", "Adulta"),

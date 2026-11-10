@@ -87,23 +87,26 @@ internal static class HistoryPlanner
     }
 
     /// <summary>
-    /// Clima de un dataset: la normal de cada mes de la hoja Clima y sus olas de calor y frentes fríos, más un ruido diario
-    /// más chico que el del historial al azar, para que el GDD quede cerca del que estima el Excel.
+    /// Clima de un dataset: la normal de cada mes de la hoja Clima y sus olas de calor y frentes fríos, más un ruido diario.
+    /// El ruido se corrige con lo que se fue apartando el GDD acumulado del que estima el Excel (unos ±10 GDD como mucho):
+    /// un día puede ser más cálido o más fresco, pero los cortes y el trasplante caen en el GDD del Excel.
     /// </summary>
     public static Dictionary<DateOnly, ClimateDay> ScriptedClimate(DateOnly from, DateOnly to, DemoClimate climate, Random rng)
     {
         var days = new Dictionary<DateOnly, ClimateDay>();
-        double anomaly = 0, rh = 0;
+        double anomaly = 0, rh = 0, drift = 0;
         for (var date = from; date <= to; date = date.AddDays(1))
         {
-            anomaly = 0.7 * anomaly + Gaussian(rng) * 0.8;
+            anomaly = 0.7 * anomaly + Gaussian(rng) * 0.8 - 0.1 * drift;
             rh = 0.6 * rh + Gaussian(rng) * 5;
             var rain = rng.NextDouble() < 0.06 ? 14 : 0;
             var scripted = climate.Events.FirstOrDefault(e => e.From <= date && date <= e.To);
             var total = anomaly + DemoClimateModel.Anomaly(climate, date) - (rain > 0 ? 0.8 : 0);
             var normal = DemoClimateModel.Normal(climate, date);
-            days[date] = new ClimateDay(date, normal, GreenhouseClimate.Inside(normal, total, rh + rain), total,
+            var day = new ClimateDay(date, normal, GreenhouseClimate.Inside(normal, total, rh + rain), total,
                 scripted?.Kind.ToLowerInvariant() ?? (rain > 0 ? "lluvia" : null));
+            days[date] = day;
+            drift += day.Gdd - DemoClimateModel.DailyGdd(climate, date);
         }
         return days;
     }
@@ -161,10 +164,10 @@ internal static class HistoryPlanner
 
     /// <summary>
     /// Elige qué lote vive cada incidente: los de calor en el lote con la ola de calor más fuerte de cada verano, los
-    /// de hardware en lotes de la época manual o automática según corresponda. Nunca en los lotes en curso.
+    /// de hardware repartidos en el año (la Pi sin conexión en otoño, la sonda en invierno). Nunca en los lotes en curso.
     /// </summary>
     public static List<PlannedLot> AssignIncidents(
-        List<PlannedLot> lots, Dictionary<DateOnly, ClimateDay> climate, DateOnly autoStart, DateOnly today)
+        List<PlannedLot> lots, Dictionary<DateOnly, ClimateDay> climate, DateOnly today)
     {
         var closed = lots.Where(l => l.PlannedEnd < today).ToList();
         var taken = new HashSet<PlannedLot>();
@@ -186,12 +189,12 @@ internal static class HistoryPlanner
         }
 
         var firstSummer = lots.Min(l => l.Sowing).Year;
-        var pythium = Pick(l => l.Bench == 0 && l.Sowing < autoStart && IsSummer(l.Sowing), Heat);
+        var pythium = Pick(l => l.Bench == 0 && IsSummer(l.Sowing), Heat);
         var tipburn = Pick(l => l.Bench == 1 && IsSummer(l.Sowing) && l.Sowing.Year > firstSummer, Heat);
-        var offline = Pick(l => l.Bench == 0 && l.Sowing < autoStart && l.Sowing.Month is >= 4 and <= 6, _ => 0);
-        var probe = Pick(l => l.Bench == 1 && l.Sowing < autoStart && l.Sowing.Month is >= 7 and <= 9, _ => 0);
-        var clogged = Pick(l => l.Bench == 0 && l.Sowing >= autoStart, l => -l.Sowing.DayNumber);
-        var empty = Pick(l => l.Bench == 1 && l.Sowing >= autoStart, l => l.Sowing.DayNumber);
+        var offline = Pick(l => l.Bench == 0 && l.Sowing.Month is >= 4 and <= 6, _ => 0);
+        var probe = Pick(l => l.Bench == 1 && l.Sowing.Month is >= 7 and <= 9, _ => 0);
+        var clogged = Pick(l => l.Bench == 0, l => l.Sowing.DayNumber);
+        var empty = Pick(l => l.Bench == 1, l => l.Sowing.DayNumber);
 
         var incidents = new Dictionary<PlannedLot, Incident>();
         void Set(PlannedLot? lot, Incident incident)

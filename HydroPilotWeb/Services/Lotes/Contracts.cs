@@ -8,7 +8,8 @@ namespace HydroPilotWeb.Services.Lotes;
 /// </summary>
 public static class CommercialStageNames
 {
-    public const string EnDesarrollo = "En desarrollo";
+    /// <summary>Planta activa que todavía no es candidata a Baby Leaf, Baby Leaf ni adulta (antes "En desarrollo").</summary>
+    public const string Activa = "Activa";
     public const string CandidataBabyLeaf = "Candidata Baby Leaf";
     public const string BabyLeafApta = "Baby Leaf";
     public const string CosechaConvencional = "Adulta";

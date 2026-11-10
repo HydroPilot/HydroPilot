@@ -59,7 +59,8 @@ public static class DemoDatasetVerifier
             foreach (var e in data.ScriptedEvents.Where(e => e.LotId == generated.Id))
             {
                 if (e.NotReady > 0)
-                    issues.Add($"{lot.Name}: en el {e.Event} del {e.Date:dd/MM/yyyy}, {e.NotReady} de {e.Plants} no estaban como Baby Leaf en su evaluación.");
+                    issues.Add($"{lot.Name}: en el {e.Event} del {e.Date:dd/MM/yyyy}, {e.NotReady} de {e.Plants} no estaban como " +
+                               $"{(e.Event.Contains("Baby Leaf") ? "Baby Leaf" : "Adulta")} en su evaluación.");
                 var (min, max) = e.Event switch
                 {
                     "Trasplante" => (g.DecisionGdd, g.BabyLeafGddMax),
@@ -87,7 +88,7 @@ public static class DemoDatasetVerifier
             {
                 CommercialStageNames.BabyLeafApta => DemoMapCodes.BabyLeaf,
                 CommercialStageNames.CandidataBabyLeaf => DemoMapCodes.Candidate,
-                CommercialStageNames.EnDesarrollo => DemoMapCodes.Developing,
+                CommercialStageNames.Activa => DemoMapCodes.Active,
                 { } other => other,
                 null => "sin estado",
             },

@@ -143,7 +143,7 @@
                         <p>
                             @if (_lastDataset is { } dataset)
                             {
-                                <span>Historial cargado del dataset <strong>@dataset.FileName</strong> el @(dataset.LoadedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")).</span>
+                                <span>Historial generado con el dataset <strong>@dataset.FileName</strong> el @(dataset.LoadedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")).</span>
                             }
                             else
                             {
@@ -155,8 +155,21 @@
                             Regenerarlo lo lleva hasta hoy.
                         </p>
                         <p class="action-card__hint">
-                            Dataset: el Excel de la demo (notas/demo/dataset-demo.xlsx). Se controla antes de cargar: si no
-                            cierra, no se toca nada.
+                            @if (SimulationEnvironment.HasDataset)
+                            {
+                                <span>
+                                    "Regenerar historial" usa el dataset del repositorio
+                                    (<code>@SimulationEnvironment.Options.DatasetFile</code>). "Cargar otro Excel" lo
+                                    reemplaza (subilo a git para compartirlo). Se controla antes: si no cierra, no se toca nada.
+                                </span>
+                            }
+                            else
+                            {
+                                <span>
+                                    No está el dataset del repositorio (<code>@SimulationEnvironment.Options.DatasetFile</code>):
+                                    "Regenerar historial" es al azar. Con "Cargar otro Excel" queda guardado ahí.
+                                </span>
+                            }
                         </p>
                         <p class="action-card__warning">
                             <strong>Reemplaza</strong> lotes, telemetría, control, anomalías, notificaciones
@@ -168,7 +181,7 @@
                     @if (_datasetFile is not null && !_isProcessing)
                     {
                         <div class="confirm-box">
-                            <span>¿Cargar @_datasetName? Reemplaza el historial.</span>
+                            <span>¿Cargar @_datasetName? Reemplaza el dataset del repositorio y el historial.</span>
                             <div class="confirm-box__buttons">
                                 <button class="btn btn-danger" @onclick="ImportDatasetAsync">Sí, cargar</button>
                                 <button class="btn btn-secondary" @onclick="ClearDatasetFile">Cancelar</button>
@@ -178,7 +191,7 @@
                     else if (_showSimulationConfirm)
                     {
                         <div class="confirm-box">
-                            <span>¿Regenerar el historial de simulación?</span>
+                            <span>@(_regenerateRandom ? "¿Regenerar el historial al azar (sin el dataset)?" : SimulationEnvironment.HasDataset ? "¿Regenerar el historial con el dataset?" : "¿Regenerar el historial de simulación?")</span>
                             <div class="confirm-box__buttons">
                                 <button class="btn btn-danger" @onclick="ExecuteRegenerateSimulationAsync" disabled="@_isProcessing">Sí, regenerar</button>
                                 <button class="btn btn-secondary" @onclick="() => _showSimulationConfirm = false" disabled="@_isProcessing">Cancelar</button>
@@ -188,16 +201,16 @@
                     else
                     {
                         <div class="dataset-actions">
-                            <button class="btn btn-primary" @onclick="() => _showSimulationConfirm = true" disabled="@_isProcessing">
-                                @(_isProcessing && _regenerating ? "Generando…" : _lastDataset is null ? "Regenerar historial" : "Regenerar al azar")
+                            <button class="btn btn-primary" @onclick="() => ConfirmRegenerate(random: false)" disabled="@_isProcessing">
+                                @(_isProcessing && _regenerating ? "Generando…" : "Regenerar historial")
                             </button>
                             <label class="btn btn-secondary dataset-file @(_isProcessing ? "dataset-file--disabled" : null)">
-                                Cargar dataset (Excel)
+                                Cargar otro Excel
                                 <InputFile OnChange="OnDatasetSelectedAsync" accept=".xlsx" disabled="@_isProcessing" />
                             </label>
-                            @if (_lastDataset is not null)
+                            @if (SimulationEnvironment.HasDataset)
                             {
-                                <button class="btn btn-secondary" @onclick="ReimportDatasetAsync" disabled="@_isProcessing">Volver a cargar el último</button>
+                                <button class="btn btn-secondary" @onclick="() => ConfirmRegenerate(random: true)" disabled="@_isProcessing">Regenerar al azar</button>
                             }
                         </div>
                     }
@@ -224,7 +237,7 @@
                     <h4>Recrear Lote Demo 01</h4>
                     <p>
                         Crea un lote demo activo (<strong>Lote Demo 01</strong>) con grilla de 6x10 posiciones,
-                        etapas comerciales representativas (Baby Leafs, candidatas, en desarrollo y riesgo)
+                        etapas comerciales representativas (Baby Leafs, candidatas, activas y riesgo)
                         y asignación del nodo <code>rpi-inv-01</code>.
                     </p>
                     <p class="action-card__hint">
@@ -246,7 +259,7 @@
                     <h4>Ejecutar flujo diario de un lote</h4>
                     <p>
                         Reevalúa las plantas activas del lote con los GDD hasta la fecha elegida: etapa fenológica,
-                        estado comercial (Baby Leaf, candidata, en desarrollo o riesgo) y estado predominante del lote.
+                        estado comercial (Baby Leaf, candidata, activa o riesgo) y estado predominante del lote.
                         Los cambios quedan en el historial de cada planta; las cosechadas y descartadas no se tocan.
                     </p>
                     <p class="action-card__warning">
@@ -1274,7 +1287,17 @@
     private IReadOnlyList<string> _simulationIssues = [];
     private bool _simulationIssuesAreErrors;
 
-    private Task ExecuteRegenerateSimulationAsync() => RunSimulationAsync(() => SimulationEnvironment.RegenerateAsync());
+    private bool _regenerateRandom;
+
+    private void ConfirmRegenerate(bool random)
+    {
+        _regenerateRandom = random;
+        _showSimulationConfirm = true;
+    }
+
+    private Task ExecuteRegenerateSimulationAsync() => _regenerateRandom
+        ? RunSimulationAsync(() => SimulationEnvironment.RegenerateRandomAsync())
+        : RunSimulationAsync(() => SimulationEnvironment.RegenerateAsync());
 
     private async Task OnDatasetSelectedAsync(InputFileChangeEventArgs e)
     {
@@ -1305,7 +1328,6 @@
         return RunSimulationAsync(() => SimulationEnvironment.ImportAsync(new MemoryStream(file), name));
     }
 
-    private Task ReimportDatasetAsync() => RunSimulationAsync(() => SimulationEnvironment.ReimportAsync());
 
     private async Task RunSimulationAsync(Func<Task<SimulationEnvironmentResult>> action)
     {

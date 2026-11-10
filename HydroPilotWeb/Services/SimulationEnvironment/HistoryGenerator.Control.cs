@@ -8,9 +8,8 @@ using HydroPilotWeb.Services.Notifications;
 namespace HydroPilotWeb.Services.SimulationEnvironment;
 
 /// <summary>
-/// Control del tanque en el historial, con las mismas reglas que la web: en la época manual un operario corrige a ojo
-/// a las 8:30, 13 y 17:30 (fines de semana, a las 10) apuntando a su costumbre; desde que se activó el automático, el
-/// motor (<see cref="ControlEngine"/>) en cada lectura. Efecto medido, calibración y pausas como ControlService.
+/// Control del tanque en el historial, con las mismas reglas que la web: siempre automático, el motor
+/// (<see cref="ControlEngine"/>) en cada lectura. Efecto medido, calibración y pausas como ControlService.
 /// </summary>
 public sealed partial class HistoryGenerator
 {
@@ -26,43 +25,10 @@ public sealed partial class HistoryGenerator
     private ControlEngine.Settings EngineSettings => new(
         _control.MixingMinutes, _control.DirectionChangeMinutes, _control.PollStaleMinutes, _control.TrendMinutes);
 
-    private void Control(BenchRun bench, DateTime t, DateTime local)
+    private void Control(BenchRun bench, DateTime t)
     {
-        if (bench.Mode == ControlContract.ModeAuto)
-        {
-            if (!bench.IsOffline(t))
-                AutoControl(bench, t);
-            return;
-        }
-
-        var minute = (int)local.TimeOfDay.TotalMinutes;
-        var weekend = local.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
-
-        // Con una alerta crítica abierta en horario de trabajo, el operario corrige en ~30 min (una vez por alerta).
-        if (local.Hour is >= 8 and < 19)
-        {
-            var prefix = EpisodeKey(bench, string.Empty);
-            foreach (var (key, episode) in bench.Lot!.OpenEpisodes)
-            {
-                if (key.StartsWith(prefix, StringComparison.Ordinal)
-                    && episode.Event.Status == Models.AnomalyContract.StatusAbierta && !episode.Answered
-                    && t - episode.Event.CreatedAtUtc >= TimeSpan.FromMinutes(30))
-                {
-                    episode.Answered = true;
-                    ManualCorrection(bench, t, key[prefix.Length..]);
-                    return;
-                }
-            }
-        }
-
-        int[] checks = weekend ? [10 * 60] : [8 * 60 + 30, 13 * 60, 17 * 60 + 30];
-        foreach (var check in checks)
-        {
-            if (minute >= check && minute < check + _stepMinutes)
-                ManualCorrection(bench, t, ControlContract.ParameterEc);
-            else if (minute >= check + 10 && minute < check + 10 + _stepMinutes)
-                ManualCorrection(bench, t, ControlContract.ParameterPh);
-        }
+        if (bench.Mode == ControlContract.ModeAuto && !bench.IsOffline(t))
+            AutoControl(bench, t);
     }
 
     // ------------------------------------------------------------------
@@ -133,62 +99,8 @@ public sealed partial class HistoryGenerator
     };
 
     // ------------------------------------------------------------------
-    // Operario (época manual) y reposición de nivel
+    // Reposición de nivel
     // ------------------------------------------------------------------
-
-    /// <summary>El operario mira la última lectura y, si se fue de lo que él busca, pide una dosis a ojo con la vista.</summary>
-    private void ManualCorrection(BenchRun bench, DateTime t, string parameter)
-    {
-        var run = bench.Lot!;
-        if (bench.Commands.Any(c => ControlRules.IsInFlight(c.Command.Status)))
-            return;
-        var last = bench.Last(parameter);
-        if (last is null)
-            return;
-
-        var band = BandFor(run, parameter);
-        var isPh = parameter == ControlContract.ParameterPh;
-        var aim = (band.Target ?? last.Value) + (decimal)(isPh ? run.PhBias : run.EcBias);
-        if (band is { Min: { } min, Max: { } max })
-        {
-            var margin = (max - min) * 0.25m;
-            aim = Math.Clamp(aim, min + margin, max - margin);
-        }
-        var value = last.Value;
-        if (Math.Abs(value - aim) <= (isPh ? 0.15m : 0.12m))
-            return;
-
-        var kind = isPh
-            ? value > aim ? ControlContract.KindPhDown : ControlContract.KindPhUp
-            : value < aim ? ControlContract.KindNutrientA : ControlContract.KindWater;
-
-        // Nutrientes: como el motor, la Solución A o la B (la que quedó atrás de su parte), con la dosis de la mezcla.
-        ControlEngine.NutrientChoice? nutrient = null;
-        if (kind == ControlContract.KindNutrientA)
-        {
-            nutrient = ControlEngine.ChooseNutrient(Pumps(bench, t), SolutionAShare(bench));
-            if (nutrient is null)
-                return;
-            kind = nutrient.Pump.Kind;
-        }
-        var pump = bench.Pumps[kind];
-        var effect = nutrient?.MixEffect ?? pump.Effect ?? ControlContract.DefaultFor(kind)?.Effect ?? 1m;
-        if (ControlEngine.RawDose(kind, value, aim, bench.Bench.ReservoirLiters, effect, bench.Bench.SourceWaterEc) is not { } raw
-            || raw <= 0m)
-            return;
-
-        var step = ControlEngine.Step(pump.Actuator.Unit);
-        var guess = raw * (decimal)(0.75 + _rng.NextDouble() * 0.3);
-        if (nutrient is not null)
-            guess = nutrient.Part(guess);
-        var amount = Math.Round(guess / (step * 5), MidpointRounding.AwayFromZero) * step * 5;
-        amount = Math.Min(Math.Max(step, amount), pump.Actuator.MaxPerCommand);
-        amount = Math.Min(amount, Math.Floor((pump.Actuator.MaxPerDay - Used24h(bench, pump.Actuator.Id, t)) / step) * step);
-        if (amount < step)
-            return;
-
-        Execute(bench, t.AddMinutes(2), kind, amount, ControlContract.SourceManual, _w.Operator.Name, band, null);
-    }
 
     /// <summary>A las 9 el operario repone el nivel con agua de red si bajó más del 12 % (y completa a las 9:10).</summary>
     private void TopUp(BenchRun bench, DateTime t)

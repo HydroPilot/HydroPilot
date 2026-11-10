@@ -1,6 +1,5 @@
 @using HydroPilotWeb.Models
 @using HydroPilotWeb.Services.Lotes
-@using Microsoft.AspNetCore.Components.Forms
 @namespace HydroPilotWeb.Components.Lotes
 
 <div class="card plant-detail h-100">
@@ -22,24 +21,29 @@
         {
             var stageStyle = CommercialStagePalette.ForStage(Detail.CommercialStageName);
             // Cosechada / descartada llevan la fecha en el mismo cartel.
+            // La activa no lleva cartel propio: su etapa comercial ya lo dice (Activa, Candidata, Baby Leaf, Adulta).
             var opState = Detail.OperationalState switch
             {
                 PlantOperationalState.Cosechada => (Label: $"Cosechada{When(Detail.HarvestDate)}", Css: "badge text-bg-success"),
                 PlantOperationalState.Descartada => (Label: $"Descartada{When(Detail.DiscardDate)}", Css: "badge text-bg-secondary"),
-                _ => (Label: "Activa", Css: "badge text-bg-primary")
+                _ => (Label: (string?)null, Css: string.Empty)
             };
 
             <div class="d-flex align-items-start justify-content-between gap-2">
                 <div class="d-flex align-items-center gap-2 flex-wrap">
                     <h6 class="card-title mb-0">Planta F@(Detail.Row)-C@(Detail.Column)</h6>
-                    <span class="@opState.Css">@opState.Label</span>
+                    @if (opState.Label is not null)
+                    {
+                        <span class="@opState.Css">@opState.Label</span>
+                    }
                 </div>
                 @CloseButton
             </div>
 
-            @* El estado comercial va como cartel en lugar de una frase que decía lo mismo. *@
+            @* El estado comercial va como cartel en lugar de una frase que decía lo mismo. La descartada no lo lleva: su
+               última etapa (por ejemplo "Activa") confunde; alcanza con el cartel "Descartada" y el motivo. *@
             <div class="plant-detail__stage">
-                @if (Detail.CommercialStageName is not null)
+                @if (Detail.CommercialStageName is not null && Detail.OperationalState != PlantOperationalState.Descartada)
                 {
                     <span class="badge plant-detail__stage-badge" style="background: @stageStyle.Background; color: @stageStyle.Color;">@Detail.CommercialStageName</span>
                 }
@@ -62,10 +66,6 @@
                         <dd>@(Detail.PhenologicalStageName ?? "—")</dd>
                     </div>
                     <div>
-                        <dt>Crecimiento</dt>
-                        <dd>@(Detail.GrowthRate is { } growth ? $"{LotFormat.Num(growth)} %/día" : "—")</dd>
-                    </div>
-                    <div>
                         <dt>Última evaluación</dt>
                         <dd>@(Detail.LastEvaluationAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</dd>
                     </div>
@@ -82,27 +82,6 @@
                         else
                         {
                             <dd>Sin imagen</dd>
-                        }
-                        @if (OnUploadImage.HasDelegate)
-                        {
-                            <div>
-                                <InputFile OnChange="HandleFileSelected" accept=".png,.jpg,.jpeg,.webp,image/*" disabled="@UploadingImage" class="d-none" id="@($"plant-img-upload-{Detail.PlantId}")" />
-                                <label for="@($"plant-img-upload-{Detail.PlantId}")" class="btn btn-outline-primary btn-sm mt-1 @(UploadingImage ? "disabled" : "")">
-                                    @if (UploadingImage)
-                                    {
-                                        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-                                        <span>Analizando...</span>
-                                    }
-                                    else
-                                    {
-                                        <span>Subir / actualizar foto</span>
-                                    }
-                                </label>
-                                @if (!string.IsNullOrWhiteSpace(UploadError))
-                                {
-                                    <div class="text-danger small mt-1">@UploadError</div>
-                                }
-                            </div>
                         }
                     </div>
                     @if (!string.IsNullOrEmpty(Detail.VisionPredominantClass) || !string.IsNullOrEmpty(Detail.VisionHealthClass))
@@ -123,17 +102,6 @@
                                     @(Detail.VisionHealthClass ?? "—")
                                 </span>
                             </dd>
-                        </div>
-                    }
-                    @if (Detail.VisionFoliarArea.HasValue || Detail.VisionLeafLength.HasValue)
-                    {
-                        <div>
-                            <dt>Área foliar</dt>
-                            <dd>@(Detail.VisionFoliarArea.HasValue ? $"{Detail.VisionFoliarArea.Value:0.##} cm²" : "—")</dd>
-                        </div>
-                        <div>
-                            <dt>Longitud hoja</dt>
-                            <dd>@(Detail.VisionLeafLength.HasValue ? $"{Detail.VisionLeafLength.Value:0.##} cm" : "—")</dd>
                         </div>
                     }
                 </dl>
@@ -179,18 +147,6 @@
     /// <summary>Si se pasa, muestra un botón × para cerrar (uso como popover en la vista Lotes).</summary>
     [Parameter] public EventCallback OnClose { get; set; }
 
-    [Parameter] public EventCallback<IBrowserFile> OnUploadImage { get; set; }
-    [Parameter] public bool UploadingImage { get; set; }
-    [Parameter] public string? UploadError { get; set; }
-
-    private async Task HandleFileSelected(InputFileChangeEventArgs e)
-    {
-        if (e.File is not null && OnUploadImage.HasDelegate)
-        {
-            await OnUploadImage.InvokeAsync(e.File);
-        }
-    }
-
     private RenderFragment? CloseButton => OnClose.HasDelegate
         ? @<button type="button" class="btn-close btn-sm" aria-label="Cerrar detalle" @onclick="OnClose"></button>
         : null;
@@ -199,7 +155,7 @@
     {
         "Cosechada" => "var(--accent)",
         "Descartada" => "#8a94a0",
-        null or "Activa" => "var(--text-muted)",
+        null => "var(--text-muted)",
         _ => CommercialStagePalette.ForStage(state).Background
     };
 

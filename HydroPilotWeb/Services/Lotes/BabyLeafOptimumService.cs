@@ -7,8 +7,9 @@ using HydroPilotWeb.Services.Forecasting;
 namespace HydroPilotWeb.Services.Lotes;
 
 /// <summary>
-/// Óptimo de corte Baby Leaf de un lote o escenario (<see cref="BabyLeafOptimumRules"/>): la curva de aptas del lote
-/// (de sus evaluaciones diarias) y el pico de los lotes cerrados parecidos. Lo usan Lotes, Simulación y el dashboard.
+/// Óptimo de corte Baby Leaf de un lote o escenario (<see cref="BabyLeafOptimumRules"/>): la curva del lote (aptas y
+/// score general, de sus evaluaciones diarias) y el pico de los lotes cerrados parecidos. Lo usan Lotes, Simulación y el
+/// dashboard.
 /// </summary>
 public class BabyLeafOptimumService
 {
@@ -48,7 +49,11 @@ public class BabyLeafOptimumService
         return await CurveAsync(context, lotId, ct, _cache);
     }
 
-    /// <summary>Curva de aptas del lote: por día, el GDD de la evaluación y cuántas plantas salieron Baby Leaf.</summary>
+    /// <summary>
+    /// Curva del lote: por día, el GDD de la evaluación, cuántas plantas salieron Baby Leaf y, de las que eran de la ruta
+    /// Baby Leaf ese día (no trasplantadas, o el mismo día del trasplante, que se evalúa antes), cuántas y su score
+    /// promedio (el score general).
+    /// </summary>
     public static async Task<IReadOnlyList<AptCurvePoint>> CurveAsync(
         HydroPilotDbContext context,
         int lotId,
@@ -61,19 +66,22 @@ public class BabyLeafOptimumService
 
         var rows = await context.BabyLeafEvaluations.AsNoTracking()
             .Where(e => e.Plant!.LotId == lotId)
-            .GroupBy(e => e.EvaluatedAtUtc.Date)
-            .Select(g => new
-            {
-                Day = g.Key,
-                Gdd = g.Average(e => e.GddAtEvaluation),
-                Apt = g.Count(e => e.Result == CommercialStageNames.BabyLeafApta),
-                Evaluated = g.Count(),
-            })
+            .Select(e => new { e.EvaluatedAtUtc, e.GddAtEvaluation, e.Result, e.BabyLeafScore, e.Plant!.TransplantedOn })
             .ToListAsync(ct);
 
         IReadOnlyList<AptCurvePoint> result = rows
-            .OrderBy(r => r.Day)
-            .Select(r => new AptCurvePoint(DateOnly.FromDateTime(r.Day), Math.Round(r.Gdd, 1), r.Apt, r.Evaluated))
+            .GroupBy(e => DateOnly.FromDateTime(e.EvaluatedAtUtc))
+            .OrderBy(g => g.Key)
+            .Select(g =>
+            {
+                var dense = g.Where(e => e.TransplantedOn is not { } transplanted || g.Key <= transplanted).ToList();
+                return new AptCurvePoint(
+                    g.Key,
+                    Math.Round(g.Average(e => e.GddAtEvaluation), 1),
+                    g.Count(e => e.Result == CommercialStageNames.BabyLeafApta),
+                    dense.Count,
+                    dense.Count > 0 ? Math.Round(dense.Average(e => e.BabyLeafScore), 2) : null);
+            })
             .ToList();
 
         cache?.Set(cacheKey, result, TimeSpan.FromSeconds(60));
