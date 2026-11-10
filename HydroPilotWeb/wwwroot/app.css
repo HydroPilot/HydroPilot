@@ -4955,20 +4955,6 @@ button.lot-chip[aria-pressed="true"] {
     overflow-wrap: anywhere;
 }
 
-.plant-facts__wide {
-    grid-column: 1 / -1;
-}
-
-.plant-facts__image {
-    display: block;
-    width: 100%;
-    max-height: 260px;
-    margin-top: 4px;
-    border-radius: 10px;
-    object-fit: cover;
-    background: var(--chip-bg);
-}
-
 /* Historial: línea de tiempo vertical, sin tabla ni fondo. */
 .plant-history__title {
     margin: 14px 0 8px;

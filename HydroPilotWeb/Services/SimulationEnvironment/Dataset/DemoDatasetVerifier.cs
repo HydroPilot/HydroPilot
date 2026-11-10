@@ -89,6 +89,7 @@ public static class DemoDatasetVerifier
                 CommercialStageNames.BabyLeafApta => DemoMapCodes.BabyLeaf,
                 CommercialStageNames.CandidataBabyLeaf => DemoMapCodes.Candidate,
                 CommercialStageNames.Activa => DemoMapCodes.Active,
+                CommercialStageNames.RiesgoFueraDeVentana => DemoMapCodes.Risk,
                 { } other => other,
                 null => "sin estado",
             },

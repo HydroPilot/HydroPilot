@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security;
 using System.Text;
 using HydroPilotWeb.Models;
+using HydroPilotWeb.Models.Notifications;
 using HydroPilotWeb.Services.Lotes;
 using HydroPilotWeb.Services.SimulationEnvironment;
 using HydroPilotWeb.Services.SimulationEnvironment.Dataset;
@@ -460,5 +461,66 @@ public class RepositoryDatasetTests
                 return candidate;
         }
         throw new FileNotFoundException($"No está {relative} en el repositorio.");
+    }
+}
+
+/// <summary>
+/// Un lote en su día de corte (en curso, sin trasplantar, con más de la mitad del denso como Baby Leaf) y dos plantas que
+/// la cámara vio con un patógeno: el de la demo (Lote C01 y las de riesgo de A27).
+/// </summary>
+public class DemoDatasetCutDayTests
+{
+    private static readonly Lazy<(HistoryData Data, int LotId)> History = new(() =>
+    {
+        var today = DemoDatasets.Today;
+        var sowing = today.AddDays(-1);
+        while (DemoClimateModel.Gdd(DemoClimate.Default, sowing, today) < 390)
+            sowing = sowing.AddDays(-1);
+        var lot = DemoDatasets.Lot(3, "Lote C01", "Circuito 1", sowing);
+        var codes = new Dictionary<(int, int), string>();
+        var n = 0;
+        foreach (var (code, count) in new[] { (DemoMapCodes.BabyLeaf, 150), (DemoMapCodes.Candidate, 20), (DemoMapCodes.Active, 28), (DemoMapCodes.Risk, 2) })
+        {
+            for (var i = 0; i < count; i++, n++)
+                codes[(n / 20 + 1, n % 20 + 1)] = code;
+        }
+        var plan = DemoDatasetPlanner.Plan(DemoDatasets.Dataset([lot], [new DemoMap(5, "Lote C01", codes)]), today);
+        Assert.Empty(plan.Errors);
+        var data = HistoryGenerator.Generate(SimulationWorlds.Seeded(), new SimulationEnvironmentOptions(), ShortHistory.Now, script: plan.Script);
+        return (data, data.Lots.Single().Id);
+    });
+
+    [Fact]
+    public void Hoy_el_score_general_deja_de_mejorar_y_es_el_dia_de_cortar()
+    {
+        var (data, lotId) = History.Value;
+        var plants = data.Plants.Where(p => p.LotId == lotId).Select(p => p.Id).ToHashSet();
+        // La curva como la arma la app (BabyLeafOptimumService.CurveAsync; acá no hay trasplantadas).
+        var curve = data.Evaluations.Where(e => plants.Contains(e.PlantId))
+            .GroupBy(e => DateOnly.FromDateTime(e.EvaluatedAtUtc))
+            .OrderBy(g => g.Key)
+            .Select(g => new AptCurvePoint(g.Key, Math.Round(g.Average(e => e.GddAtEvaluation), 1),
+                g.Count(e => e.Result == CommercialStageNames.BabyLeafApta), g.Count(), Math.Round(g.Average(e => e.BabyLeafScore), 2)))
+            .ToList();
+
+        Assert.Equal(DemoDatasets.Today, BabyLeafOptimumRules.CutDay(curve)?.Date);
+        // La vista calcula el GDD de hoy con las lecturas y puede dar un poco menos que el de la evaluación: igual es hoy.
+        var accumulated = curve[^1].Gdd - 0.5m;
+        var optimum = BabyLeafOptimumRules.Resolve(curve, 380m, accumulated, 250m, 450m);
+        Assert.True(optimum.PeakReached);
+        Assert.True(optimum.Gdd <= accumulated);
+    }
+
+    [Fact]
+    public void Dos_plantas_en_riesgo_por_lo_que_vio_la_camara_sin_poner_en_riesgo_al_lote()
+    {
+        var (data, lotId) = History.Value;
+        var stages = SimulationWorlds.Seeded().CommercialStageIds;
+        var active = data.Plants.Where(p => p.LotId == lotId && p.OperationalState == PlantOperationalState.Activa).ToList();
+
+        Assert.Equal(2, active.Count(p => p.CommercialStageId == stages[CommercialStageNames.RiesgoFueraDeVentana]));
+        Assert.Equal(150, active.Count(p => p.CommercialStageId == stages[CommercialStageNames.BabyLeafApta]));
+        Assert.Equal(2, data.Anomalies.Count(a => a.LotId == lotId && a.Type == "PATOGENO_FOLIAR_VISUAL" && a.Status == AnomalyContract.StatusAbierta));
+        Assert.Equal(2, data.Alerts.Count(a => a.LotId == lotId && a.Type == NotificationTypes.AlertaSanitaria));
     }
 }

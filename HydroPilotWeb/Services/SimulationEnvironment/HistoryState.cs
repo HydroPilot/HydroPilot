@@ -290,6 +290,9 @@ internal enum PlantFate
     ActiveDeveloping,
     ActiveCandidate,
     ActiveBabyLeaf,
+
+    /// <summary>Activa en el denso que la cámara vio con un patógeno ayer (mapa R): Riesgo desde ese día.</summary>
+    ActiveRisk,
 }
 
 /// <summary>Una planta durante el recorrido: en su hueco del circuito denso o, trasplantada, en uno de Adultas.</summary>
@@ -347,6 +350,10 @@ internal sealed class PlantRun(Plant plant, double vigor)
     /// <summary>Motivo del descarte que le toca (decide cómo crece: grande si se pasa de tamaño, enferma si es Pythium…).</summary>
     public string? FateReason { get; set; }
     public DateOnly? FateDate { get; set; }
+
+    /// <summary>Desde cuándo la cámara le ve un patógeno (Riesgo de la planta sola, no del lote) y el motivo.</summary>
+    public DateOnly? RiskFrom { get; set; }
+    public string? RiskReason { get; set; }
 
     public bool Transplants => Fate is PlantFate.TransplantActive or PlantFate.TransplantCut or PlantFate.TransplantDiscard;
 

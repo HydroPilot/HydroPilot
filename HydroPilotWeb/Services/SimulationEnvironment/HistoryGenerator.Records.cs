@@ -150,6 +150,45 @@ public sealed partial class HistoryGenerator
     }
 
     // ------------------------------------------------------------------
+    // Patógeno que vio la cámara en una planta (mapa R)
+    // ------------------------------------------------------------------
+
+    private const string VisualRiskClass = "DownyMildew";
+    private const string VisualRiskName = "Mildiu Velloso (Bremia lactucae - manchas cloróticas/algodonosas)";
+    private const decimal VisualRiskConfidence = 0.81m;
+
+    /// <summary>
+    /// Anomalía visual abierta y alerta sanitaria de una planta, como PlantImageController cuando la foto muestra un
+    /// patógeno (≥ 70 % de certeza; advertencia y alerta alta por debajo de 88 %). No pone en riesgo al resto del lote:
+    /// AnomalyLotRiskEvaluator no cuenta las visuales.
+    /// </summary>
+    private void VisualRiskAnomaly(LotRun run, PlantRun plant, DateTime t)
+    {
+        var p = plant.Plant;
+        var title = $"Patógeno detectado: {VisualRiskName}";
+        _data.Anomalies.Add(new AnomalyEvent
+        {
+            Id = ++_anomalyId,
+            Type = "PATOGENO_FOLIAR_VISUAL",
+            LotId = run.Lot.Id,
+            GreenhouseId = _w.GreenhouseId,
+            Severity = AnomalyContract.SeverityAdvertencia,
+            ObservedValue = VisualRiskConfidence,
+            RuleCode = $"PATHOGEN_{VisualRiskClass.ToUpperInvariant()}",
+            RuleDescription = $"{title} en planta #{p.Id} (F{p.Row}-C{p.Column}, Lote #{p.LotId}).",
+            FirstObservedAtUtc = t,
+            LastObservedAtUtc = t,
+            ReadingCount = 1,
+            Status = AnomalyContract.StatusAbierta,
+            Fingerprint = $"visual-{p.Id}-{VisualRiskClass}-{ToLocal(t):yyyyMMdd}",
+            CreatedAtUtc = t,
+        });
+        AddAlert(NotificationTypes.AlertaSanitaria, NotificationSeverities.Alta, title,
+            $"Diagnóstico visual en planta #{p.Id}: aislar o retirar la planta y revisar las vecinas (Certeza: {VisualRiskConfidence:P1}).",
+            $"visual-alert-{p.Id}-PATHOGEN_{VisualRiskClass.ToUpperInvariant()}-{ToLocal(t):yyyyMMdd}", run.Lot.Id, t.AddMinutes(1));
+    }
+
+    // ------------------------------------------------------------------
     // Aviso de cosecha inminente (una vez por día)
     // ------------------------------------------------------------------
 

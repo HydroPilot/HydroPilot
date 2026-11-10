@@ -69,21 +69,7 @@
                         <dt>Última evaluación</dt>
                         <dd>@(Detail.LastEvaluationAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</dd>
                     </div>
-                    @* La imagen va a todo el ancho, debajo de la última evaluación, para verla grande. *@
-                    <div class="plant-facts__wide">
-                        <dt>Imagen</dt>
-                        @if (Detail.HasImage && !string.IsNullOrWhiteSpace(Detail.LastImagePath))
-                        {
-                            <dd>
-                                <img class="plant-facts__image" src="@Detail.LastImagePath"
-                                     alt="@($"Imagen de la planta F{Detail.Row}-C{Detail.Column}")" title="@Detail.LastImageFileName" />
-                            </dd>
-                        }
-                        else
-                        {
-                            <dd>Sin imagen</dd>
-                        }
-                    </div>
+                    @* Sin la imagen de la planta (desde 2026-11-10): las del historial no son fotos de verdad. *@
                     @if (!string.IsNullOrEmpty(Detail.VisionPredominantClass) || !string.IsNullOrEmpty(Detail.VisionHealthClass))
                     {
                         <div>
@@ -131,7 +117,7 @@
                     </ol>
                 }
 
-                @* "Sin imagen" ya se ve en los datos de la planta. *@
+                @* "Sin imagen" no se muestra: la imagen no va en el detalle. *@
                 @foreach (var warning in Detail.Warnings.Where(w => !w.StartsWith("Sin imagen", StringComparison.Ordinal)))
                 {
                     <div class="small text-muted mt-2">@warning</div>

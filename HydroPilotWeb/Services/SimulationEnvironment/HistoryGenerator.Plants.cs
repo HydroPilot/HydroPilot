@@ -164,10 +164,15 @@ public sealed partial class HistoryGenerator
                     run.ScoreSamples.Add(new Control.RecipeRules.ScoreSample(plant.Plant.Id, DateOnly.FromDateTime(t), score.Score, Math.Round(gdd, 2)));
                 }
                 plant.LastScore = score.Score;
+                // Un patógeno que vio la cámara en esa planta (mapa R): Riesgo de ella sola desde ese día, como cuando llega
+                // la foto (PlantImageController), con su anomalía y alerta el primer día.
+                var plantRisk = plant.RiskFrom is { } riskFrom && date >= riskFrom ? plant.RiskReason : risk;
                 var decision = PlantDecisionEngine.Evaluate(
-                    new PlantDecisionEngine.PlantEvaluationInput(gdd, score.Score, score.Mandatory, risk is not null, risk, plant.AdultRoute, size),
+                    new PlantDecisionEngine.PlantEvaluationInput(gdd, score.Score, score.Mandatory, plantRisk is not null, plantRisk, plant.AdultRoute, size),
                     thresholds);
                 ApplyDecision(run, plant, decision, stage, t);
+                if (plant.RiskFrom == date)
+                    VisualRiskAnomaly(run, plant, t);
                 if (decision.Discard)
                     toDiscard.Add((plant, decision.Reason ?? "Ya no puede ser Baby Leaf"));
                 if (_script is not null)
@@ -490,6 +495,10 @@ public sealed partial class HistoryGenerator
             DamagePercent = Round(plant.Damage),
             GrowthRate = Round(dayRate),
             ImageQuality = Math.Round((decimal)(0.82 + _rng.NextDouble() * 0.16), 2),
+            // Lo que vio la cámara en una planta con patógeno (mapa R); las demás, sin diagnóstico.
+            PredominantClass = plant.RiskFrom <= DateOnly.FromDateTime(ToLocal(at)) ? "FN" : null,
+            HealthClass = plant.RiskFrom <= DateOnly.FromDateTime(ToLocal(at)) ? VisualRiskClass : null,
+            HealthConfidence = plant.RiskFrom <= DateOnly.FromDateTime(ToLocal(at)) ? VisualRiskConfidence : null,
             ModelVersion = "CV-sim-1.0",
             AnalyzedAtUtc = at.AddMinutes(2),
         });

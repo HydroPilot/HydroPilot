@@ -170,13 +170,16 @@ public static class DemoMapCodes
     public const string DiscardedDense = "X";
     public const string DiscardedAdult = "X-AD";
 
+    /// <summary>Activa en el denso en Riesgo: la cámara le vio un patógeno (mildiu) ayer, con su anomalía y alerta.</summary>
+    public const string Risk = "R";
+
     public static readonly IReadOnlySet<string> All = new HashSet<string>
     {
-        Active, Candidate, BabyLeaf, Adult, CutBabyLeaf, CutAdult, DiscardedDense, DiscardedAdult,
+        Active, Candidate, BabyLeaf, Risk, Adult, CutBabyLeaf, CutAdult, DiscardedDense, DiscardedAdult,
     };
 
     /// <summary>Activas en el denso hoy.</summary>
-    public static readonly IReadOnlySet<string> ActiveDense = new HashSet<string> { Active, Candidate, BabyLeaf };
+    public static readonly IReadOnlySet<string> ActiveDense = new HashSet<string> { Active, Candidate, BabyLeaf, Risk };
 
     /// <summary>Trasplantadas (estén activas, cortadas o descartadas).</summary>
     public static readonly IReadOnlySet<string> Transplanted = new HashSet<string> { Adult, CutAdult, DiscardedAdult };
