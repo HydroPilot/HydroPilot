@@ -29,8 +29,8 @@ public static class PlantDecisionEngine
         decimal ScoreMinCandidate,  // ConfiguracionBabyLeaf.ScoreMinCandidate (arranque 60)
         decimal ScoreMinReady,      // ConfiguracionBabyLeaf.ScoreMinReady (arranque 80)
         decimal? MaxSizeFactor = null,  // tamaño máximo Baby Leaf × el ideal (arranque 1,3); null = sin control
-        decimal? AdultReadySize = null, // tamaño de cosecha adulta × el ideal Baby Leaf (arranque 2); null = por GDD
-        decimal AdultCutGdd = 650m);    // corte de adultas: sin medición de tamaño, Adulta desde acá
+        decimal? AdultReadySize = null, // tamaño de cosecha adulta × el ideal Baby Leaf (arranque 1,6); null = por GDD
+        decimal AdultCutGdd = 650m);    // corte de adultas: Adulta desde acá como máximo, llegue o no al tamaño
 
     /// <summary>
     /// Entradas de evaluación de una planta ACTIVA.
@@ -64,12 +64,15 @@ public static class PlantDecisionEngine
         {
             if (input.LotGdd < thresholds.BabyLeafGddMax)
                 return new PlantDecision(CommercialStageNames.Activa, "Trasplantada: crece en Adultas hasta la etapa adulta");
-            var ready = thresholds.AdultReadySize is { } readySize && input.SizeRatio is { } size
-                ? size >= readySize
-                : input.LotGdd >= thresholds.AdultCutGdd;
-            return ready
-                ? new PlantDecision(CommercialStageNames.CosechaConvencional, "Llegó al tamaño de cosecha adulta: apta para cortar")
-                : new PlantDecision(CommercialStageNames.Activa, "Posible adulta: todavía no llega al tamaño de cosecha adulta");
+            // Adulta al llegar al tamaño de cosecha adulta o, como máximo, al GDD del corte de adultas (desde 2026-11-10;
+            // antes, con una medición de tamaño, solo por tamaño). La cámara no mide más de ~1,8 veces el ideal y después
+            // de la ventana Baby Leaf las fotos no guardan evaluación: sin el tope quedaría Activa para siempre.
+            if (thresholds.AdultReadySize is { } readySize && input.SizeRatio is { } size && size >= readySize)
+                return new PlantDecision(CommercialStageNames.CosechaConvencional, "Llegó al tamaño de cosecha adulta: apta para cortar");
+            if (input.LotGdd >= thresholds.AdultCutGdd)
+                return new PlantDecision(CommercialStageNames.CosechaConvencional,
+                    $"Llegó al corte de adultas ({thresholds.AdultCutGdd:0} GDD): apta para cortar");
+            return new PlantDecision(CommercialStageNames.Activa, "Posible adulta: todavía no llega al tamaño de cosecha adulta");
         }
 
         // 3. Ruta Baby Leaf: la ventana cerró sin cortarla → descarte.

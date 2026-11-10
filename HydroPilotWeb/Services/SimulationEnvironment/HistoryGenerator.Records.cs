@@ -124,23 +124,6 @@ public sealed partial class HistoryGenerator
         }
     }
 
-    /// <summary>Motivo de riesgo de las plantas con un episodio abierto o reconocido (AnomalyLotRiskEvaluator).</summary>
-    private string? OpenEpisodeReason(LotRun run)
-    {
-        var open = run.OpenEpisodes.Values
-            .Where(e => e.Event.Status is AnomalyContract.StatusAbierta or AnomalyContract.StatusReconocida)
-            .OrderBy(e => e.Event.FirstObservedAtUtc)
-            .ToList();
-        if (open.Count == 0)
-            return null;
-        var first = open[0].Event;
-        return open.Count > 1
-            ? $"{open.Count} episodios abiertos ({open[0].Rule.Name}: valor {first.ObservedValue:0.##}, objetivo {first.TargetValue:0.##}, desde {first.FirstObservedAtUtc:g})"
-            : $"{open[0].Rule.Name}: valor {first.ObservedValue:0.##} fuera de banda"
-              + (first.TargetValue.HasValue ? $", objetivo {first.TargetValue:0.##}" : string.Empty)
-              + $"; desde {first.FirstObservedAtUtc:g}";
-    }
-
     /// <summary>Cuando el lote deja un circuito, lo abierto en sus sondas se resuelve (Anomalías).</summary>
     private void BuildAnomalies(LotRun run, BenchRun bench, DateTime t)
     {

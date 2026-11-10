@@ -148,7 +148,6 @@ public sealed partial class HistoryGenerator
         }
 
         // Imagen → métricas → score y tamaño de cada planta activa (desde que se ven, día 3).
-        var risk = OpenEpisodeReason(run);
         var thresholds = Thresholds;
         var scores = new List<decimal>();
         var toDiscard = new List<(PlantRun Plant, string Reason)>();
@@ -165,8 +164,9 @@ public sealed partial class HistoryGenerator
                 }
                 plant.LastScore = score.Score;
                 // Un patógeno que vio la cámara en esa planta (mapa R): Riesgo de ella sola desde ese día, como cuando llega
-                // la foto (PlantImageController), con su anomalía y alerta el primer día.
-                var plantRisk = plant.RiskFrom is { } riskFrom && date >= riskFrom ? plant.RiskReason : risk;
+                // la foto (PlantImageController), con su anomalía y alerta el primer día. Los episodios de pH o CE ya no
+                // ponen plantas en riesgo (desde 2026-11-10, como AnomalyRiskProvider).
+                var plantRisk = plant.RiskFrom is { } riskFrom && date >= riskFrom ? plant.RiskReason : null;
                 var decision = PlantDecisionEngine.Evaluate(
                     new PlantDecisionEngine.PlantEvaluationInput(gdd, score.Score, score.Mandatory, plantRisk is not null, plantRisk, plant.AdultRoute, size),
                     thresholds);
@@ -652,21 +652,13 @@ public sealed partial class HistoryGenerator
         if (run.DenseBench is { } dense && dense.Lot == run && !run.Plants.Any(p => p.Active && p.Bench == dense))
             ReleaseBench(dense, run, t.AddMinutes(45));
 
-        // Corte de las adultas en su óptimo (650 GDD más lo que frenaron por el trasplante); las que están en riesgo
-        // (anomalía abierta) esperan al día siguiente y, al final del ciclo, se descartan.
+        // Corte de las adultas en su óptimo (650 GDD más lo que frenaron por el trasplante). Desde 2026-11-10 una anomalía
+        // abierta ya no las pone en riesgo, así que no esperan: se cortan todas.
         var adults = run.Plants.Where(p => p.Active && p.AdultRoute).ToList();
         if (adults.Count > 0 && gdd >= CycleTimelineLogic.ConventionalOptimumGdd + run.StressGdd)
         {
-            var risk = _w.CommercialStageIds[CommercialStageNames.RiesgoFueraDeVentana];
-            var riskNow = OpenEpisodeReason(run) is not null;
-            var lastDay = gdd >= _w.Stages[^1].GddMax - 30m;
             foreach (var plant in adults)
-            {
-                if (plant.Plant.CommercialStageId != risk || !riskNow)
-                    HarvestPlant(run, plant, date, t.AddMinutes(30), babyLeaf: false);
-                else if (lastDay)
-                    Discard(run, plant, date, t.AddMinutes(40), "Fuera de ventana al cierre del ciclo");
-            }
+                HarvestPlant(run, plant, date, t.AddMinutes(30), babyLeaf: false);
             run.Events.Add((t, "conv-cut", string.Empty));
         }
 

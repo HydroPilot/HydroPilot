@@ -1,7 +1,9 @@
 @page "/alertas"
 @attribute [Authorize(Policy = "RequireAssigned")]
 @using HydroPilotWeb.Services.Notifications
+@using HydroPilotWeb.Services.Lotes
 @inject AlertHistoryService AlertHistory
+@inject LotOverviewService LotOverview
 
 <PageTitle>Alertas - HydroPilot</PageTitle>
 
@@ -51,7 +53,7 @@
                             <span><b>Alerta:</b> tocá el título para ir a donde corresponde (Optimización con el circuito o el
                                 lote, o Lotes); el mensaje completo va en el tooltip.</span>
                             <span><b>Filtros:</b> texto en el título o el mensaje, tipo, severidad, abiertas o resueltas, lote
-                                (contiene) y fechas. De a 50 por página, las más nuevas primero.</span>
+                                (se busca al escribir) y fechas. De a 50 por página, las más nuevas primero.</span>
                             <span><b>Bandeja (la campanita):</b> la copia de cada usuario, para marcar leídas o eliminar;
                                 borrarla de la bandeja no borra la alerta.</span>
                             <span><b>Se cambia:</b> los rangos de los sensores en Ajustes &gt; Parámetros (Errores de sensores) y
@@ -83,8 +85,7 @@
                     <option value="open">Abiertas</option>
                     <option value="resolved">Resueltas</option>
                 </select>
-                <input type="search" class="form-control form-control-sm" placeholder="Lote"
-                       aria-label="El nombre del lote contiene" @bind="lotText" @bind:after="SearchAsync" />
+                <LotPicker Id="alerts-lot" Lots="lots" Value="lotId" ValueChanged="SelectLotAsync" AllLabel="Todos los lotes" Compact="true" />
                 <HpDateInput @bind-Value="from" @bind-Value:after="SearchAsync" Max="to" Small="true"
                              Placeholder="Desde" AriaLabel="Desde" />
                 <HpDateInput @bind-Value="to" @bind-Value:after="SearchAsync" Min="from" Small="true"
@@ -208,13 +209,15 @@
     private string type = "";
     private string severity = "";
     private string state = "";
-    private string lotText = "";
+    private int? lotId;
+    private IReadOnlyList<LotOption> lots = [];
     private DateOnly? from;
     private DateOnly? to;
 
     protected override async Task OnInitializedAsync()
     {
         state = StateFromQuery switch { "abiertas" => "open", "resueltas" => "resolved", _ => "" };
+        lots = await LotOverview.GetLotOptionsAsync();
         await LoadAsync(1);
     }
 
@@ -222,6 +225,12 @@
     private Task SearchAsync() => LoadAsync(1);
 
     private Task GoAsync(int page) => LoadAsync(page);
+
+    private Task SelectLotAsync(int? lot)
+    {
+        lotId = lot;
+        return LoadAsync(1);
+    }
 
     private async Task LoadAsync(int page)
     {
@@ -232,7 +241,7 @@
                 Type: type == "" ? null : type,
                 Severity: severity == "" ? null : severity,
                 Open: state switch { "open" => true, "resolved" => false, _ => null },
-                LotText: lotText,
+                LotId: lotId,
                 From: from,
                 To: to,
                 Text: text,

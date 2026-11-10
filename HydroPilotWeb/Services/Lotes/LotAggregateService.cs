@@ -294,6 +294,7 @@ public class LotAggregateService
                 .Where(h => h.PlantId == plantId)
                 .OrderByDescending(h => h.ChangedAtUtc)
                 .ToListAsync(ct))
+            .Where(IsCommercialChange)
             .Select(h => DescribeChange(h, stageNames))
             .ToList();
 
@@ -336,6 +337,14 @@ public class LotAggregateService
         _cache?.Set(cacheKey, result, TimeSpan.FromSeconds(60));
         return result;
     }
+
+    /// <summary>
+    /// El historial del detalle muestra solo los cambios de etapa comercial y el fin de la planta (cosecha o descarte), desde
+    /// 2026-11-10: un cambio solo de etapa fenológica (que se sigue guardando) se veía "Activa → Activa".
+    /// </summary>
+    private static bool IsCommercialChange(PlantStageHistory h) =>
+        h.PreviousOperationalState is not null && h.NewOperationalState is not null && h.PreviousOperationalState != h.NewOperationalState
+        || h.NewCommercialStageId is { } next && next != h.PreviousCommercialStageId;
 
     /// <summary>
     /// Cambio legible: si cambió el estado operativo (cosecha/descarte) se muestra la etapa comercial que tenía

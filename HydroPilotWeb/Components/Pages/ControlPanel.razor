@@ -44,13 +44,10 @@ else
 {
     <div class="ctl-view">
         <div class="lot-toolbar">
-            <label class="visually-hidden" for="ctl-node">Nodo</label>
-            <select id="ctl-node" class="form-select lot-toolbar__select" @bind="selectedCircuitId" @bind:after="ChangeCircuitAsync">
-                @foreach (var circuit in circuits)
-                {
-                    <option value="@circuit.Id">@circuit.Name · @(circuit.LotName ?? "sin lote")</option>
-                }
-            </select>
+            <label class="visually-hidden" for="ctl-node">Circuito</label>
+            @* El mismo selector con búsqueda que el de lotes (desde 2026-11-10): circuito · lote, primero los que tienen lote. *@
+            <SearchSelect Id="ctl-node" Items="CircuitItems" Value="@selectedCircuitId?.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          ValueChanged="SelectCircuitAsync" Placeholder="Buscar circuito o lote…" AriaLabel="Circuito" />
 
             @if (view is not null)
             {
@@ -531,6 +528,20 @@ else
         catch (OperationCanceledException)
         {
         }
+    }
+
+    private IReadOnlyList<SearchSelectItem> CircuitItems => (circuits ?? [])
+        .OrderBy(c => c.LotName is null)
+        .Select(c => new SearchSelectItem(c.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"{c.Name} · {c.LotName ?? "sin lote"}", c.LotName is null ? "Sin lote" : "Con lote"))
+        .ToList();
+
+    private async Task SelectCircuitAsync(string? key)
+    {
+        if (!int.TryParse(key, out var circuitId))
+            return;
+        selectedCircuitId = circuitId;
+        await ChangeCircuitAsync();
     }
 
     private async Task ChangeCircuitAsync()

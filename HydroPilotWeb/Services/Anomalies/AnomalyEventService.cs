@@ -99,6 +99,30 @@ public sealed class AnomalyEventService
             }
         }
 
+        // 1b) Episodios de la sonda de un circuito que el lote ya dejó (cortó, trasplantó o descartó todo lo que tenía ahí):
+        // las lecturas de ese circuito ya no son del lote, nunca llegarían las 2 normales que lo cierran y el lote quedaría
+        // en riesgo para siempre (desde 2026-11-10; el historial generado ya lo hacía así).
+        var openOnSensors = await context.AnomalyEvents
+            .Where(e => e.Status != AnomalyContract.StatusResuelta && e.SensorId != null)
+            .Select(e => new
+            {
+                Event = e,
+                CircuitId = context.Sensors.Where(s => s.Id == e.SensorId).Select(s => s.CircuitId).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+        foreach (var item in openOnSensors.Where(x => x.CircuitId is not null))
+        {
+            // Solo si el lote tuvo ese circuito y ya lo dejó (asignación cerrada y ninguna abierta).
+            var assignments = await context.CircuitAssignments
+                .Where(a => a.LotId == item.Event.LotId && a.CircuitId == item.CircuitId)
+                .Select(a => a.ValidUntilUtc)
+                .ToListAsync(ct);
+            if (assignments.Count == 0 || assignments.Any(until => until is null))
+                continue;
+            Resolve(item.Event, "el lote dejó el circuito de esa sonda: no genera más anomalías ahí", now);
+            resolved++;
+        }
+
         // 2) Lotes evaluables: ACTIVO y EN_PAUSA (pausa ≠ fin de ciclo).
         var evaluableLots = await context.Lots
             .Include(l => l.CropType)

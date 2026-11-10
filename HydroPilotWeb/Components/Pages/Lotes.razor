@@ -174,16 +174,20 @@ else
                                 <span class="hp-info__pump"><span style="background: #8a94a0;"></span>Descartada</span>
                             </span>
                                     <span class="hp-info__list">
-                                        <span><b>Activa:</b> todavía no es candidata, Baby Leaf ni adulta. La trasplantada es
-                                            Activa hasta llegar al tamaño de cosecha adulta; desde ahí, <b>Adulta</b> (lista para
-                                            cortar).</span>
                                         <span>Un hueco con <b>AD punteado</b> es una planta que se trasplantó a Adultas; un
                                             <b>·</b> es un hueco sin planta. Debajo van los <b>circuitos de Adultas</b> con las
                                             trasplantadas del lote.</span>
                                         <span><b>Filtros:</b> resaltan las de un estado (con Seleccionar, "Seleccionar todas"
                                             toma solo esas).</span>
-                                        <span><b>Tocar una planta:</b> su detalle, con el score Baby Leaf, la etapa, la imagen y
-                                            su historial.</span>
+                                        <span><b>Tocar una planta:</b> su detalle, con el score Baby Leaf, la última evaluación y
+                                            su historial; si tiene una foto analizada, también su nutrición y sanidad.</span>
+                                        <span><b>Nutrición</b> (de la última foto): <b>Completa</b>; <b>Falta de nitrógeno</b>
+                                            (hojas amarillentas); <b>Falta de fósforo</b> (crece lento, tonos oscuros o
+                                            violáceos); <b>Falta de potasio</b> (bordes amarillos o quemados).</span>
+                                        <span><b>Sanidad</b> (de la última foto): <b>Sana</b>; <b>Mildiu velloso</b> (manchas
+                                            amarillas, pelusa debajo); <b>Oídio</b> (polvillo blanco); <b>Septoriosis</b>
+                                            (manchas marrones redondas); <b>Pulgones</b>. Una falta o un patógeno con 70 % de
+                                            certeza o más pone la planta en <b>Riesgo</b>, con su alerta.</span>
                                         <span><b>Seleccionar:</b> marcás plantas y las <b>cosechás</b> (Baby Leaf o adulta; viene
                                             elegido lo que corresponde por su estado), las <b>descartás</b> con un motivo o las
                                             <b>trasplantás</b> a Adultas (durante la ventana Baby Leaf, eligiendo los circuitos y
@@ -232,6 +236,11 @@ else
                                             @onclick="() => AskBatch(BatchAction.Discard)">Descartar</button>
                                 </span>
                             </div>
+                            @* Por qué Trasplantar está deshabilitado, a la vista (desde 2026-11-10; antes solo en el tooltip). *@
+                            @if (TransplantBlockedReason is { } blocked)
+                            {
+                                <div class="lot-select-bar__hint" role="status">@blocked</div>
+                            }
                         }
                         @* Con trasplantadas, el mapa de cada circuito: el denso donde se sembró y los de Adultas. *@
                         @if (overview.State.AdultMaps is { Count: > 0 })
@@ -518,8 +527,10 @@ else
         }
     }
 
-    private async Task SelectLotAsync(int lotId)
+    private async Task SelectLotAsync(int? lotId)
     {
+        if (lotId is null)
+            return;
         selectedLotId = lotId;
         await OnLotChangedAsync();
     }
@@ -844,6 +855,24 @@ else
     private bool HasDensePlants => overview?.State.Cells.Any(c => IsSelectable(c) && !c.IsAdultRoute) == true;
 
     /// <summary>Por qué "Trasplantar" está deshabilitado (o qué hace): fuera de la ventana, sin lugar o no entran.</summary>
+    /// <summary>
+    /// Por qué no se puede trasplantar lo elegido (null = se puede o no hay nada elegido): fuera del período de trasplante,
+    /// sin lugar o no entran en Adultas, o hay elegidas que ya no están en el denso.
+    /// </summary>
+    private string? TransplantBlockedReason
+    {
+        get
+        {
+            if (picked.Count == 0 || CanTransplantPicked || transplantPlan is not { } plan || !canTransplant || !HasDensePlants)
+                return null;
+            if (!plan.IsDue || plan.Capacity == 0)
+                return TransplantHint;
+            if (picked.Count > plan.Capacity)
+                return $"No se puede trasplantar: elegiste {picked.Count} y hay {plan.Capacity} huecos libres en Adultas.";
+            return "No se puede trasplantar: hay plantas elegidas que ya no están en el denso.";
+        }
+    }
+
     private string TransplantHint => transplantPlan switch
     {
         null => string.Empty,

@@ -1,126 +1,26 @@
-@using System.Globalization
 @using HydroPilotWeb.Services.Lotes
 @namespace HydroPilotWeb.Components.Lotes
 
-@* Selector de lote con búsqueda: con todos los cosechados la lista es larga, así que se filtra al escribir
-   (nombre o estado; varias palabras, sin importar mayúsculas ni tildes). Primero los en curso, después los cerrados. *@
-<div class="lot-picker" @onfocusout="Close">
-    <input id="@Id" class="form-select lot-toolbar__select lot-picker__input" type="text" autocomplete="off" spellcheck="false"
-           role="combobox" aria-autocomplete="list" aria-controls="@ListId" aria-expanded="@(open ? "true" : "false")"
-           aria-activedescendant="@(open && active >= 0 ? OptionId(active) : null)"
-           value="@(open ? query : SelectedLabel)" placeholder="@(open ? SelectedLabel : "Buscar lote…")"
-           @onfocus="Open" @onclick="Open" @oninput="OnInput" @onkeydown="OnKeyDownAsync" />
-    @if (open)
-    {
-        @* mousedown sin acción: el foco queda en el input, así el clic en una opción no cierra la lista antes de elegir. *@
-        <ul id="@ListId" class="lot-picker__list" role="listbox" @onmousedown:preventDefault>
-            @if (matches.Count == 0)
-            {
-                <li class="lot-picker__empty" role="presentation">Ningún lote coincide</li>
-            }
-            @for (var i = 0; i < matches.Count; i++)
-            {
-                var index = i;
-                var lot = matches[i];
-                if (index == 0 || matches[index - 1].IsOperational != lot.IsOperational)
-                {
-                    <li class="lot-picker__group" role="presentation">@(lot.IsOperational ? "En curso" : "Cerrados")</li>
-                }
-                <li id="@OptionId(index)" role="option" aria-selected="@(lot.Id == Value ? "true" : "false")"
-                    class="lot-picker__option @(index == active ? "is-active" : null) @(lot.Id == Value ? "is-selected" : null)"
-                    @onclick="() => SelectAsync(lot)">
-                    @Label(lot)
-                </li>
-            }
-        </ul>
-    }
-</div>
+@* Selector de lote con búsqueda (SearchSelect): primero los en curso, después los cerrados; se busca por nombre o
+   estado. Con AllLabel sirve de filtro ("Todos los lotes" = null). *@
+<SearchSelect Id="@Id" Items="Items" Value="@Value?.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+              ValueChanged="OnChangedAsync" AllLabel="@AllLabel" Placeholder="Buscar lote…" AriaLabel="Lote" Compact="Compact" />
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<LotOption> Lots { get; set; } = [];
     [Parameter] public int? Value { get; set; }
-    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+    [Parameter] public EventCallback<int?> ValueChanged { get; set; }
+    [Parameter] public string? AllLabel { get; set; }
+    [Parameter] public bool Compact { get; set; }
     [Parameter] public string Id { get; set; } = "lot-select";
 
-    private static readonly CompareInfo Compare = LotFormat.Culture.CompareInfo;
+    private IReadOnlyList<SearchSelectItem> Items => Lots
+        .Select(l => new SearchSelectItem(
+            l.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"{l.Name} · {LotFormat.StatusLabel(l.StatusName)}",
+            l.IsOperational ? "En curso" : "Cerrados"))
+        .ToList();
 
-    private bool open;
-    private string query = string.Empty;
-    private List<LotOption> matches = [];
-    private int active = -1;
-
-    private string ListId => $"{Id}-list";
-    private string OptionId(int index) => $"{Id}-option-{index}";
-    private string SelectedLabel => Lots.FirstOrDefault(l => l.Id == Value) is { } lot ? Label(lot) : string.Empty;
-
-    private static string Label(LotOption lot) => $"{lot.Name} · {LotFormat.StatusLabel(lot.StatusName)}";
-
-    private void Open()
-    {
-        if (open)
-            return;
-        open = true;
-        query = string.Empty;
-        Filter();
-        active = matches.FindIndex(l => l.Id == Value);
-    }
-
-    private void Close()
-    {
-        open = false;
-        query = string.Empty;
-    }
-
-    private void OnInput(ChangeEventArgs e)
-    {
-        var text = e.Value?.ToString() ?? string.Empty;
-        // Cerrada (después de elegir o de Escape) el input muestra el lote elegido: lo que se escribe se suma a ese texto.
-        // Se busca solo lo agregado; si se borró parte del nombre, se muestra la lista entera.
-        var label = SelectedLabel;
-        if (!open && label.Length > 0)
-            text = text.StartsWith(label, StringComparison.Ordinal) ? text[label.Length..]
-                 : label.StartsWith(text, StringComparison.Ordinal) ? string.Empty
-                 : text;
-        open = true;
-        query = text;
-        Filter();
-        active = matches.Count > 0 ? 0 : -1;
-    }
-
-    private void Filter()
-    {
-        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        matches = Lots
-            .Where(l => terms.All(t => Compare.IndexOf(Label(l), t, CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace) >= 0))
-            .ToList();
-    }
-
-    private async Task OnKeyDownAsync(KeyboardEventArgs e)
-    {
-        switch (e.Key)
-        {
-            case "ArrowDown" when !open:
-                Open();
-                break;
-            case "ArrowDown" when matches.Count > 0:
-                active = Math.Min(active + 1, matches.Count - 1);
-                break;
-            case "ArrowUp" when matches.Count > 0:
-                active = Math.Max(active - 1, 0);
-                break;
-            case "Enter" when open && active >= 0 && active < matches.Count:
-                await SelectAsync(matches[active]);
-                break;
-            case "Escape":
-                Close();
-                break;
-        }
-    }
-
-    private async Task SelectAsync(LotOption lot)
-    {
-        Close();
-        if (lot.Id != Value)
-            await ValueChanged.InvokeAsync(lot.Id);
-    }
+    private Task OnChangedAsync(string? key) =>
+        ValueChanged.InvokeAsync(int.TryParse(key, out var id) ? id : null);
 }

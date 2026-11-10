@@ -111,6 +111,16 @@ public class PlantDecisionEngineTests
         Assert.Equal(expected, Decide(gdd: gdd, adult: true).CommercialStageName);
     }
 
+    [Theory]
+    [InlineData(620, CommercialStageNames.Activa)]               // todavía no llega al tamaño ni al corte
+    [InlineData(650, CommercialStageNames.CosechaConvencional)] // en el corte de adultas es Adulta igual
+    [InlineData(700, CommercialStageNames.CosechaConvencional)]
+    public void En_El_Corte_De_Adultas_Es_Adulta_Aunque_No_Llegue_Al_Tamano(int gdd, string expected)
+    {
+        // 1,3 veces el ideal: lo máximo que mide una foto de la planta antes de que cierre la ventana Baby Leaf.
+        Assert.Equal(expected, Decide(gdd: gdd, adult: true, size: 1.3m).CommercialStageName);
+    }
+
     [Fact]
     public void Ruta_Baby_Leaf_Con_La_Ventana_Cerrada_Se_Descarta()
     {

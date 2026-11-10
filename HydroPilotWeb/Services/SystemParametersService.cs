@@ -50,7 +50,7 @@ public sealed record TransplantParameters(
     decimal DenseSpacingCm = 6.5m,
     decimal AdultSpacingCm = 22.5m,
     int DenseCleaningDays = 2,
-    decimal AdultReadySize = 2.0m)
+    decimal AdultReadySize = 1.6m)
 {
     /// <summary>
     /// De fábrica (los de Ajustes &gt; Parámetros del 2026-10-28): decisión al abrir la ventana Baby Leaf (250 GDD), 800
@@ -58,7 +58,9 @@ public sealed record TransplantParameters(
     /// a 6,5 cm en el denso y 22,5 cm en Adultas, 2 días de limpieza del denso y la adulta apta al doble del tamaño ideal
     /// de Baby Leaf (2026-11-09, provisorio hasta medirlo).
     /// </summary>
-    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m, 6.5m, 22.5m, 2, 2.0m);
+    // Tamaño de cosecha adulta 1,6 desde 2026-11-10 (antes 2): la cámara no mide más de ~1,8 veces el ideal y una
+    // trasplantada recién llega a 2 cerca del corte de adultas (650 GDD), cuando ya es Adulta igual.
+    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m, 6.5m, 22.5m, 2, 1.6m);
 
     /// <summary>Lugar de un hueco del denso y de uno de Adultas (m²): separación².</summary>
     public decimal DenseHoleM2 => DenseSpacingCm / 100m * (DenseSpacingCm / 100m);

@@ -1,5 +1,6 @@
 @using HydroPilotWeb.Models
 @using HydroPilotWeb.Services.Lotes
+@using HydroPilotWeb.Services.Vision
 @namespace HydroPilotWeb.Components.Lotes
 
 <div class="card plant-detail h-100">
@@ -62,21 +63,20 @@
                         <dd>@(Detail.BabyLeafScore is { } score ? $"{LotFormat.Num(score)}/100" : "—")</dd>
                     </div>
                     <div>
-                        <dt>Etapa fenológica</dt>
-                        <dd>@(Detail.PhenologicalStageName ?? "—")</dd>
-                    </div>
-                    <div>
                         <dt>Última evaluación</dt>
                         <dd>@(Detail.LastEvaluationAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</dd>
                     </div>
                     @* Sin la imagen de la planta (desde 2026-11-10): las del historial no son fotos de verdad. *@
                     @if (!string.IsNullOrEmpty(Detail.VisionPredominantClass) || !string.IsNullOrEmpty(Detail.VisionHealthClass))
                     {
+                        @* Lo que vio la cámara en la última foto (desde 2026-11-10 en castellano; antes el código del modelo: FN, -N,
+                           Healthy, DownyMildew…). El tooltip trae la descripción completa. *@
                         <div>
-                            <dt>Nutrición NPK</dt>
+                            <dt>Nutrición</dt>
                             <dd>
-                                <span class="badge @GetVisionBadgeClass(Detail.VisionPredominantClass)">
-                                    @(Detail.VisionPredominantClass ?? "—")
+                                <span class="badge @NutritionBadge(Detail.VisionPredominantClass)"
+                                      title="@Description(BabyLeafPipelineService.NpkDescriptions, Detail.VisionPredominantClass)">
+                                    @NutritionLabel(Detail.VisionPredominantClass)
                                     @(Detail.VisionConfidence.HasValue ? $" ({Detail.VisionConfidence.Value:P0})" : "")
                                 </span>
                             </dd>
@@ -84,8 +84,9 @@
                         <div>
                             <dt>Sanidad</dt>
                             <dd>
-                                <span class="badge @(Detail.VisionHealthClass == "Healthy" ? "bg-success text-white" : "bg-danger text-white")">
-                                    @(Detail.VisionHealthClass ?? "—")
+                                <span class="badge @(Detail.VisionHealthClass is null or "Healthy" ? "bg-success text-white" : "bg-danger text-white")"
+                                      title="@Description(BabyLeafPipelineService.HealthDescriptions, Detail.VisionHealthClass)">
+                                    @HealthLabel(Detail.VisionHealthClass)
                                 </span>
                             </dd>
                         </div>
@@ -151,6 +152,8 @@
         "harvest-bulk" => "cosecha masiva",
         "discard" => "descarte",
         "daily-flow" => "flujo diario",
+        "transplant" => "trasplante",
+        "vision" => "foto",
         "demo" => "datos demo",
         "seed" => "carga inicial",
         "manual" => "manual",
@@ -160,12 +163,32 @@
 
     private static string When(DateOnly? date) => date is { } d ? $" · {LotFormat.Day(d)}" : string.Empty;
 
-    private static string GetVisionBadgeClass(string? predClass) => predClass switch
+    /// <summary>Nutrición de la foto: completa en verde; cualquier falta (N, P o K) en amarillo.</summary>
+    private static string NutritionBadge(string? npk) => npk switch
     {
-        "FN" => "bg-success text-white",
-        "-N" => "bg-warning text-dark",
-        "-P" => "bg-primary text-white",
-        "-K" => "bg-danger text-white",
-        _ => "bg-secondary text-white"
+        null or "FN" => "bg-success text-white",
+        _ => "bg-warning text-dark",
     };
+
+    private static string NutritionLabel(string? npk) => npk switch
+    {
+        null or "FN" => "Completa",
+        "-N" => "Falta de nitrógeno",
+        "-P" => "Falta de fósforo",
+        "-K" => "Falta de potasio",
+        _ => npk,
+    };
+
+    private static string HealthLabel(string? health) => health switch
+    {
+        null or "Healthy" => "Sana",
+        "DownyMildew" => "Mildiu velloso",
+        "PowderyMildew" => "Oídio",
+        "Septoria" => "Septoriosis",
+        "Aphids" => "Pulgones",
+        _ => health,
+    };
+
+    private static string? Description(IReadOnlyDictionary<string, string> descriptions, string? code) =>
+        code is not null && descriptions.TryGetValue(code, out var text) ? text : null;
 }

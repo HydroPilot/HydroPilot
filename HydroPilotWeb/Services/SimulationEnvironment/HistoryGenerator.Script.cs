@@ -144,11 +144,14 @@ public sealed partial class HistoryGenerator
 
         // Las trasplantadas pasan de Activa a Adulta de a poco desde que empieza la etapa adulta (cierra la ventana Baby
         // Leaf): las del corte de adultas, hasta ese día; las que siguen en Adultas hoy, hasta hoy.
+        // Desde 2026-11-10 toda trasplantada es Adulta como máximo en el corte de adultas (650 GDD, PlantDecisionEngine):
+        // el reparto termina ese día (o antes, si el corte del Excel es antes), así no pasan todas juntas.
         var adultOpens = DayAtGdd(lot.Sowing, (double)_w.Config.GddMax);
+        var adultBy = DayAtGdd(lot.Sowing, (double)CycleTimelineLogic.ConventionalOptimumGdd);
         if (lot.AdultCut is { } adultCut)
-            ScheduleAdults(Of(PlantFate.TransplantCut), adultOpens, adultCut.Date);
+            ScheduleAdults(Of(PlantFate.TransplantCut), adultOpens, adultCut.Date < adultBy ? adultCut.Date : adultBy);
         if (_today >= adultOpens)
-            ScheduleAdults(Of(PlantFate.TransplantActive), adultOpens, _today);
+            ScheduleAdults(Of(PlantFate.TransplantActive), adultOpens, _today < adultBy ? _today : adultBy);
     }
 
     private static DateOnly Max(DateOnly a, DateOnly b) => a > b ? a : b;

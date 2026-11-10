@@ -1,0 +1,137 @@
+@using System.Globalization
+@namespace HydroPilotWeb.Components.Common
+
+@* Desplegable con búsqueda (el selector de lote de la vista Lotes, desde 2026-11-10 para todas): se filtra al escribir
+   (varias palabras, sin importar mayúsculas ni tildes), con grupos y, como filtro, una opción "todos" arriba (valor
+   null). Flechas y Enter para elegir, Escape para cerrar. Compact: el tamaño de las barras de filtros. *@
+<div class="search-select @(Compact ? "search-select--compact" : null)" @onfocusout="Close">
+    <input id="@Id" class="form-select search-select__input @(Compact ? "form-select-sm" : null)" type="text" autocomplete="off"
+           spellcheck="false" role="combobox" aria-label="@AriaLabel" aria-autocomplete="list" aria-controls="@ListId"
+           aria-expanded="@(open ? "true" : "false")" aria-activedescendant="@(open && active >= 0 ? OptionId(active) : null)"
+           value="@(open ? query : SelectedLabel)" placeholder="@(open ? SelectedLabel : Placeholder)"
+           @onfocus="Open" @onclick="Open" @oninput="OnInput" @onkeydown="OnKeyDownAsync" />
+    @if (open)
+    {
+        @* mousedown sin acción: el foco queda en el input, así el clic en una opción no cierra la lista antes de elegir. *@
+        <ul id="@ListId" class="search-select__list" role="listbox" @onmousedown:preventDefault>
+            @if (matches.Count == 0)
+            {
+                <li class="search-select__empty" role="presentation">Nada coincide</li>
+            }
+            @for (var i = 0; i < matches.Count; i++)
+            {
+                var index = i;
+                var option = matches[i];
+                if (option.Key is not null && (index == 0 || matches[index - 1].Group != option.Group) && option.Group is { } group)
+                {
+                    <li class="search-select__group" role="presentation">@group</li>
+                }
+                <li id="@OptionId(index)" role="option" aria-selected="@(option.Key == Value ? "true" : "false")"
+                    class="search-select__option @(index == active ? "is-active" : null) @(option.Key == Value ? "is-selected" : null) @(option.Key is null ? "search-select__option--all" : null)"
+                    @onclick="() => SelectAsync(option)">
+                    @option.Label
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<SearchSelectItem> Items { get; set; } = [];
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    /// <summary>Opción "todos" (valor null) arriba de la lista: para usarlo como filtro. Null = no hay.</summary>
+    [Parameter] public string? AllLabel { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Buscar…";
+    [Parameter] public string? AriaLabel { get; set; }
+    [Parameter] public bool Compact { get; set; }
+    [Parameter] public string Id { get; set; } = $"search-select-{Guid.NewGuid():N}";
+
+    private sealed record Option(string? Key, string Label, string? Group);
+
+    private static readonly CompareInfo Compare = CultureInfo.GetCultureInfo("es-AR").CompareInfo;
+
+    private bool open;
+    private string query = string.Empty;
+    private List<Option> matches = [];
+    private int active = -1;
+
+    private string ListId => $"{Id}-list";
+    private string OptionId(int index) => $"{Id}-option-{index}";
+
+    private string SelectedLabel => Value is null
+        ? AllLabel ?? string.Empty
+        : Items.FirstOrDefault(i => i.Key == Value)?.Label ?? string.Empty;
+
+    private void Open()
+    {
+        if (open)
+            return;
+        open = true;
+        query = string.Empty;
+        Filter();
+        active = matches.FindIndex(o => o.Key == Value);
+    }
+
+    private void Close()
+    {
+        open = false;
+        query = string.Empty;
+    }
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString() ?? string.Empty;
+        // Cerrada (después de elegir o de Escape) el input muestra lo elegido: lo que se escribe se suma a ese texto.
+        // Se busca solo lo agregado; si se borró parte del texto, se muestra la lista entera.
+        var label = SelectedLabel;
+        if (!open && label.Length > 0)
+            text = text.StartsWith(label, StringComparison.Ordinal) ? text[label.Length..]
+                 : label.StartsWith(text, StringComparison.Ordinal) ? string.Empty
+                 : text;
+        open = true;
+        query = text;
+        Filter();
+        active = matches.Count > 0 ? 0 : -1;
+    }
+
+    private void Filter()
+    {
+        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var found = Items
+            .Where(i => terms.All(t => Compare.IndexOf(i.Label, t, CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace) >= 0))
+            .Select(i => new Option(i.Key, i.Label, i.Group));
+        matches = AllLabel is not null && terms.Length == 0
+            ? [new Option(null, AllLabel, null), .. found]
+            : found.ToList();
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowDown" when !open:
+                Open();
+                break;
+            case "ArrowDown" when matches.Count > 0:
+                active = Math.Min(active + 1, matches.Count - 1);
+                break;
+            case "ArrowUp" when matches.Count > 0:
+                active = Math.Max(active - 1, 0);
+                break;
+            case "Enter" when open && active >= 0 && active < matches.Count:
+                await SelectAsync(matches[active]);
+                break;
+            case "Escape":
+                Close();
+                break;
+        }
+    }
+
+    private async Task SelectAsync(Option option)
+    {
+        Close();
+        if (option.Key != Value)
+            await ValueChanged.InvokeAsync(option.Key);
+    }
+}

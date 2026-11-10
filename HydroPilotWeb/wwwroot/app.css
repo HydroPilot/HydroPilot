@@ -3106,23 +3106,31 @@ button {
     }
 }
 
-/* Selector de lote con búsqueda (LotPicker): input con la flecha del select y la lista como el menú del select. */
-.lot-picker {
+/* Desplegable con búsqueda (SearchSelect; el de lotes de la vista Lotes y, desde 2026-11-10, el de las demás vistas):
+   input con la flecha del select, en píldora y negrita, y la lista como el menú del select. */
+.search-select {
     position: relative;
     width: min(100%, 20rem);
 }
 
-.lot-picker__input {
+.search-select--compact {
+    width: min(100%, 15rem);
+}
+
+.search-select__input {
     width: 100%;
+    min-width: 0;
+    font-weight: 650;
+    border-radius: 999px;
     text-overflow: ellipsis;
 }
 
-.lot-picker__input::placeholder {
+.search-select__input::placeholder {
     color: var(--text-muted);
     font-weight: 500;
 }
 
-.lot-picker__list {
+.search-select__list {
     position: absolute;
     top: calc(100% + 4px);
     left: 0;
@@ -3142,7 +3150,7 @@ button {
     scrollbar-color: var(--panel-scrollbar) transparent;
 }
 
-.lot-picker__group {
+.search-select__group {
     padding: 8px 12px 4px;
     font-size: 0.72rem;
     font-weight: 700;
@@ -3151,7 +3159,7 @@ button {
     color: var(--text-muted);
 }
 
-.lot-picker__option {
+.search-select__option {
     padding: 7px 12px;
     border-radius: 8px;
     font-size: 0.9rem;
@@ -3159,18 +3167,22 @@ button {
     cursor: pointer;
 }
 
-.lot-picker__option:hover,
-.lot-picker__option.is-active {
+.search-select__option--all {
+    color: var(--text-secondary);
+}
+
+.search-select__option:hover,
+.search-select__option.is-active {
     background: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
-.lot-picker__option.is-selected {
+.search-select__option.is-selected {
     background: var(--accent-bg-subtle);
     color: var(--accent);
     font-weight: 650;
 }
 
-.lot-picker__empty {
+.search-select__empty {
     padding: 7px 12px;
     font-size: 0.9rem;
     color: var(--text-muted);
@@ -4841,6 +4853,14 @@ button.lot-chip[aria-pressed="true"] {
     border-top: 1px solid var(--border-panel);
 }
 
+/* Por qué no se puede trasplantar lo elegido: debajo de la barra, a la derecha, junto a los botones. */
+.lot-select-bar__hint {
+    margin: -8px 0 14px;
+    text-align: right;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
 .lot-select-bar__count {
     font-size: 0.85rem;
     font-weight: 700;
@@ -5728,4 +5748,25 @@ a.gh-row:focus-visible {
 .hp-grid-filters input[type="search"] {
     flex: 1 1 200px;
     max-width: 280px;
+}
+
+/* Desde 2026-11-10 todos los filtros con el estilo del selector de lotes: píldora y texto en negrita. */
+.hp-grid-filters .form-select,
+.hp-grid-filters .form-control {
+    border-radius: 999px;
+    font-weight: 650;
+}
+
+.hp-grid-filters .form-control::placeholder {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.hp-grid-filters .search-select {
+    flex: 0 1 15rem;
+}
+
+.hp-grid-filters .search-select__input {
+    width: 100%;
+    min-width: 0;
 }
