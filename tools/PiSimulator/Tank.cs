@@ -64,6 +64,16 @@ public sealed class Tank
         }
     }
 
+    /// <summary>pH real del tanque (sin el ruido de la sonda): el escenario demo lo lleva a un valor sin saltos.</summary>
+    public double Ph
+    {
+        get
+        {
+            lock (_gate)
+                return _tank.Ph;
+        }
+    }
+
     /// <summary>
     /// Lo que dice la web del lote del circuito: cuántas plantas hay (trasplantes, cortes) y, si el circuito recibió un
     /// lote (estaba vacío) o el lote cambió (menos días que antes), sus días desde la siembra.

@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace HydroPilot.PiSimulator;
 
-public enum Scenario { Normal, PhRising, EcFalling, Heat, BrokenPhPump, NoConnection, StuckSensor }
+public enum Scenario { Normal, PhRising, EcFalling, Heat, BrokenPhPump, NoConnection, StuckSensor, Demo }
 
 /// <summary>Opciones de línea de comandos (todas opcionales).</summary>
 public sealed class Settings
@@ -18,11 +18,11 @@ public sealed class Settings
     public int ReadingSeconds { get; private set; } = 15;
 
     /// <summary>
-    /// Lo que la Pi le dice a la web que tarda entre lecturas (campo expectedIntervalSeconds del batch): las lecturas
-    /// más 10 s de margen, para que un envío un poco tarde no la haga figurar caída. Con 15 s, la web la da por
-    /// degradada a los 25 s sin lecturas y por desconectada a los 50.
+    /// Lo que la Pi le dice a la web que tarda entre lecturas (campo expectedIntervalSeconds del batch): el doble de
+    /// --lecturas (desde 2026-11-11; antes +10 s), para que un envío lento no la haga figurar "Intermitente" (en una prueba
+    /// hubo un lote a los 31 s). Con 15 s, la web la da por intermitente a los 30 s sin lecturas y por desconectada a los 60.
     /// </summary>
-    public int DeclaredIntervalSeconds => ReadingSeconds + 10;
+    public int DeclaredIntervalSeconds => ReadingSeconds * 2;
 
     public int PollSeconds { get; private set; } = 5;
 
@@ -83,12 +83,13 @@ public sealed class Settings
           --circuitos <n>        circuitos que maneja la Pi; sin esta opción los pide a la web (claves, plantas y días de
                                  cada uno, y los actualiza cada minuto); con n, usa las claves base y -n (ph-solucion-2, ph-up-2)
           --api-key <clave>      X-Api-Key; si falta, HYDROPILOT_API_KEY o TelemetryApiKey de los user-secrets
-          --escenario <nombre>   normal | calor | ph-sube | ce-baja | bomba-rota | sin-conexion | sensor-pegado
-                                 (calor y sin-conexion afectan a todos; los demás, al circuito 1)
+          --escenario <nombre>   normal | calor | ph-sube | ce-baja | bomba-rota | sin-conexion | sensor-pegado | demo
+                                 (calor y sin-conexion afectan a todos; los demás, al circuito 1; demo: el guion de
+                                 la demo de Optimización, lo muestra al arrancar)
           --acelerar <n>         el tiempo de las plantas y del clima corre n veces más rápido (1; 60 = una hora por minuto)
           --dias <n/n>           con --circuitos: días desde la siembra del lote de cada uno, separados por / (12/4)
           --plantas <n>          con --circuitos: plantas de cada mesada (200)
-          --lecturas <s>         cada cuántos segundos manda lecturas (15); a la web le declara 10 s más
+          --lecturas <s>         cada cuántos segundos manda lecturas (15); a la web le declara el doble
           --consulta <s>         cada cuántos segundos pide comandos (5)
           --imagenes <s>         fotos automáticas de plantas cada tantos segundos (0 = apagadas, de fábrica;
                                  la tecla i manda una al circuito elegido)
@@ -105,7 +106,8 @@ public sealed class Settings
 
         Teclas: 1–9 = elegir el circuito de las teclas siguientes (1)
                 p = pH +0,4 · b = pH −0,4 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · a = cambiar aceleración
-                i = mandar imagen ahora · x = cortar/reanudar conexión · q = salir
+                i = mandar imagen ahora · d = subir el pH a 6,4 en vivo (demo: en su circuito de Adultas)
+                x = cortar/reanudar conexión · q = salir
         """;
 
     public static Settings Parse(string[] args)
@@ -174,6 +176,7 @@ public sealed class Settings
         "bomba-rota" => Scenario.BrokenPhPump,
         "sin-conexion" => Scenario.NoConnection,
         "sensor-pegado" => Scenario.StuckSensor,
+        "demo" => Scenario.Demo,
         _ => throw new ArgumentException($"Escenario desconocido: {value}"),
     };
 

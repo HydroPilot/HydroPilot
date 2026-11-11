@@ -353,6 +353,7 @@ public sealed partial class HistoryGenerator
                     each.OfflineUntil = offlineFrom.AddHours(31);
                 }
                 run.Events.Add((offlineFrom, "offline", "router del invernadero caído"));
+                OfflineAlert(bench, offlineFrom, offlineFrom.AddHours(31));
                 break;
             case Incident.PhDownClogged:
                 run.ArmedIncident = (ControlContract.KindPhDown, t.AddDays(9));

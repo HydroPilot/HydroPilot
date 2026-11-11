@@ -138,6 +138,19 @@ public static class NodeConnectionAlerts
     public static string Fingerprint(int nodeId, DateTime lastAcceptedUtc) =>
         Prefix(nodeId) + lastAcceptedUtc.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
 
+    /// <summary>Última lectura aceptada antes del corte (va en la huella); null si la huella es de otra cosa.</summary>
+    public static DateTime? LastReadingUtc(string? fingerprint)
+    {
+        const string start = "node-offline-";
+        if (fingerprint is null || !fingerprint.StartsWith(start, StringComparison.Ordinal))
+            return null;
+        var stamp = fingerprint[(fingerprint.LastIndexOf('-') + 1)..];
+        return DateTime.TryParseExact(stamp, "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var at)
+            ? at
+            : null;
+    }
+
     /// <summary>Nodo de una huella de nodo desconectado; null si la huella es de otra cosa.</summary>
     public static int? NodeId(string? fingerprint)
     {

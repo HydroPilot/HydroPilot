@@ -452,6 +452,24 @@ public class RepositoryDatasetTests
         Assert.Empty(plan.Warnings);
     }
 
+    /// <summary>
+    /// Cargado días después, con las fechas corridas, cierra igual: el clima viaja con las fechas (desde 2026-11-11; antes
+    /// a los 6 días algunos trasplantes y cortes quedaban fuera de su ventana de GDD).
+    /// </summary>
+    [Theory]
+    [InlineData(10)]
+    [InlineData(45)]
+    public void El_dataset_del_repositorio_cierra_cargado_otro_dia(int days)
+    {
+        using var file = File.OpenRead(FindRepositoryFile(Path.Combine("HydroPilotWeb", "SimulationData", "dataset-demo.xlsx")));
+        var dataset = DemoDatasetReader.Read(file).Dataset!;
+
+        var plan = DemoDatasetPlanner.Plan(dataset, dataset.General.Today.AddDays(days));
+
+        Assert.Empty(plan.Errors);
+        Assert.Equal(days, plan.Script!.Dataset.Climate.ShiftDays);
+    }
+
     private static string FindRepositoryFile(string relative)
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)

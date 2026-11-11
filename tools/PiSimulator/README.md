@@ -66,7 +66,7 @@ circuito 1 usa `ph-solucion`, `ec-solucion`, `ph-up`, `ph-down`, `nutrient` (Sol
 | `--acelerar` (tiempo de plantas y clima) | 1 (tiempo real) |
 | `--dias` (con `--circuitos`: días desde la siembra de cada uno, separados por `/`) | `12/4` |
 | `--plantas` (con `--circuitos`: de cada mesada) | 200 |
-| `--lecturas` (s entre lecturas; a la web le declara 10 s más) | 15 |
+| `--lecturas` (s entre lecturas; a la web le declara el doble) | 15 |
 | `--consulta` (s entre consultas de comandos) | 5 |
 | `--imagenes` (s entre fotos automáticas; 0 = apagadas, la tecla `i` manda una) | 0 |
 | `--sanas` (% de fotos sanas) | 80 |
@@ -96,6 +96,17 @@ dotnet run --project tools/PiSimulator -- --transporte iothub --conexion "HostNa
 | `bomba-rota` | las bombas de pH responden EXECUTED pero no cambian nada |
 | `sin-conexion` | del minuto 1 al 11 no manda lecturas ni pide comandos (las dosis vencen) |
 | `sensor-pegado` | la sonda de pH marca siempre 6,40 |
+| `demo` | el guion de la demo de Optimización (desde 2026-11-11, abajo) |
+
+**Escenario `demo`** (lo muestra al arrancar; supone la mezcla de 1 min y la revisión del control cada 20 s que trae
+`appsettings.json` desde 2026-11-11, en local y en Azure):
+
+| Minuto | Circuito | Qué pasa |
+|---|---|---|
+| 0:20 | el primero (Baby Leaf 1) | la bomba de pH Down queda rota y el pH sube a 6,45 (de a 0,45 por lectura, sin salto): 3 dosis sin efecto y **pH pausado** (~5 min) |
+| 1:00 | el primero de Adultas con plantas (Adulta 2) | la CE baja 0,3: **episodio crítico** con alerta; el control la corrige y se resuelve |
+| 6:00 | el primero | la CE baja 0,6 de golpe: **error de sensor por salto**, control de CE frenado. Espera la pausa (3.ª dosis de pH Down + 2 min; si la CE saliera antes, el control la corregiría primero y el pH no se pausaría) y 2 min sin dosis en el circuito (si no, la web no cuenta el salto); a los 9 min va igual |
+| tecla `d` | el de Adultas | en vivo: el pH sube a 6,42 (arriba de la banda de acción, adentro de la del lote): **dosis automática** en ~30 s |
 
 **Teclas** (las de tanque van al circuito elegido, el 1 al arrancar):
 - `1`…`9`: elige el circuito;
@@ -105,6 +116,7 @@ dotnet run --project tools/PiSimulator -- --transporte iothub --conexion "HostNa
 - `c` / `n`: CE −0,3 / +0,3 (sobredosis de nutrientes: el motor diluye con agua);
 - `r`: repone agua hasta llenar el tanque;
 - `i`: manda una foto a una planta al azar del circuito elegido;
+- `d`: sube el pH a 6,42 sin salto (con `--escenario demo`, en su circuito de Adultas; si no, en el elegido);
 - `a`: cambia la aceleración de todos (×1, ×10, ×60, ×240);
 - `x`: corta o reanuda la conexión;
 - `q`: sale.
@@ -144,8 +156,8 @@ recibe de nuevo, solo vuelve a informar el resultado.
 - pH y CE van por cada circuito; temperatura y humedad, una vez (son del invernadero).
 - `expectedIntervalSeconds` (opcional, desde 2026-11-10): cada cuántos segundos manda la Pi. La web lo guarda como
   intervalo esperado del nodo y con él la da por degradada (1 intervalo sin lecturas), desconectada (2) y sus
-  sensores sin datos. La Pi virtual declara `--lecturas` + 10 s (25 s): si se corta o se cierra, la web la muestra
-  caída en uno o dos minutos. Sin el campo (como la Pi real si no lo manda) queda el que tenía; fuera de 5 s – 1 día
+  sensores sin datos. La Pi virtual declara el doble de `--lecturas` (30 s; hasta el 2026-11-11, +10 s, y un lote lento
+  la mostraba "Intermitente"): si se corta o se cierra, la web la muestra caída en algo más de un minuto. Sin el campo (como la Pi real si no lo manda) queda el que tenía; fuera de 5 s – 1 día
   se ignora. El historial del entorno de simulación deja 1 hora.
 
 **Comando** (respuesta de `GET /api/nodos/{nodeId}/comandos`):

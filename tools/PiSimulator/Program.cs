@@ -86,7 +86,7 @@ for (var i = 0; i < layouts.Count; i++)
                       $"arranca en pH {(l.Ph ?? Settings.DefaultPh).ToString("0.00", es)} CE {(l.Ec ?? Settings.DefaultEc).ToString("0.00", es)}");
 }
 Console.WriteLine((layouts.Count > 1 ? $"Teclas: 1–{Math.Min(9, layouts.Count)} = circuito · " : "Teclas: ") +
-                  "p = pH +0,4 · b = pH −0,4 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · i = foto · a = aceleración · x = conexión · q = salir");
+                  "p = pH +0,4 · b = pH −0,4 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · i = foto · d = pH en vivo · a = aceleración · x = conexión · q = salir");
 
 // Un tanque (mesada) por circuito, con el pH y la CE con que quedó (o --ph / --ce); el clima es el mismo para todos.
 var tanks = layouts
