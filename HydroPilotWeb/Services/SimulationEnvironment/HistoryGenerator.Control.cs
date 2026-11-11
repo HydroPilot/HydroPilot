@@ -301,7 +301,7 @@ public sealed partial class HistoryGenerator
 
         var alert = AddAlert(NotificationTypes.FallaDosificacion, NotificationSeverities.Alta,
             $"{bench.Bench.CircuitName}: control de {parameter} pausado",
-            $"{pause.Reason}. Revisá bidón, bomba y sonda; después reanudá en Control.",
+            $"{pause.Reason}. Revisá bidón, bomba y sonda; después marcalo como resuelto en Optimización.",
             ControlNotificationSink.Fingerprint(bench.Bench.CircuitId, parameter, pausedAt), bench.Lot?.Lot.Id, pausedAt);
         bench.PauseAlerts[parameter] = alert;
         bench.Lot?.Events.Add((pausedAt, "paused", parameter));

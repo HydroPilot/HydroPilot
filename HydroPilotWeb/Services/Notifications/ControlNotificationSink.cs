@@ -31,7 +31,7 @@ public class ControlNotificationSink : IControlEventSink
             NotificationTypes.FallaDosificacion,
             NotificationSeverities.Alta,
             $"{pause.CircuitName}: control de {pause.Parameter} pausado",
-            $"{pause.Reason}. Revisá bidón, bomba y sonda; después reanudá en Control.",
+            $"{pause.Reason}. Revisá bidón, bomba y sonda; después marcalo como resuelto en Optimización.",
             Fingerprint(pause.CircuitId, pause.Parameter, pause.PausedAtUtc),
             pause.LotId), ct);
 

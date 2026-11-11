@@ -42,7 +42,14 @@ public sealed record DemoDataset(
                 AdultDiscard = MoveEvent(l.AdultDiscard),
             }).ToList(),
             Prices = Prices.Select(p => p with { From = Move(p.From) }).ToList(),
-            Climate = Climate with { Events = Climate.Events.Select(e => e with { From = Move(e.From), To = Move(e.To) }).ToList() },
+            // El clima viaja con las fechas (desde 2026-11-11): cada lote vive el mismo clima que en el Excel, así sus GDD
+            // y los de cada movimiento no cambian. Antes los lotes cruzaban de mes otros días y desde el 15/11 (6 días
+            // corridos) algunos trasplantes y cortes quedaban fuera de su ventana: el Excel no cerraba.
+            Climate = Climate with
+            {
+                Events = Climate.Events.Select(e => e with { From = Move(e.From), To = Move(e.To) }).ToList(),
+                ShiftDays = Climate.ShiftDays + days,
+            },
         };
     }
 
@@ -198,6 +205,12 @@ public sealed record DemoPrice(int Row, DateOnly From, decimal BabyLeafPerKg, de
 /// <summary>Hoja Clima: normales de afuera por mes (índice 0 = enero) y las olas de calor y frentes fríos.</summary>
 public sealed record DemoClimate(IReadOnlyList<double> OutdoorMax, IReadOnlyList<double> OutdoorMin, IReadOnlyList<DemoClimateEvent> Events)
 {
+    /// <summary>
+    /// Días que se corrieron las fechas (<see cref="DemoDataset.Shifted"/>): las normales del mes son las de la fecha del
+    /// Excel (fecha − estos días), así el clima de cada lote es el mismo aunque se cargue otro día.
+    /// </summary>
+    public int ShiftDays { get; init; }
+
     /// <summary>Las normales del entorno de simulación (SMN 1991–2020).</summary>
     public static DemoClimate Default => new(
         [30.1, 28.9, 26.9, 23.2, 19.4, 16.4, 15.5, 17.9, 19.7, 22.6, 26.0, 29.0],

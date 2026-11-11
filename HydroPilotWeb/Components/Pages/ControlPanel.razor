@@ -19,6 +19,7 @@
 @inject AnomalyQueryService AnomalyQuery
 @inject AuthenticationStateProvider AuthState
 @inject ILogger<ControlPanel> Logger
+@inject Microsoft.Extensions.Options.IOptions<ControlOptions> ControlSettings
 
 <PageTitle>Optimización</PageTitle>
 
@@ -74,7 +75,7 @@ else
                             corrige solo.</span>
                         <span><b>Cómo decide el automático</b> (con cada lectura y cada minuto): actúa antes de que la solución
                             salga de la banda (al 70 % del camino al borde); corrige primero la CE y después el pH (salvo un pH
-                            crítico, fuera de 5–7); una dosis por vez, y espera la mezcla (10 min) y dos lecturas nuevas antes
+                            crítico, fuera de 5–7); una dosis por vez, y espera la mezcla (@ControlSettings.Value.MixingMinutes min) y dos lecturas nuevas antes
                             de la siguiente.</span>
                         <span><b>Cuánto pone:</b> la dosis completa sale de los litros del tanque y del efecto por ml de la
                             bomba; aplica solo una parte (de 30 a 90 %) según cuánto se desvió y si ya se está acercando
@@ -131,7 +132,9 @@ else
                 {
                     var isEc = parameter.SensorType == ControlContract.ParameterEc;
                     var pause = view.OpenPauses.FirstOrDefault(p => p.Parameter == parameter.SensorType);
-                    <article class="ctl-kpi @(pause is not null ? "ctl-kpi--paused" : null)">
+                    // Un error de sensor abierto que frena el control de este parámetro: desde 2026-11-11 también avisa acá.
+                    var fault = sensorFaults.FirstOrDefault(f => f.ResolvedAtUtc is null && f.BlocksControl && f.SensorType == parameter.SensorType);
+                    <article class="ctl-kpi @(pause is not null || fault is not null ? "ctl-kpi--paused" : null)">
                         <span class="ctl-kpi__label">@(isEc ? "CE" : "pH")</span>
                         <strong class="ctl-kpi__value ctl-tone--@SolutionTone(parameter.State)">
                             @Value(parameter.Value)
@@ -148,15 +151,17 @@ else
                                 <span class="ctl-kpi__age">@Ago(observed)</span>
                             }
                         </div>
+                        @* Solo el aviso: el botón para resolverlo está en Episodios (desde 2026-11-11). *@
                         @if (pause is not null)
                         {
                             <div class="ctl-kpi__pause">
                                 <span class="lot-chip lot-chip--danger" title="Pausado @Clock(pause.PausedAtUtc)">Pausado · @pause.Reason</span>
-                                @if (canDose)
-                                {
-                                    <button type="button" class="btn btn-sm hp-btn-secondary" disabled="@busy"
-                                            @onclick="() => ResumeAsync(pause.Parameter)">Reanudar</button>
-                                }
+                            </div>
+                        }
+                        else if (fault is not null)
+                        {
+                            <div class="ctl-kpi__pause">
+                                <span class="lot-chip lot-chip--danger" title="Desde @Clock(fault.DetectedAtUtc)">Pausado · @FaultShort(fault.Kind)</span>
                             </div>
                         }
                     </article>
@@ -316,7 +321,8 @@ else
                 <InfoTip Title="Qué es un episodio">
                     <span class="hp-info__text">
                         Todo lo que salió mal en el circuito (y en los sensores de ambiente del invernadero) con el lote en
-                        curso, los más nuevos arriba; los errores de sensor abiertos, primero.
+                        curso, los más nuevos arriba; lo que frena el control (errores de sensor, pausas y cortes de la Pi
+                        abiertos), primero.
                     </span>
                     <span class="hp-info__list">
                         <span><b>Solución:</b> el pH o la CE salieron de la banda del lote (motor de anomalías). Con una
@@ -324,6 +330,10 @@ else
                             normales. Si el control automático no alcanzó a evitarlo, aparece acá.</span>
                         <span><b>Sensor:</b> la lectura no es confiable (sin datos, fuera de lo normal o un salto). Frena el
                             control de ese parámetro hasta que se resuelve.</span>
+                        <span><b>Control:</b> el control pausó un parámetro porque 3 dosis seguidas no tuvieron efecto (bomba,
+                            bidón o manguera). Frena ese parámetro hasta que alguien lo revisa y lo marca como resuelto.</span>
+                        <span><b>Conexión:</b> la Pi del invernadero dejó de mandar lecturas (energía o red). Mientras dura,
+                            no llegan lecturas ni dosis a ningún circuito. Se resuelve sola cuando vuelve.</span>
                         <span><b>Columnas:</b> hora · tipo y qué pasó (rojo: crítico; amarillo: advertencia) · detalle (hasta
                             dónde llegó, cuántas lecturas y cuánto duró) · estado.</span>
                         <span>Los que se abren mandan una alerta: el historial está en Monitoreo &gt; Alertas.</span>
@@ -336,7 +346,7 @@ else
             var rows = EpisodeRows();
             @if (rows.Count == 0)
             {
-                <div class="ctl-empty">Sin episodios: la solución no salió de la banda del lote y los sensores no fallaron.</div>
+                <div class="ctl-empty">Sin episodios: la solución no salió de la banda del lote, los sensores no fallaron, el control no se pausó y la Pi no se desconectó.</div>
             }
             else
             {
@@ -346,7 +356,7 @@ else
                         <li class="ctl-episode @(row.Closed ? "ctl-episode--closed" : null) @(row.Pinned ? "ctl-episode--pinned" : null)" title="@row.Hint">
                             <span class="ctl-episode__time">@Moment(row.AtUtc)</span>
                             <span class="ctl-episode__head">
-                                <span class="ctl-episode__source ctl-episode__source--@(row.IsSensor ? "sensor" : "solution")">@(row.IsSensor ? "Sensor" : "Solución")</span>
+                                <span class="ctl-episode__source ctl-episode__source--@row.Source">@SourceLabel(row.Source)</span>
                                 <span class="ctl-episode__title ctl-episode__title--@row.Severity" title="@row.Title">@row.Title</span>
                             </span>
                             <span class="ctl-episode__detail">@Sentence(row.Detail)</span>
@@ -356,6 +366,12 @@ else
                                 {
                                     <button type="button" class="btn btn-sm hp-btn-secondary" disabled="@busy"
                                             @onclick="() => ResolveFaultAsync(faultId)">Marcar como resuelto</button>
+                                }
+                                @* Desde 2026-11-11 la pausa también se cierra con "Marcar como resuelto" (vuelve a encender el control). *@
+                                @if (row.ResumableParameter is { } parameter && canDose)
+                                {
+                                    <button type="button" class="btn btn-sm hp-btn-secondary" disabled="@busy"
+                                            @onclick="() => ResumeAsync(parameter)">Marcar como resuelto</button>
                                 }
                             </span>
                         </li>
@@ -457,6 +473,8 @@ else
     private ControlTrendDto? trend;
     private IReadOnlyList<AnomalyEventDto> episodes = [];
     private IReadOnlyList<SensorFaultDto> sensorFaults = [];
+    private IReadOnlyList<ControlPauseDto> controlPauses = [];
+    private IReadOnlyList<ControlConnectionEpisodeDto> connectionEpisodes = [];
     private int trendHours = 6;
     private string? error;
     private bool busy;
@@ -570,6 +588,8 @@ else
                 ? await AnomalyQuery.GetTimelineAsync(new AnomalyFilter(null, null, lotId, null, null, null, CircuitId: circuitId), EpisodeCount)
                 : [];
             sensorFaults = await SensorFaults.RecentAsync(circuitId, EpisodeCount, view?.LotSinceUtc);
+            controlPauses = await ControlService.RecentPausesAsync(circuitId, EpisodeCount, view?.LotSinceUtc);
+            connectionEpisodes = await ControlService.RecentConnectionEpisodesAsync(circuitId, EpisodeCount, view?.LotSinceUtc);
             error = null;
         }
         catch (Exception ex)
@@ -763,21 +783,33 @@ else
 
     private static string Clock(DateTime utc) => utc.ToLocalTime().ToString("HH:mm:ss", LotFormat.Culture);
 
-    // --- Episodios (solución y sensor) ---
+    // --- Episodios (solución, sensor, control y conexión) ---
 
     /// <summary>Últimos episodios de cada tipo que se muestran (la lista tiene su propio scroll).</summary>
     private const int EpisodeCount = 20;
 
-    /// <summary>Una fila de la lista de Episodios. Severity: critical | warning | muted.</summary>
+    /// <summary>
+    /// Una fila de la lista de Episodios. Source: solution | sensor | control | connection (desde 2026-11-11 las pausas
+    /// del control y los cortes de la Pi).
+    /// Severity: critical | warning | muted. ResumableParameter: la pausa abierta que se reanuda desde la fila.
+    /// </summary>
     private sealed record EpisodeRow(
-        DateTime AtUtc, bool IsSensor, string Severity, string Title, string Detail, string Chip, string ChipTone,
-        bool Closed, bool Pinned, int? ResolvableFaultId, string? Hint);
+        DateTime AtUtc, string Source, string Severity, string Title, string Detail, string Chip, string ChipTone,
+        bool Closed, bool Pinned, int? ResolvableFaultId, string? Hint, string? ResumableParameter = null);
 
-    /// <summary>Errores de sensor abiertos que frenan el control arriba; el resto, el más reciente primero.</summary>
+    private static string SourceLabel(string source) => source switch
+    {
+        "sensor" => "Sensor",
+        "control" => "Control",
+        "connection" => "Conexión",
+        _ => "Solución",
+    };
+
+    /// <summary>Lo que frena el control (errores de sensor y pausas abiertas) arriba; el resto, el más reciente primero.</summary>
     private List<EpisodeRow> EpisodeRows()
     {
         var solution = episodes.Select(e => new EpisodeRow(
-            e.FirstObservedAtUtc, IsSensor: false,
+            e.FirstObservedAtUtc, "solution",
             e.Status == AnomalyContract.StatusResuelta ? "muted" : e.Severity == AnomalyContract.SeverityCritica ? "critical" : "warning",
             EpisodeTitle(e), EpisodeDetail(e), EpisodeStatus(e.Status), EpisodeTone(e.Status),
             Closed: e.Status == AnomalyContract.StatusResuelta, Pinned: false, ResolvableFaultId: null, e.RuleDescription));
@@ -786,7 +818,7 @@ else
         {
             var open = f.ResolvedAtUtc is null;
             return new EpisodeRow(
-                f.DetectedAtUtc, IsSensor: true,
+                f.DetectedAtUtc, "sensor",
                 !open ? "muted" : f.BlocksControl ? "critical" : "warning",
                 FaultTitle(f), FaultDetail(f),
                 !open ? "Resuelto" : f.BlocksControl ? "Frena el control" : "Abierto",
@@ -795,7 +827,37 @@ else
                 ResolvableFaultId: open && f.ResolvedByUser ? f.Id : null, Hint: null);
         });
 
-        return solution.Concat(sensor)
+        // Pausas del control (3 dosis seguidas sin efecto): frenan el parámetro hasta que alguien reanuda.
+        var control = controlPauses.Select(p =>
+        {
+            var open = p.ResumedAtUtc is null;
+            var resumed = p.ResumedAtUtc is { } at
+                ? $" · resuelto el {Moment(at)}{(string.IsNullOrWhiteSpace(p.ResumedBy) ? null : $" por {p.ResumedBy}")}"
+                : null;
+            return new EpisodeRow(
+                p.PausedAtUtc, "control", open ? "critical" : "muted",
+                $"Control de {p.Parameter} pausado", $"{p.Reason}{resumed}",
+                open ? "Frena el control" : "Resuelto", open ? "danger" : "muted",
+                Closed: !open, Pinned: open, ResolvableFaultId: null,
+                Hint: open ? "Revisá bidón, bomba y manguera; después marcalo como resuelto." : null,
+                ResumableParameter: open ? p.Parameter : null);
+        });
+
+        // Cortes de la Pi (sin lecturas más de 2 intervalos): nada llega a ningún circuito; se resuelven solos al volver.
+        var connection = connectionEpisodes.Select(c =>
+        {
+            var open = c.ReconnectedAtUtc is null;
+            var lasted = Span((c.ReconnectedAtUtc ?? DateTime.UtcNow) - c.SinceUtc);
+            return new EpisodeRow(
+                c.SinceUtc, "connection", open ? "critical" : "muted",
+                "Pi desconectada",
+                $"sin lecturas desde el {Moment(c.SinceUtc)} · {(open ? $"hace {lasted}" : $"duró {lasted}")}",
+                open ? "Sin conexión" : "Reconectada", open ? "danger" : "muted",
+                Closed: !open, Pinned: open, ResolvableFaultId: null,
+                Hint: open ? "Revisá que la Pi tenga energía y red: se resuelve sola cuando vuelven las lecturas." : null);
+        });
+
+        return solution.Concat(sensor).Concat(control).Concat(connection)
             .OrderByDescending(r => r.Pinned)
             .ThenByDescending(r => r.AtUtc)
             .ToList();
@@ -830,13 +892,17 @@ else
     {
         var parameter = EpisodeParameter(episode.Type);
         var peak = episode.PeakValue ?? episode.ObservedValue;
-        var value = $"llegó a {LotFormat.Num(peak)}{SensorFaultRules.Unit(parameter)}";
+        // "Bajó hasta 1,42 mS/cm (banda del lote 1,5–1,8)": el peor valor, del lado en que salió (desde 2026-11-11; antes "llegó a").
+        var verb = episode.OperationalMin is { } low && peak < low ? "bajó hasta"
+            : episode.OperationalMax is { } high && peak > high ? "subió hasta"
+            : "llegó a";
+        var value = $"{verb} {LotFormat.Num(peak)}{SensorFaultRules.Unit(parameter)}";
         if (episode.OperationalMin is not null || episode.OperationalMax is not null)
-            value += $" (banda {Band(episode.OperationalMin)}–{Band(episode.OperationalMax)})";
+            value += $" (banda del lote {Band(episode.OperationalMin)}–{Band(episode.OperationalMax)})";
         var duration = episode.ResolvedAtUtc is { } resolved
             ? $"duró {Span(resolved - episode.FirstObservedAtUtc)}"
             : $"hace {Span(DateTime.UtcNow - episode.FirstObservedAtUtc)}";
-        return string.Join(" · ", value, $"{LotFormat.Count(episode.ReadingCount, "lectura", "lecturas")} afuera", duration);
+        return string.Join(" · ", value, $"{LotFormat.Count(episode.ReadingCount, "lectura", "lecturas")} fuera de la banda", duration);
     }
 
     /// <summary>"menos de 1 min" / "45 min" / "2 h 10 min" / "3 d 4 h".</summary>
@@ -959,7 +1025,7 @@ else
             ControlEngine.Codes.AwaitReading => new("Esperando lecturas", "2 lecturas después de la mezcla", "info"),
             ControlEngine.Codes.Approaching => new($"{parameter} volviendo solo", "sin dosis por ahora", "info"),
             ControlEngine.Codes.Unconfirmed => new("Confirmando lectura", "falta una lectura que coincida", "warning"),
-            ControlEngine.Codes.Paused => new($"{parameter} pausado", "revisar y reanudar", "danger"),
+            ControlEngine.Codes.Paused => new($"{parameter} pausado", "revisar y marcar como resuelto", "danger"),
             ControlEngine.Codes.PiSilent => new("La Pi no consulta", "sin dosis hasta que vuelva", "danger"),
             ControlEngine.Codes.SensorFault => new($"Control de {parameter} frenado", FaultShort(status.SensorFaultKind), "danger"),
             ControlEngine.Codes.DailyLimit => new("Límite de 24 h", dose, "warning"),

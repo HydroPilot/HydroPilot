@@ -2,6 +2,7 @@ using System.Security.Claims;
 using HydroPilotWeb.Data;
 using HydroPilotWeb.Models;
 using HydroPilotWeb.Models.Control;
+using HydroPilotWeb.Models.Notifications;
 using HydroPilotWeb.Services.Anomalies;
 using HydroPilotWeb.Services.Dashboard;
 using HydroPilotWeb.Services.Forecasting;
@@ -1218,6 +1219,52 @@ public sealed class ControlService
         c.ExecutedAmount, c.ResultError, c.Parameter, c.ValueBefore, c.Target,
         c.Strength, c.ExpectedEffect, c.ValueAfter, c.ObservedEffect, c.Effective, Utc(c.EffectEvaluatedAtUtc),
         Utc(c.DispatchedAtUtc));
+
+    /// <summary>
+    /// Pausas del control del circuito para la lista de Episodios de Optimización (desde 2026-11-11): las abiertas y las
+    /// reanudadas desde que está el lote en curso (<paramref name="sinceUtc"/>), las abiertas primero.
+    /// </summary>
+    public async Task<IReadOnlyList<ControlPauseDto>> RecentPausesAsync(int circuitId, int take, DateTime? sinceUtc = null,
+        CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var pauses = await context.ControlPauses.AsNoTracking()
+            .Where(p => p.CircuitId == circuitId && (p.ResumedAtUtc == null || sinceUtc == null || p.PausedAtUtc >= sinceUtc))
+            .OrderBy(p => p.ResumedAtUtc == null ? 0 : 1)
+            .ThenByDescending(p => p.PausedAtUtc)
+            .Take(Math.Max(1, take))
+            .ToListAsync(ct);
+        return pauses.Select(ToDto).ToList();
+    }
+
+    /// <summary>
+    /// Cortes de la Pi del circuito para la lista de Episodios (desde 2026-11-11). Salen de las alertas "Pi desconectada"
+    /// (NodeConnectionMonitorHostedService crea una por corte al darla por desconectada, con la última lectura en la
+    /// huella, y la resuelve cuando vuelve): los abiertos y los del lote en curso, los abiertos primero.
+    /// </summary>
+    public async Task<IReadOnlyList<ControlConnectionEpisodeDto>> RecentConnectionEpisodesAsync(int circuitId, int take,
+        DateTime? sinceUtc = null, CancellationToken ct = default)
+    {
+        await using var context = await _dbFactory.CreateDbContextAsync(ct);
+        var nodeId = await context.Circuits.AsNoTracking().Where(c => c.Id == circuitId).Select(c => (int?)c.NodeId).FirstOrDefaultAsync(ct);
+        if (nodeId is null)
+            return [];
+        var prefix = NodeConnectionAlerts.Prefix(nodeId.Value);
+        var alerts = await context.NotificationAlerts.AsNoTracking()
+            .Where(a => a.Type == NotificationTypes.NodoDesconectado && a.Fingerprint.StartsWith(prefix)
+                        && (!a.IsResolved || sinceUtc == null || a.CreatedAtUtc >= sinceUtc))
+            .OrderBy(a => a.IsResolved ? 1 : 0)
+            .ThenByDescending(a => a.CreatedAtUtc)
+            .Take(Math.Max(1, take))
+            .Select(a => new { a.Fingerprint, a.CreatedAtUtc, a.IsResolved, a.ResolvedAtUtc })
+            .ToListAsync(ct);
+        return alerts
+            .Select(a => new ControlConnectionEpisodeDto(
+                Utc(NodeConnectionAlerts.LastReadingUtc(a.Fingerprint) ?? a.CreatedAtUtc),
+                Utc(a.CreatedAtUtc),
+                a.IsResolved ? Utc(a.ResolvedAtUtc ?? a.CreatedAtUtc) : null))
+            .ToList();
+    }
 
     private static ControlPauseDto ToDto(ControlPause p) =>
         new(p.Id, p.Parameter, Utc(p.PausedAtUtc), p.Reason, Utc(p.ResumedAtUtc), p.ResumedBy);

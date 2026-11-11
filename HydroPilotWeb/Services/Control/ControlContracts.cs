@@ -58,6 +58,12 @@ public sealed record ControlKpis(int Executed24h, int InFlight, int Problems24h)
 /// <summary>Pausa del control automático de una magnitud.</summary>
 public sealed record ControlPauseDto(int Id, string Parameter, DateTime PausedAtUtc, string Reason, DateTime? ResumedAtUtc, string? ResumedBy);
 
+/// <summary>
+/// Un corte de la Pi del circuito (episodio de Conexión, desde 2026-11-11): desde la última lectura, cuándo la web la dio
+/// por desconectada y cuándo volvió (null = sigue sin conexión).
+/// </summary>
+public sealed record ControlConnectionEpisodeDto(DateTime SinceUtc, DateTime DetectedAtUtc, DateTime? ReconnectedAtUtc);
+
 /// <summary>Qué está haciendo (o haría) el motor ahora: ControlEngine.Decide sobre los datos de la vista.</summary>
 public sealed record ControlStatusDto(
     string Outcome,

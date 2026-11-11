@@ -83,6 +83,26 @@ public sealed class VirtualPi
     /// </summary>
     private const double PhKeyStep = 0.4;
 
+    /// <summary>Paso máximo de pH del escenario demo y de la tecla d: debajo del salto máximo de la web (0,5).</summary>
+    private const double DemoMaxPhStep = 0.45;
+
+    /// <summary>
+    /// Circuitos del escenario demo: el primero (bomba de pH Down rota y salto de CE) y el primero de Adultas con plantas
+    /// (la CE baja y se corrige; la tecla d sube su pH en vivo).
+    /// </summary>
+    private readonly int _demoPhCircuit;
+    private readonly int _demoLiveCircuit;
+
+    /// <summary>Cuándo ejecutó la Pi el último comando de cada circuito: el salto de CE espera a que no haya dosis cerca.</summary>
+    private readonly DateTime[] _lastCommandUtc;
+
+    /// <summary>Dosis de pH Down (sin efecto) del circuito de la demo y cuándo fue la tercera: después viene la pausa.</summary>
+    private int _demoPhDowns;
+    private DateTime _demoThirdPhDownUtc;
+
+    private readonly List<DemoStep> _demoSteps = [];
+    private readonly object _demoGate = new();
+
     public VirtualPi(IPiTransport transport, Settings settings, IReadOnlyList<CircuitLayout> circuits, IReadOnlyList<Tank> tanks,
         string? temperatureKey = null, string? humidityKey = null, bool refresh = false)
     {
@@ -93,6 +113,10 @@ public sealed class VirtualPi
         _temperatureKey = temperatureKey ?? "temp-ambiente";
         _humidityKey = humidityKey ?? "hum-ambiente";
         _refresh = refresh;
+        _lastCommandUtc = new DateTime[_circuits.Length];
+        _demoPhCircuit = 0;
+        var adult = Array.FindIndex(_circuits, c => c.Kind == "ADULTAS" && c.Plants > 0);
+        _demoLiveCircuit = adult >= 0 ? adult : Math.Min(1, _circuits.Length - 1);
         for (var i = 0; i < tanks.Count; i++)
         {
             var label = Label(i);
@@ -100,6 +124,8 @@ public sealed class VirtualPi
         }
 
         LoadImages();
+        if (settings.Scenario == Scenario.Demo)
+            PlanDemo();
     }
 
     private string Label(int index) => _circuits[index].Name;
@@ -123,6 +149,7 @@ public sealed class VirtualPi
         var tasks = new List<Task>
         {
             TankLoopAsync(ct),
+            DemoLoopAsync(ct),
             ReadingsLoopAsync(ct),
             CommandsLoopAsync(ct),
             KeysLoopAsync(ct),
@@ -248,6 +275,12 @@ public sealed class VirtualPi
                         break;
                     case 'i':
                         await SendRandomPlantImageAsync(preferSelected: true, ct);
+                        break;
+                    case 'd':
+                        // En vivo: el pH sube a 6,42, justo arriba de donde actúa el control (6,35) y adentro de la banda
+                        // del lote (6,5): dosis automática sin episodio. En la demo, en su circuito de Adultas.
+                        var liveIndex = _settings.Scenario == Scenario.Demo ? _demoLiveCircuit : _selected;
+                        Schedule(TimeSpan.Zero, () => MovePhToward(liveIndex, 6.42, "en vivo"));
                         break;
                     case 'x':
                         _manualOffline = !_manualOffline;
@@ -409,9 +442,17 @@ public sealed class VirtualPi
         var seconds = Math.Clamp(amount / pump.PerSecond, 0.5, 6);
         await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
 
-        var broken = _settings.Scenario == Scenario.BrokenPhPump && index == 0 && kind is "ph-up" or "ph-down";
+        // bomba-rota: las de pH del circuito 1; demo: la de pH Down del circuito 1. Responden EXECUTED pero no cambian nada.
+        var broken = index == _demoPhCircuit && (_settings.Scenario == Scenario.BrokenPhPump && kind is "ph-up" or "ph-down"
+                                                 || _settings.Scenario == Scenario.Demo && kind == "ph-down");
         if (!broken)
             _tanks[index].Dose(kind, amount);
+        _lastCommandUtc[index] = DateTime.UtcNow;
+        if (broken && _settings.Scenario == Scenario.Demo && ++_demoPhDowns == 3)
+        {
+            _demoThirdPhDownUtc = DateTime.UtcNow;
+            PrintDemo($"{Label(index)}: 3.ª dosis de pH Down sin efecto → la web pausa el control de pH al medirla (~1 min)");
+        }
 
         return new CommandResult("EXECUTED", command.Amount, startedAt, DateTimeOffset.UtcNow, null, command.Actuator, command.Unit);
     }
@@ -465,6 +506,103 @@ public sealed class VirtualPi
                     break;
                 default:
                     return;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Escenario demo (desde 2026-11-11): lo que pasa solo mientras se presentan los otros módulos
+    // ------------------------------------------------------------------
+
+    /// <summary>Un paso del guion: cuándo toca y qué hace; devuelve cuándo repetirse (null = terminó).</summary>
+    private sealed record DemoStep(DateTime DueUtc, Func<DateTime?> Run);
+
+    /// <summary>
+    /// El guion de la demo de Optimización: en el primer circuito, la bomba de pH Down rota (3 dosis sin efecto y pausa) y
+    /// después un salto de la sonda de CE (error de sensor: el control de CE se frena); en el primero de Adultas con
+    /// plantas, la CE baja y el control la corrige (episodio crítico que se resuelve solo). Los tiempos suponen la mezcla de
+    /// 1 min y la revisión del control cada 20 s de la web (appsettings.json, local y Azure).
+    /// </summary>
+    private void PlanDemo()
+    {
+        var ph = Label(_demoPhCircuit);
+        var live = Label(_demoLiveCircuit);
+        Print(ConsoleColor.Magenta, "Escenario demo:");
+        Print(ConsoleColor.Magenta, $"  0:20  {ph}: bomba de pH Down rota y el pH sube a 6,45 → 3 dosis sin efecto → pH pausado (~5 min)");
+        Print(ConsoleColor.Magenta, $"  1:00  {live}: la CE baja 0,3 → episodio crítico y alerta → el control la corrige y se resuelve");
+        Print(ConsoleColor.Magenta, $"  6:00  {ph}: la CE baja 0,6 de golpe → error de sensor por salto, control de CE frenado (espera la pausa)");
+        Print(ConsoleColor.Magenta, $"  d     en vivo: el pH de {live} sube a 6,4 → dosis automática de pH Down en ~30 s");
+
+        Schedule(TimeSpan.FromSeconds(20), () => MovePhToward(_demoPhCircuit, 6.45, "bomba de pH Down rota"));
+        Schedule(TimeSpan.FromMinutes(1), () =>
+        {
+            _tanks[_demoLiveCircuit].Nudge(0, -0.3);
+            PrintDemo($"{live}: la CE baja 0,3");
+            return null;
+        });
+        Schedule(TimeSpan.FromMinutes(6), () =>
+        {
+            // Después de la pausa (la 3.ª dosis de pH Down sin efecto + 2 min, el tiempo de medirla): si la CE saliera de
+            // banda antes, el control la corregiría primero (va antes que el pH) y el pH no llegaría a pausarse. Si a los
+            // 9 min no hubo 3 dosis, va igual. Y sin dosis en el circuito en los últimos 2 min: si hubo una dentro de la
+            // mezcla antes de la lectura anterior, la web no cuenta el salto (la dosis mueve la solución a propósito).
+            var now = DateTime.UtcNow;
+            var afterPause = _demoPhDowns >= 3 ? _demoThirdPhDownUtc.AddMinutes(2) : _startedAtUtc.AddMinutes(9);
+            var quiet = _lastCommandUtc[_demoPhCircuit].AddMinutes(2);
+            if (now < afterPause || now < quiet)
+                return now.AddSeconds(15);
+            _tanks[_demoPhCircuit].Nudge(0, -0.6);
+            PrintDemo($"{ph}: la CE baja 0,6 de golpe (salto de la sonda)");
+            return null;
+        });
+    }
+
+    private void Schedule(TimeSpan after, Func<DateTime?> run)
+    {
+        lock (_demoGate)
+            _demoSteps.Add(new DemoStep(DateTime.UtcNow + after, run));
+    }
+
+    /// <summary>
+    /// Lleva el pH del tanque hacia <paramref name="target"/> de a <see cref="DemoMaxPhStep"/> como mucho; si falta, sigue
+    /// después de la próxima lectura (dos pasos entre las mismas lecturas serían un salto).
+    /// </summary>
+    private DateTime? MovePhToward(int index, double target, string why)
+    {
+        var gap = target - _tanks[index].Ph;
+        if (Math.Abs(gap) < 0.02)
+            return null;
+        var step = Math.Clamp(gap, -DemoMaxPhStep, DemoMaxPhStep);
+        _tanks[index].Nudge(step, 0);
+        PrintDemo($"{Label(index)}: {why}, pH {(step > 0 ? "+" : "−")}{Math.Abs(step).ToString("0.00", Es)}");
+        return Math.Abs(gap) > DemoMaxPhStep ? DateTime.UtcNow.AddSeconds(_settings.ReadingSeconds + 1) : null;
+    }
+
+    private void PrintDemo(string text)
+    {
+        var elapsed = DateTime.UtcNow - _startedAtUtc;
+        Print(ConsoleColor.Magenta, $"· demo {(int)elapsed.TotalMinutes}:{elapsed.Seconds:00} · {text}");
+    }
+
+    private async Task DemoLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (await Tick(timer, ct))
+        {
+            List<DemoStep> due;
+            lock (_demoGate)
+            {
+                var now = DateTime.UtcNow;
+                due = _demoSteps.Where(s => s.DueUtc <= now).ToList();
+                _demoSteps.RemoveAll(s => s.DueUtc <= now);
+            }
+            foreach (var step in due)
+            {
+                if (step.Run() is { } again)
+                {
+                    lock (_demoGate)
+                        _demoSteps.Add(step with { DueUtc = again });
+                }
             }
         }
     }

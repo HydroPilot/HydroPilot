@@ -1,6 +1,12 @@
 namespace HydroPilotWeb.Services.Control;
 
-/// <summary>Tiempos del control de pH/CE (sección "Control" de appsettings).</summary>
+/// <summary>
+/// Tiempos del control de pH/CE (sección "Control" de appsettings). Desde 2026-11-11 appsettings.json trae los de la demo
+/// con la Pi virtual, en local y en Azure: mezcla 1 min, cambio de sentido 5 min y revisión cada 20 s (su tanque mezcla
+/// en ~2 min). Para una Pi real con un tanque de verdad conviene volver a 30 min, 30 min y 60 s (o cargarlos en el
+/// portal como Control__MixingMinutes, etc.). Los valores de abajo son los de fábrica si appsettings no los trae; el
+/// historial del entorno de simulación usa estos.
+/// </summary>
 public sealed class ControlOptions
 {
     public const string SectionName = "Control";

@@ -200,6 +200,30 @@ public sealed partial class HistoryGenerator
             $"harvest-imminent-lot-{run.Lot.Id}", run.Lot.Id, t.AddMinutes(16));
     }
 
+    /// <summary>
+    /// El corte de la Pi como lo deja NodeConnectionMonitorHostedService (desde 2026-11-11): la alerta "Pi desconectada" a
+    /// los 2 intervalos sin lecturas, con la última lectura en la huella, resuelta cuando vuelve. De ahí sale el episodio de
+    /// Conexión de Optimización.
+    /// </summary>
+    private void OfflineAlert(BenchRun bench, DateTime from, DateTime until)
+    {
+        var reading = TimeSpan.FromMinutes(_readingMinutes).Ticks;
+        var lastAccepted = new DateTime((from.Ticks - 1) / reading * reading, DateTimeKind.Utc).AddSeconds(2);
+        var detected = lastAccepted + TimeSpan.FromSeconds(ExpectedIntervalSeconds) * 2 + TimeSpan.FromSeconds(40);
+        if (detected > _nowUtc)
+            return;
+        var alert = AddAlert(NotificationTypes.NodoDesconectado, NotificationSeverities.Alta,
+            $"Nodo {bench.Bench.Identifier} desconectado",
+            $"Sin lecturas desde el {ToLocal(lastAccepted).ToString("dd/MM HH:mm", System.Globalization.CultureInfo.InvariantCulture)}. " +
+            "Revisá que la Pi tenga energía y red.",
+            NodeConnectionAlerts.Fingerprint(bench.Bench.NodeId, lastAccepted), null, detected);
+        if (until.AddMinutes(1) <= _nowUtc)
+        {
+            alert.IsResolved = true;
+            alert.ResolvedAtUtc = until.AddMinutes(1);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Notificaciones (como NotificationService.CreateAlertAsync)
     // ------------------------------------------------------------------

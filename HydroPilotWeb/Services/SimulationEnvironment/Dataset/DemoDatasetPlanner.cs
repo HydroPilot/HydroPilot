@@ -20,8 +20,12 @@ public sealed record DemoPlanResult(DemoScript? Script, IReadOnlyList<string> Er
 /// </summary>
 public static class DemoClimateModel
 {
-    public static GreenhouseClimate.DayNormal Normal(DemoClimate climate, DateOnly date) =>
-        GreenhouseClimate.MonthlyNormal(date.Month, climate.OutdoorMax[date.Month - 1], climate.OutdoorMin[date.Month - 1]);
+    /// <summary>La normal del mes de la fecha del Excel (con las fechas corridas, la de <see cref="DemoClimate.ShiftDays"/> días antes).</summary>
+    public static GreenhouseClimate.DayNormal Normal(DemoClimate climate, DateOnly date)
+    {
+        var month = date.AddDays(-climate.ShiftDays).Month;
+        return GreenhouseClimate.MonthlyNormal(month, climate.OutdoorMax[month - 1], climate.OutdoorMin[month - 1]);
+    }
 
     public static double Anomaly(DemoClimate climate, DateOnly date) =>
         climate.Events.Where(e => e.From <= date && date <= e.To).Sum(e => e.Delta);

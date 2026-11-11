@@ -332,7 +332,9 @@ public sealed partial class HistoryGenerator
             PlantFate.TransplantActive or PlantFate.TransplantCut or PlantFate.TransplantDiscard =>
                 (lot.Transplant!.Date, ForScore(lot.Transplant.Date, candidate - 12, candidate - 2)),
             PlantFate.DenseDiscard when reason.Contains("tamaño", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(1.33, 1.45)),
-            PlantFate.DenseDiscard when reason.Contains("Damping", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(0.06, 0.18)),
+            // Las plántulas que no prosperan (damping-off, o débiles por una semilla de prueba desde 2026-11-11) se descartan chicas.
+            PlantFate.DenseDiscard when reason.Contains("Damping", StringComparison.OrdinalIgnoreCase)
+                                     || reason.Contains("Plántula", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(0.06, 0.18)),
             PlantFate.DenseDiscard when reason.Contains("Pythium", StringComparison.OrdinalIgnoreCase)
                                      || reason.Contains("Tipburn", StringComparison.OrdinalIgnoreCase)
                                      || reason.Contains("bolting", StringComparison.OrdinalIgnoreCase) => (plant.FateDate!.Value, Between(0.5, 0.8)),
