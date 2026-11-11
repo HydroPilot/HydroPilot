@@ -16,13 +16,30 @@ public sealed class Settings
     public string? ApiKey { get; private set; }
     public Scenario Scenario { get; private set; } = Scenario.Normal;
     public int ReadingSeconds { get; private set; } = 15;
+
+    /// <summary>
+    /// Lo que la Pi le dice a la web que tarda entre lecturas (campo expectedIntervalSeconds del batch): las lecturas
+    /// más 10 s de margen, para que un envío un poco tarde no la haga figurar caída. Con 15 s, la web la da por
+    /// degradada a los 25 s sin lecturas y por desconectada a los 50.
+    /// </summary>
+    public int DeclaredIntervalSeconds => ReadingSeconds + 10;
+
     public int PollSeconds { get; private set; } = 5;
-    public int ImageSeconds { get; private set; } = 20;
+
+    /// <summary>Fotos automáticas cada tantos segundos: 0 (apagadas) de fábrica desde 2026-11-10; la tecla i manda una.</summary>
+    public int ImageSeconds { get; private set; }
     public double HealthyPercent { get; private set; } = 80;
     public string? ImagesPath { get; private set; }
     public double Liters { get; private set; } = 500;
-    public double Ph { get; private set; } = 6.0;
-    public double Ec { get; private set; } = 1.5;
+
+    /// <summary>
+    /// pH y CE con que arrancan todos los tanques si se pasan --ph / --ce. Sin ellos, cada tanque arranca en el último
+    /// valor de su circuito según la web (desde 2026-11-10) o, si no hay, en <see cref="DefaultPh"/> / <see cref="DefaultEc"/>.
+    /// </summary>
+    public double? Ph { get; private set; }
+    public double? Ec { get; private set; }
+    public const double DefaultPh = 6.0;
+    public const double DefaultEc = 1.5;
     public bool Insecure { get; private set; }
 
     /// <summary>Cuántas veces más rápido corre el tiempo de las plantas y del clima (1 = tiempo real).</summary>
@@ -71,21 +88,23 @@ public sealed class Settings
           --acelerar <n>         el tiempo de las plantas y del clima corre n veces más rápido (1; 60 = una hora por minuto)
           --dias <n/n>           con --circuitos: días desde la siembra del lote de cada uno, separados por / (12/4)
           --plantas <n>          con --circuitos: plantas de cada mesada (200)
-          --lecturas <s>         cada cuántos segundos manda lecturas (15)
+          --lecturas <s>         cada cuántos segundos manda lecturas (15); a la web le declara 10 s más
           --consulta <s>         cada cuántos segundos pide comandos (5)
-          --imagenes <s>         cada cuántos segundos manda una imagen de planta (20; 0 = desactivado)
+          --imagenes <s>         fotos automáticas de plantas cada tantos segundos (0 = apagadas, de fábrica;
+                                 la tecla i manda una al circuito elegido)
           --sanas <%>            porcentaje de imágenes en buenas condiciones (80)
           --carpeta-imagenes <r> carpeta de imágenes de prueba (por defecto busca wwwroot/img/prueba)
           --litros <L>           volumen de cada tanque (500)
-          --ph <valor>           pH inicial (6,0)
-          --ce <valor>           CE inicial en mS/cm (1,5)
+          --ph <valor>           pH inicial de todos los tanques (sin esta opción, el último de cada circuito; si
+                                 no hay, 6,0)
+          --ce <valor>           CE inicial de todos los tanques en mS/cm (igual; si no hay, 1,5)
           --inseguro             no valida el certificado HTTPS (solo localhost)
           --transporte <nombre>  http (default) | iothub
           --conexion <cadena>    cadena del dispositivo en IoT Hub (o HYDROPILOT_DEVICE_CONNECTION);
                                  el nodo es su DeviceId
 
         Teclas: 1–9 = elegir el circuito de las teclas siguientes (1)
-                p = pH +0,5 · b = pH −0,5 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · a = cambiar aceleración
+                p = pH +0,4 · b = pH −0,4 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · a = cambiar aceleración
                 i = mandar imagen ahora · x = cortar/reanudar conexión · q = salir
         """;
 

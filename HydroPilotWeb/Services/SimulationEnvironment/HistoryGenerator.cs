@@ -15,12 +15,14 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 
 /// <summary>
 /// Genera el historial del entorno de simulación (lógica pura y determinística: misma semilla, mismo historial).
-/// Recorre el período cada <see cref="SimulationEnvironmentOptions.ReadingMinutes"/> minutos, mesada por mesada, y en
-/// cada paso hace lo que pasaría de verdad, con las reglas de la app:
+/// Recorre el período cada 10 minutos (<see cref="StepMinutes"/>), mesada por mesada, y en cada paso hace lo que pasaría
+/// de verdad, con las reglas de la app:
 /// - el tanque y las plantas (<see cref="NutrientTank"/>, <see cref="LettuceUptake"/>, <see cref="GreenhouseClimate"/>);
-/// - la Pi manda lecturas, clasificadas como la ingesta (<see cref="TelemetryValidationService"/>);
-/// - el control, siempre automático (como si nunca hubiera estado en manual): el motor (<see cref="ControlEngine"/>)
-///   con la receta aprendida (<see cref="RecipeRules"/>), medición de efecto, calibración y pausas;
+/// - cada <see cref="SimulationEnvironmentOptions.ReadingMinutes"/> minutos (una hora), la Pi manda lecturas,
+///   clasificadas como la ingesta (<see cref="TelemetryValidationService"/>); entre lecturas solo consulta comandos;
+/// - con cada lectura, el control, siempre automático (como si nunca hubiera estado en manual): el motor
+///   (<see cref="ControlEngine"/>) con la receta aprendida (<see cref="RecipeRules"/>), medición de efecto, calibración
+///   y pausas;
 /// - una vez por día, la evaluación de cada planta (score con <see cref="BabyLeafScoreCalculator"/>) y el flujo
 ///   diario (<see cref="PlantDecisionEngine"/>); a los 250 GDD, el trasplante a las mesadas de Adultas
 ///   (<see cref="TransplantRules"/>); el corte Baby Leaf en el pico de aptas (<see cref="BabyLeafOptimumRules"/>), el de
@@ -32,7 +34,11 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 /// </summary>
 public sealed partial class HistoryGenerator
 {
-    private const int ExpectedIntervalSeconds = 300;
+    /// <summary>
+    /// Paso del recorrido: cada 10 minutos se calcula el tanque (lo que toman las plantas, el efecto de las dosis) y el
+    /// clima, aunque la Pi mida cada hora. Así el pH y la CE entre dos lecturas cambian como en un tanque de verdad.
+    /// </summary>
+    private const int StepMinutes = 10;
     private const string Firmware = "pi-1.4.2";
 
     private readonly SimWorld _w;
@@ -43,7 +49,7 @@ public sealed partial class HistoryGenerator
     private readonly HistoryData _data = new();
     private readonly ControlOptions _control = new();
     private readonly TelemetryValidationService _validation = new(Microsoft.Extensions.Options.Options.Create(new TelemetryOptions()));
-    private readonly int _stepMinutes;
+    private readonly int _readingMinutes;
     private readonly Action<HistoryData>? _flushTelemetry;
     private readonly DemoScript? _script;
 
@@ -69,8 +75,18 @@ public sealed partial class HistoryGenerator
         _nowUtc = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc);
         _today = LocalDate(_nowUtc);
         _rng = new Random(options.Seed);
-        _stepMinutes = Math.Clamp(options.ReadingMinutes, 5, 30);
+        _readingMinutes = ReadingIntervalMinutes(options);
     }
+
+    /// <summary>
+    /// Cada cuántos minutos manda lecturas la Pi del historial (<see cref="SimulationEnvironmentOptions.ReadingMinutes"/>,
+    /// en múltiplos del paso de 10, entre 10 y 120). Es también el intervalo esperado del nodo.
+    /// </summary>
+    public static int ReadingIntervalMinutes(SimulationEnvironmentOptions options) =>
+        Math.Clamp(options.ReadingMinutes / StepMinutes * StepMinutes, StepMinutes, 120);
+
+    /// <summary>Intervalo esperado del nodo (lo que declara la Pi): con él la ingesta y el monitor juzgan si está conectada.</summary>
+    private int ExpectedIntervalSeconds => _readingMinutes * 60;
 
     /// <summary>
     /// Genera el historial. <paramref name="flushTelemetry"/>: cada <see cref="TelemetryChunk"/> lecturas se le pasa lo
@@ -128,8 +144,10 @@ public sealed partial class HistoryGenerator
 
         var firstSowing = plans.Min(p => p.Sowing);
         var start = ToUtc(firstSowing.AddDays(-2).ToDateTime(TimeOnly.MinValue));
-        start = new DateTime(start.Ticks - start.Ticks % TimeSpan.FromMinutes(_stepMinutes).Ticks, DateTimeKind.Utc);
-        var step = TimeSpan.FromMinutes(_stepMinutes);
+        // Arranca en una hora de lectura (en punto): las lecturas caen a las 0, 1, 2… h y las tareas del día (evaluación
+        // a las 8, reposición a las 9, cortes a las 10) siguen en su paso de 10 minutos.
+        start = new DateTime(start.Ticks - start.Ticks % TimeSpan.FromMinutes(_readingMinutes).Ticks, DateTimeKind.Utc);
+        var step = TimeSpan.FromMinutes(StepMinutes);
 
         var last = start;
         for (var t = start; t <= _nowUtc; t += step)
@@ -176,18 +194,30 @@ public sealed partial class HistoryGenerator
         {
             var alive = lot.Plants.Count(p => p.Active && p.Bench == bench);
             var rootHealth = lot.RootHealth;
-            var uptake = LettuceUptake.For(alive, (double)lot.Gdd, _stepMinutes * 60, local.TimeOfDay.TotalHours,
+            var uptake = LettuceUptake.For(alive, (double)lot.Gdd, StepMinutes * 60, local.TimeOfDay.TotalHours,
                 climate.Temperature, climate.Humidity, tank.Ec, tank.Liters, rootHealth);
-            tank.Step(_stepMinutes * 60, uptake);
+            tank.Step(StepMinutes * 60, uptake);
         }
 
+        // La Pi mide y manda cada _readingMinutes (una hora desde 2026-11-10; antes cada paso de 10 minutos). Entre
+        // lecturas sigue consultando comandos (por HTTP lo hace cada pocos segundos), así una dosis o la reposición del
+        // operario se ejecutan enseguida. El control decide con cada lectura, como la web.
+        var reads = t.Ticks % TimeSpan.FromMinutes(_readingMinutes).Ticks == 0;
         Incidents(bench, t, local);
-        SendReadings(bench, t, local, climate);
-        MeasureEffects(bench, t);
+        if (reads)
+        {
+            SendReadings(bench, t, local, climate);
+            MeasureEffects(bench, t);
+        }
+        else if (!bench.IsOffline(t))
+        {
+            bench.LastPollUtc = t;
+        }
 
         if (lot is not null && !lot.Closed)
         {
-            Control(bench, t);
+            if (reads)
+                Control(bench, t);
             if (minute is >= 8 * 60 and < 8 * 60 + 10 && lot.EvaluatedOn != date)
                 DailyFlow(bench, t, local);
             if (minute is >= 9 * 60 and < 9 * 60 + 20)
@@ -485,9 +515,10 @@ public sealed partial class HistoryGenerator
                     TelemetryContract.ReasonTimestampFuturo, TelemetryContract.QualityFuture, TelemetryContract.ResultInvalida);
             }
         }
-        else if (bench.Bench.HasAmbient && _rng.NextDouble() < 0.0006)
+        else if (bench.Bench.HasAmbient && _rng.NextDouble() < 0.0006 * _readingMinutes / StepMinutes)
         {
-            // Firmware que a veces manda un sensor que la web no conoce.
+            // Firmware que a veces manda un sensor que la web no conoce (unas 3 veces por mes, como con lecturas cada
+            // 10 minutos).
             AddRejection(bench, $"pi-{bench.Bench.Identifier}-{t:yyyyMMddHHmm}", $"sim-temp-solucion-{t:yyyyMMddHHmm}", "temp-solucion",
                 t, t.AddSeconds(1), Math.Round((decimal)(climate.Temperature - 1), 1), "°C",
                 TelemetryContract.ReasonSensorDesconocido, TelemetryContract.QualityInvalid, TelemetryContract.ResultDesconocida);

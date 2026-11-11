@@ -214,10 +214,11 @@ public class SimulationEnvironmentSqlServerTests
         Assert.Equal(5, view.Actuators.Count);
         Assert.Contains(view.Actuators, a => a.EffectSamples > 0); // las bombas se calibraron con el historial
 
-        // Tendencia de las últimas 24 h: lecturas promediadas, banda del lote y de acción, dosis del motor.
+        // Tendencia de las últimas 24 h: lecturas promediadas, banda del lote y de acción, dosis del motor. Desde 2026-11-10
+        // el historial tiene una lectura por hora (antes cada 10 minutos, y se pedían al menos 50 puntos).
         var trend = await control.GetTrendAsync(circuit.Id, 24);
         Assert.NotNull(trend);
-        Assert.InRange(trend!.Ph.Points.Count, 50, ControlService.TrendMaxPoints + 1);
+        Assert.InRange(trend!.Ph.Points.Count, 20, ControlService.TrendMaxPoints + 1);
         Assert.True(trend.Ph.ActionBand.Max < trend.Ph.Band.Max && trend.Ph.ActionBand.Min > trend.Ph.Band.Min);
         Assert.All(trend.Ph.Doses.Concat(trend.Ec.Doses), d => Assert.True(d.AtUtc >= trend.FromUtc));
 

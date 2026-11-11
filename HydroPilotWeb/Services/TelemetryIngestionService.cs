@@ -133,6 +133,11 @@ public sealed class TelemetryIngestionService
                 return new IngestOutcome(IngestBatchStatus.Conflict, envelope.BatchId, null, receivedAtUtc);
             }
 
+            // ---- Intervalo declarado (opcional, desde 2026-11-10): la Pi dice cada cuántos segundos manda. Con él se la
+            // juzga conectada o caída y se dan los sensores por sin datos. Sin el campo queda el que tenía. ----
+            if (envelope.ExpectedIntervalSeconds is { } declared)
+                node.ExpectedIntervalSeconds = declared;
+
             // ---- Resolución de sensores dentro del nodo (IOT-02) ----
             var sensors = await context.Sensors
                 .Include(s => s.SensorType)

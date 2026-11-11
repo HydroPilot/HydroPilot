@@ -31,7 +31,8 @@ public sealed record CircuitGreenhouseChoice(int Id, string Name, string PiIdent
 
 /// <summary>
 /// Un circuito como lo necesita la Pi: claves de sus sondas y bombas (tipo → clave), litros del tanque, plantas activas
-/// del lote que tiene ahora y días desde su siembra (null sin lote).
+/// del lote que tiene ahora y días desde su siembra (null sin lote). Desde 2026-11-10, también el último pH y la última
+/// CE usables del tanque (null si nunca midió): la Pi virtual arranca cada tanque ahí.
 /// </summary>
 public sealed record DeviceCircuitConfig(
     string Name,
@@ -42,7 +43,9 @@ public sealed record DeviceCircuitConfig(
     IReadOnlyDictionary<string, string> Pumps,
     int Plants,
     int? LotDays,
-    IReadOnlyList<int>? PlantIds = null);
+    IReadOnlyList<int>? PlantIds = null,
+    decimal? LastPh = null,
+    decimal? LastEc = null);
 
 /// <summary>Configuración de la Pi (GET /api/nodos/{nodo}/circuitos): sus circuitos y las claves de temperatura y humedad.</summary>
 public sealed record DeviceConfigResponse(string NodeId, string? TemperatureKey, string? HumidityKey, IReadOnlyList<DeviceCircuitConfig> Circuits);
@@ -219,12 +222,23 @@ public sealed class CircuitService
                 c.Name,
                 c.Kind,
                 c.ReservoirLiters,
-                Ph = c.Sensors.Where(s => s.IsActive && s.SensorType!.Name == AnomalyContract.SensorTypePh).Select(s => s.TechnicalKey).FirstOrDefault(),
-                Ec = c.Sensors.Where(s => s.IsActive && s.SensorType!.Name == AnomalyContract.SensorTypeCe).Select(s => s.TechnicalKey).FirstOrDefault(),
+                Ph = c.Sensors.Where(s => s.IsActive && s.SensorType!.Name == AnomalyContract.SensorTypePh).Select(s => new { s.Id, s.TechnicalKey }).FirstOrDefault(),
+                Ec = c.Sensors.Where(s => s.IsActive && s.SensorType!.Name == AnomalyContract.SensorTypeCe).Select(s => new { s.Id, s.TechnicalKey }).FirstOrDefault(),
                 Pumps = c.Actuators.Where(a => a.IsActive).Select(a => new { a.Kind, a.TechnicalKey }).ToList(),
                 Lot = c.Assignments.Where(a => a.ValidUntilUtc == null).Select(a => new { a.LotId, a.Lot!.SowingDate, DenseCircuit = a.Lot.CircuitId }).FirstOrDefault(),
             })
             .ToListAsync(ct);
+
+        // Último valor usable de una sonda (el tanque como quedó: al regenerar, el final del historial).
+        async Task<decimal?> LastValueAsync(int? sensorId) =>
+            sensorId is { } id
+                ? await context.SensorReadings.AsNoTracking()
+                    .Where(TelemetryQualityPolicy.OperationallyUsableReading)
+                    .Where(r => r.SensorId == id)
+                    .OrderByDescending(r => r.ObservedAtUtc)
+                    .Select(r => (decimal?)r.Value)
+                    .FirstOrDefaultAsync(ct)
+                : null;
 
         var result = new List<DeviceCircuitConfig>();
         foreach (var c in circuits)
@@ -236,10 +250,12 @@ public sealed class CircuitService
                     .Select(p => p.Id)
                     .ToListAsync(ct)
                 : new List<int>();
-            result.Add(new DeviceCircuitConfig(c.Name, c.Kind, c.ReservoirLiters, c.Ph, c.Ec,
+            result.Add(new DeviceCircuitConfig(c.Name, c.Kind, c.ReservoirLiters, c.Ph?.TechnicalKey, c.Ec?.TechnicalKey,
                 c.Pumps.GroupBy(p => p.Kind).ToDictionary(g => g.Key, g => g.First().TechnicalKey), plantIds.Count,
                 c.Lot is { } current ? today.DayNumber - current.SowingDate.DayNumber : null,
-                plantIds));
+                plantIds,
+                await LastValueAsync(c.Ph?.Id),
+                await LastValueAsync(c.Ec?.Id)));
         }
 
         var ambient = await context.Sensors.AsNoTracking()

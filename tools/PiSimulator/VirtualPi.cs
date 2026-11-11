@@ -76,6 +76,13 @@ public sealed class VirtualPi
     /// <summary>Aceleraciones que recorre la tecla a.</summary>
     private static readonly double[] Accelerations = [1, 10, 60, 240];
 
+    /// <summary>
+    /// Cuánto mueven el pH las teclas p y b: 0,4 desde 2026-11-10 (antes 0,5). Con 0,5, justo el salto máximo de pH de
+    /// la web, el ruido de la sonda hacía que la mitad de las veces se abriera un error de sensor por salto, que frena
+    /// el control de pH y no deja ver la dosis. Para mover más, se aprieta otra vez después de la lectura siguiente.
+    /// </summary>
+    private const double PhKeyStep = 0.4;
+
     public VirtualPi(IPiTransport transport, Settings settings, IReadOnlyList<CircuitLayout> circuits, IReadOnlyList<Tank> tanks,
         string? temperatureKey = null, string? humidityKey = null, bool refresh = false)
     {
@@ -214,12 +221,12 @@ public sealed class VirtualPi
                         Print(ConsoleColor.Magenta, $"· teclas para el {Label(_selected)}");
                         break;
                     case 'p':
-                        tank.Nudge(0.5, 0);
-                        Print(ConsoleColor.Magenta, $"· {label}: pH +0,5");
+                        tank.Nudge(PhKeyStep, 0);
+                        Print(ConsoleColor.Magenta, $"· {label}: pH +{PhKeyStep.ToString("0.0", Es)}");
                         break;
                     case 'b':
-                        tank.Nudge(-0.5, 0);
-                        Print(ConsoleColor.Magenta, $"· {label}: pH −0,5");
+                        tank.Nudge(-PhKeyStep, 0);
+                        Print(ConsoleColor.Magenta, $"· {label}: pH −{PhKeyStep.ToString("0.0", Es)}");
                         break;
                     case 'c':
                         tank.Nudge(0, -0.3);
@@ -309,6 +316,8 @@ public sealed class VirtualPi
             sequence = Interlocked.Increment(ref _sequence),
             sentAt = observed,
             firmwareVersion = "pi-virtual-1.0",
+            // Cada cuánto manda (con margen): la web la da por caída a los 2 intervalos sin lecturas.
+            expectedIntervalSeconds = _settings.DeclaredIntervalSeconds,
             readings,
         };
 

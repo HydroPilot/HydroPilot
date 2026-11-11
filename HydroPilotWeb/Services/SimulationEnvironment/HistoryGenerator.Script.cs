@@ -135,7 +135,7 @@ public sealed partial class HistoryGenerator
                        && babyLeafToday.Count >= denseToday * (double)BabyLeafOptimumRules.MinCutShare;
         // En el día de corte llegan ayer con más margen (las de ayer, 5,5 puntos arriba) y hoy no crecen: el score general
         // baja un poco (el crecimiento acumulado se achica con el GDD de hoy) y ninguna deja de ser Baby Leaf.
-        ScheduleBabyLeaf(babyLeafToday, lot.Sowing, windowOpens, cutToday ? _today.AddDays(-1) : _today, minMargin: cutToday ? 5.5 : 3.5);
+        ScheduleBabyLeaf(babyLeafToday, lot.Sowing, windowOpens, cutToday ? _today.AddDays(-1) : _today);
         if (cutToday)
         {
             foreach (var plant in babyLeafToday)
@@ -171,7 +171,7 @@ public sealed partial class HistoryGenerator
     /// Cada una queda un poco debajo del umbral de Baby Leaf el día antes de volverse apta y después sigue creciendo,
     /// más cuanto antes llegó (las primeras terminan en el tamaño ideal; las del final, apenas pasado el umbral).
     /// </summary>
-    private void ScheduleBabyLeaf(List<PlantRun> plants, DateOnly sowing, DateOnly start, DateOnly end, double minMargin = 3.5)
+    private void ScheduleBabyLeaf(List<PlantRun> plants, DateOnly sowing, DateOnly start, DateOnly end, double minMargin = 5.5)
     {
         if (plants.Count == 0)
             return;
@@ -185,7 +185,9 @@ public sealed partial class HistoryGenerator
             .OrderBy(d => d)
             .ToList();
         // Calidad que se supone para las metas: la de un ciclo flojo (calor, CE alejada), así la evaluación da lo pedido.
-        const double quality = 0.8;
+        // 0,72 desde 2026-11-10 (antes 0,8): con 0,8 la planta que llegaba a Baby Leaf el día del corte quedaba a 1 o 2
+        // puntos del umbral y el ruido de la evaluación la dejaba abajo en 1 de cada 8 historiales.
+        const double quality = 0.72;
         var gddEnd = ExpectedGdd(sowing, end);
         for (var i = 0; i < plants.Count; i++)
         {
@@ -206,7 +208,7 @@ public sealed partial class HistoryGenerator
                     plant.Milestones.Add((apt, RatioForScore(ready + 3, ExpectedGdd(sowing, apt), quality) * 300));
             }
             // Al final, con margen para el ruido de la evaluación: más cuanto antes llegó (2,5 puntos por día, hasta 12; la
-            // que llega ese día, 3,5 arriba). Desde 2026-11-10 el crecimiento es el acumulado y una planta chica pierde
+            // que llega ese día, 5,5 arriba desde 2026-11-10, antes 3,5). Desde 2026-11-10 el crecimiento es el acumulado y una planta chica pierde
             // por los dos lados (forma y crecimiento), así que las que llegaron antes terminan cerca del tamaño ideal.
             var margin = Math.Min(12, minMargin + 2.5 * (end.DayNumber - apt.DayNumber));
             var atEnd = RatioForScore(ready + margin, gddEnd, quality);

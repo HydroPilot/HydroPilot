@@ -4854,6 +4854,18 @@ button.lot-chip[aria-pressed="true"] {
 }
 
 /* Por qué no se puede trasplantar lo elegido: debajo de la barra, a la derecha, junto a los botones. */
+/* Aviso mientras se genera el historial de la demo (MainLayout). */
+.shell-seeding {
+    margin: 0 0 14px;
+    padding: 8px 14px;
+    border: 1px solid var(--accent-border);
+    border-radius: 10px;
+    background: var(--accent-bg-subtle);
+    color: var(--text-primary);
+    font-size: 0.86rem;
+    font-weight: 600;
+}
+
 .lot-select-bar__hint {
     margin: -8px 0 14px;
     text-align: right;

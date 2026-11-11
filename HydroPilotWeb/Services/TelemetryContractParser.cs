@@ -21,7 +21,15 @@ public sealed record ParsedEnvelope(
     long? Sequence,
     DateTime? SentAtUtc,
     string? FirmwareVersion,
-    IReadOnlyList<ParsedReading> Readings);
+    IReadOnlyList<ParsedReading> Readings)
+{
+    /// <summary>
+    /// Opcional (desde 2026-11-10): cada cuántos segundos dice la Pi que manda lecturas. La web lo guarda como intervalo
+    /// esperado del nodo; sin el campo (o fuera de <see cref="TelemetryContractParser.MinDeclaredIntervalSeconds"/>–
+    /// <see cref="TelemetryContractParser.MaxDeclaredIntervalSeconds"/>) queda el que tenía.
+    /// </summary>
+    public int? ExpectedIntervalSeconds { get; init; }
+}
 
 /// <summary>
 /// Parser del contrato v2 + adaptador del payload legado v1 (nodoId/timestamp/lecturas).
@@ -31,6 +39,12 @@ public sealed record ParsedEnvelope(
 public static class TelemetryContractParser
 {
     public sealed record ParseResult(ParsedEnvelope? Envelope, string? Error);
+
+    /// <summary>Intervalo declarado más corto que se acepta (segundos).</summary>
+    public const int MinDeclaredIntervalSeconds = 5;
+
+    /// <summary>Intervalo declarado más largo que se acepta: un día.</summary>
+    public const int MaxDeclaredIntervalSeconds = 86_400;
 
     public static ParseResult Parse(JsonElement body)
     {
@@ -63,6 +77,12 @@ public static class TelemetryContractParser
 
         var firmware = TryGetString(body, "firmwareVersion", out var fw) ? fw : null;
 
+        // Cada cuántos segundos manda la Pi (opcional): un valor fuera de rango se ignora, no rechaza el batch.
+        int? interval = null;
+        if (body.TryGetProperty("expectedIntervalSeconds", out var intervalEl) && intervalEl.ValueKind == JsonValueKind.Number
+            && intervalEl.TryGetInt32(out var seconds) && seconds is >= MinDeclaredIntervalSeconds and <= MaxDeclaredIntervalSeconds)
+            interval = seconds;
+
         if (!body.TryGetProperty("readings", out var readingsEl) || readingsEl.ValueKind != JsonValueKind.Array || readingsEl.GetArrayLength() == 0)
             return new(null, $"El array 'readings' es requerido y no puede estar vacío.");
 
@@ -93,7 +113,10 @@ public static class TelemetryContractParser
             readings.Add(new ParsedReading(readingId, sensorRef, observedAtUtc, value, unit, quality));
         }
 
-        return new(new ParsedEnvelope(schemaVersion, batchId.Trim(), nodeId.Trim(), sequence, sentAtUtc, firmware, readings), null);
+        return new(new ParsedEnvelope(schemaVersion, batchId.Trim(), nodeId.Trim(), sequence, sentAtUtc, firmware, readings)
+        {
+            ExpectedIntervalSeconds = interval,
+        }, null);
     }
 
     /// <summary>Adaptador del payload legado (nodoId/timestamp/lecturas con sensorRef/valor).</summary>
@@ -148,6 +171,9 @@ public static class TelemetryContractParser
     {
         var sb = new StringBuilder();
         sb.Append("{\"batchId\":\"").Append(JsonEncode(envelope.BatchId)).Append('"');
+        // Solo si vino: los batches sin el campo conservan el hash de siempre.
+        if (envelope.ExpectedIntervalSeconds is { } interval)
+            sb.Append(",\"expectedIntervalSeconds\":").Append(interval.ToString(System.Globalization.CultureInfo.InvariantCulture));
         sb.Append(",\"firmwareVersion\":").Append(envelope.FirmwareVersion is null ? "null" : $"\"{JsonEncode(envelope.FirmwareVersion)}\"");
         sb.Append(",\"nodeId\":\"").Append(JsonEncode(envelope.NodeId)).Append('"');
         sb.Append(",\"readings\":[");

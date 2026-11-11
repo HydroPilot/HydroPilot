@@ -27,9 +27,9 @@ public sealed record LoadedDataset(string FileName, DateTime LoadedAtUtc);
 /// Arma el entorno de simulación en la base configurada: borra los datos de lotes, telemetría, control, anomalías,
 /// optimización, notificaciones y precios, y carga el historial generado (<see cref="HistoryGenerator"/>). Después
 /// calcula los pronósticos de cada lote con ForecastService (la lógica real). Solo con
-/// <see cref="SimulationEnvironmentOptions.Enabled"/> y contra LocalDB: nunca toca Azure. El historial sale del dataset
-/// de la demo que está en el repositorio (<see cref="SimulationEnvironmentOptions.DatasetFile"/>, el Excel con los lotes)
-/// o, si no está, es al azar.
+/// <see cref="SimulationEnvironmentOptions.Enabled"/>: desde 2026-11-10 también en Azure (antes solo contra LocalDB), donde
+/// reemplaza los lotes, la telemetría y las alertas de esa base. El historial sale del dataset de la demo que está en el
+/// repositorio (<see cref="SimulationEnvironmentOptions.DatasetFile"/>, el Excel con los lotes) o, si no está, es al azar.
 /// </summary>
 public sealed class SimulationEnvironmentService
 {
@@ -53,7 +53,6 @@ public sealed class SimulationEnvironmentService
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly IServiceScopeFactory _scopes;
     private readonly SimulationEnvironmentOptions _options;
-    private readonly bool _useLocalDb;
     private readonly ILogger<SimulationEnvironmentService> _logger;
 
     public SimulationEnvironmentService(
@@ -67,7 +66,6 @@ public sealed class SimulationEnvironmentService
         _dbFactory = dbFactory;
         _scopes = scopes;
         _options = options.Value;
-        _useLocalDb = configuration.GetValue("HydroPilot:UseLocalDb", false);
         _logger = logger;
         // La carpeta del proyecto con dotnet run; sin host (pruebas), la de los binarios, donde no está el dataset.
         DatasetPath = Path.Combine(environment?.ContentRootPath ?? AppContext.BaseDirectory, _options.DatasetFile);
@@ -78,14 +76,38 @@ public sealed class SimulationEnvironmentService
 
     public bool HasDataset => File.Exists(DatasetPath);
 
-    /// <summary>Encendido y contra LocalDB.</summary>
-    public bool Enabled => _options.Enabled && _useLocalDb;
+    /// <summary>Encendido (SimulationEnvironment:Enabled): local y en Azure.</summary>
+    public bool Enabled => _options.Enabled;
 
     public SimulationEnvironmentOptions Options => _options;
 
     /// <summary>
-    /// Al arrancar: si el entorno está encendido y la base todavía no tiene el historial, lo genera con el dataset del
-    /// repositorio. Si el dataset no cierra, lo avisa en el log y genera uno al azar, para que la app arranque igual.
+    /// Al arrancar, de fondo (<see cref="EnsureSeededAsync"/>): la app atiende mientras se genera. Si falla, queda en el log
+    /// y se puede regenerar desde Admin &gt; Mantenimiento.
+    /// </summary>
+    public void SeedInBackground(CancellationToken stopping)
+    {
+        if (!Enabled)
+            return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await EnsureSeededAsync(stopping);
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Entorno de simulación: no se pudo generar el historial al arrancar");
+            }
+        }, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Si el entorno está encendido y la base todavía no tiene el historial, lo genera con el dataset del repositorio. Si
+    /// el dataset no cierra, lo avisa en el log y genera uno al azar, para que la app tenga datos igual.
     /// </summary>
     public async Task EnsureSeededAsync(CancellationToken ct = default)
     {
@@ -155,9 +177,19 @@ public sealed class SimulationEnvironmentService
         var saved = new List<string>();
         if (save)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(DatasetPath)!);
-            await File.WriteAllBytesAsync(DatasetPath, xlsx, ct);
-            saved.Add($"Se guardó como el dataset del repositorio ({_options.DatasetFile}): subilo a git para que el resto tenga los mismos lotes.");
+            // En Azure la carpeta de la app puede ser de solo lectura (y el próximo deploy la pisa): el historial se carga
+            // igual, pero "Regenerar historial" vuelve al dataset del repositorio.
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(DatasetPath)!);
+                await File.WriteAllBytesAsync(DatasetPath, xlsx, ct);
+                saved.Add($"Se guardó como el dataset del repositorio ({_options.DatasetFile}): subilo a git para que el resto tenga los mismos lotes.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "Entorno de simulación: no se pudo guardar {Path}", DatasetPath);
+                saved.Add($"No se pudo guardar el Excel en el servidor: el historial se cargó, pero \"Regenerar historial\" vuelve a usar el dataset del repositorio ({_options.DatasetFile}).");
+            }
         }
         var result = await RunAsync(plan.Script, fileName, ct);
         return result with { Issues = [.. saved, .. plan.Warnings, .. (result.Issues ?? Array.Empty<string>())] };
@@ -174,7 +206,7 @@ public sealed class SimulationEnvironmentService
     }
 
     private static SimulationEnvironmentResult Off =>
-        new(false, "El entorno de simulación está apagado (SimulationEnvironment:Enabled) o la base no es LocalDB.", TimeSpan.Zero, []);
+        new(false, "El entorno de simulación está apagado (SimulationEnvironment:Enabled).", TimeSpan.Zero, []);
 
     /// <summary>Hoy en el invernadero (su zona horaria).</summary>
     private async Task<DateOnly> LocalTodayAsync(CancellationToken ct)
@@ -696,6 +728,9 @@ public sealed class SimulationEnvironmentService
             node.LastRejectedAt = group.Max(n => n.LastRejectedUtc);
             node.LastCommandPollAtUtc = group.Max(n => n.LastCommandPollUtc);
             node.FirmwareVersion = group.First().FirmwareVersion;
+            // La Pi del entorno declara que manda cada hora: con eso la web la da por desconectada recién después de 2 h
+            // sin lecturas (con los 5 minutos de antes, a los 10 minutos de regenerar ya figuraba caída).
+            node.ExpectedIntervalSeconds = HistoryGenerator.ReadingIntervalMinutes(_options) * 60;
             node.ConnectionState = NodeConnectionEvaluator.Evaluate(node.LastAcceptedAt, now, node.ExpectedIntervalSeconds, 2);
         }
         foreach (var state in data.Nodes)

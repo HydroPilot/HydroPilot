@@ -8,8 +8,11 @@ public sealed class DashboardOptions
 {
     public const string SectionName = "Dashboard";
 
-    /// <summary>Ventana de frescura de un KPI: a partir de esta antigüedad el valor se muestra como desactualizado.</summary>
-    public int KpiFreshnessMinutes { get; set; } = 30;
+    /// <summary>
+    /// Ventana de frescura de un KPI (y de la lectura con la que decide el control): a partir de esta antigüedad el valor
+    /// se muestra como desactualizado. 90 desde 2026-11-10: la Pi manda una lectura por hora (antes 30).
+    /// </summary>
+    public int KpiFreshnessMinutes { get; set; } = 90;
 
     /// <summary>Máximo de puntos de la serie temporal (agrupación de buckets en SQL).</summary>
     public int SeriesMaxPoints { get; set; } = 60;

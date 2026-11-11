@@ -340,8 +340,8 @@ public sealed partial class HistoryGenerator
         {
             case Incident.PhProbeDrift when day >= 6 && bench.PhProbeOffset >= 0:
                 // La sonda se corre ~0,025 pH por día hasta que se recalibra (cuando el operario ve plantas amarillas).
-                bench.PhProbeOffset += 0.025 * _stepMinutes / (24 * 60);
-                if (bench.PhProbeOffset >= 0.38 && local.Hour == 9 && local.Minute < _stepMinutes)
+                bench.PhProbeOffset += 0.025 * StepMinutes / (24 * 60);
+                if (bench.PhProbeOffset >= 0.38 && local.Hour == 9 && local.Minute < StepMinutes)
                 {
                     bench.PhProbeOffset = -1; // marca: ya se recalibró en este lote
                     bench.Calibrations[bench.Bench.Sensors[AnomalyContract.SensorTypePh].Id] = t;

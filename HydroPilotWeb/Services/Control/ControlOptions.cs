@@ -23,8 +23,11 @@ public sealed class ControlOptions
     /// <summary>Si la Pi no pidió comandos en estos minutos, el motor no crea dosis (vencerían sin ejecutarse).</summary>
     public int PollStaleMinutes { get; set; } = 2;
 
-    /// <summary>Minutos de lecturas para la tendencia (lógica difusa) y la deriva al medir el efecto.</summary>
-    public int TrendMinutes { get; set; } = 30;
+    /// <summary>
+    /// Minutos de lecturas para la tendencia (lógica difusa) y la deriva al medir el efecto. 120 desde 2026-11-10: con
+    /// una lectura por hora entran 2 o 3 (antes 30, con lecturas cada 5–10 minutos).
+    /// </summary>
+    public int TrendMinutes { get; set; } = 120;
 
     /// <summary>Dosis seguidas sin efecto que pausan el control automático de esa magnitud.</summary>
     public int NoEffectDoses { get; set; } = 3;
