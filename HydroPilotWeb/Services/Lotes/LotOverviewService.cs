@@ -12,7 +12,7 @@ public sealed record LotOption(int Id, string Name, string? StatusName, DateOnly
 
 /// <summary>
 /// Composición de las plantas del lote (las activas por estado comercial). Developing incluye las trasplantadas que
-/// siguen "En desarrollo" (TransplantedDeveloping): crecen en Adultas hasta su corte, no son del denso.
+/// siguen "Activa" (TransplantedDeveloping): crecen en Adultas hasta su corte, no son del denso.
 /// </summary>
 public sealed record LotPlantBreakdown(
     int TotalPlants,
@@ -28,7 +28,7 @@ public sealed record LotPlantBreakdown(
     int EmptyPositions,
     int TransplantedDeveloping = 0)
 {
-    /// <summary>En desarrollo que siguen en el circuito denso (pueden ser Baby Leaf o trasplantarse).</summary>
+    /// <summary>Activas que siguen en el circuito denso (pueden ser Baby Leaf o trasplantarse).</summary>
     public int DenseDeveloping => Developing - TransplantedDeveloping;
 
     /// <summary>Activas de la ruta Adulta (trasplantadas, en desarrollo o ya adultas), sin las en riesgo.</summary>

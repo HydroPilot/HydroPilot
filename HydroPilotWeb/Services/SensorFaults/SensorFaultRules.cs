@@ -42,7 +42,9 @@ public static class SensorFaultRules
         // real y hay que corregirlo ya). Las fallas típicas de sonda se ven como salto, valor absurdo o falta de datos.
         new(AnomalyContract.SensorTypePh, 4.0m, 8.0m, 0.5m),
         new(AnomalyContract.SensorTypeCe, 0.5m, 3.5m, 0.5m),
-        new(AnomalyContract.SensorTypeTemperatura, 10m, 40m, 5m),
+        // Temperatura: 8 °C entre lecturas desde 2026-11-10 (antes 5). Con una lectura por hora, una mañana de sol en
+        // el invernadero sube 4–6 °C de una a la otra sin que la sonda falle.
+        new(AnomalyContract.SensorTypeTemperatura, 10m, 40m, 8m),
     ];
 
     /// <summary>Veces el intervalo esperado del nodo sin lecturas para dar el sensor por sin datos (como el nodo).</summary>

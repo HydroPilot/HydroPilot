@@ -5,7 +5,7 @@ los circuitos del invernadero (densos y de Adultas): cada uno con su tanque, sus
 temperatura y humedad son del invernadero. Habla con la web por HTTP igual que la Pi real:
 
 - al arrancar pide sus circuitos por `GET /api/nodos/{nodeId}/circuitos` (y otra vez cada minuto);
-- manda lecturas por `POST /api/telemetria/lecturas`;
+- manda lecturas por `POST /api/telemetria/lecturas`, y en cada envío dice cada cuánto manda (ver Contrato);
 - pide sus comandos por `GET /api/nodos/{nodeId}/comandos`;
 - responde cada uno por `POST /api/nodos/{nodeId}/comandos/{commandId}/resultado`.
 
@@ -17,7 +17,14 @@ Lleva una mesada virtual por circuito con el mismo modelo que el historial del e
 - clima del invernadero en Buenos Aires (normales del SMN), con su ciclo diario;
 - cada dosis se mezcla en unos 2 minutos, así se ve en la vista **Optimización** cómo cambia la solución;
 - un flotante repone agua de red cuando el nivel baja del 85 %;
-- la química del tanque es distinta a propósito de la de fábrica que supone la web: la web la aprende calibrando.
+- la química del tanque es distinta a propósito de la de fábrica que supone la web: la web la aprende calibrando;
+- cada tanque arranca en el **último pH y la última CE de su circuito** que le da la web (desde 2026-11-10; antes
+  todos en 6,0 y 1,5, y en los circuitos de Adultas, con objetivo de CE 1,7, el control dosificaba nutrientes apenas
+  arrancaba). Sin lecturas previas, 6,0 y 1,5. `--ph` / `--ce` fuerzan un valor para todos.
+
+**Fotos:** apagadas de fábrica (desde 2026-11-10; antes una cada 20 s a una planta al azar, que cambiaba su score y
+podía ponerla en Riesgo o cambiarle la etapa). La tecla `i` manda una a una planta al azar del circuito elegido;
+`--imagenes 20` vuelve a las automáticas.
 
 Con `--acelerar 60` las plantas y el clima corren una hora por minuto: se ven en minutos las derivas y
 correcciones de horas. La mezcla, las dosis y la conversación con la web siguen en tiempo real.
@@ -37,7 +44,7 @@ dotnet run --project tools/PiSimulator -- --circuitos 1 --dias 8
 y de las bombas, plantas activas del lote y días desde la siembra; y las claves de temperatura y humedad. Arma un
 tanque por circuito con sondas de pH y CE y lo muestra al arrancar. Cada minuto la vuelve a pedir: si cambian las
 plantas (corte, descarte, trasplante) o entra un lote nuevo, el tanque se actualiza solo. Con el entorno de simulación
-(`--launch-profile simulacion`, ver `notas/simulacion/entorno-simulacion.md`) son 7: dos densos con su lote en curso y
+(encendido con el `dotnet run` normal desde 2026-11-10, ver `notas/simulacion/entorno-simulacion.md`) son 7: dos densos con su lote en curso y
 cinco de Adultas.
 
 Si la web no responde (o con IoT Hub, que no tiene ese pedido), usa 2 circuitos densos con las claves base.
@@ -59,10 +66,12 @@ circuito 1 usa `ph-solucion`, `ec-solucion`, `ph-up`, `ph-down`, `nutrient` (Sol
 | `--acelerar` (tiempo de plantas y clima) | 1 (tiempo real) |
 | `--dias` (con `--circuitos`: días desde la siembra de cada uno, separados por `/`) | `12/4` |
 | `--plantas` (con `--circuitos`: de cada mesada) | 200 |
-| `--lecturas` (s entre lecturas) | 15 |
+| `--lecturas` (s entre lecturas; a la web le declara 10 s más) | 15 |
 | `--consulta` (s entre consultas de comandos) | 5 |
+| `--imagenes` (s entre fotos automáticas; 0 = apagadas, la tecla `i` manda una) | 0 |
+| `--sanas` (% de fotos sanas) | 80 |
 | `--litros` (de cada tanque) | 500 |
-| `--ph` / `--ce` (valores iniciales) | 6,0 / 1,5 |
+| `--ph` / `--ce` (valores iniciales de todos los tanques) | el último de cada circuito; sin lecturas, 6,0 / 1,5 |
 | `--inseguro` (no valida el certificado HTTPS) | — |
 | `--transporte` | `http`. Con `iothub` usa Azure IoT Hub por MQTT |
 | `--conexion` | cadena del dispositivo en IoT Hub (o `HYDROPILOT_DEVICE_CONNECTION`); el nodo es su DeviceId |
@@ -90,9 +99,12 @@ dotnet run --project tools/PiSimulator -- --transporte iothub --conexion "HostNa
 
 **Teclas** (las de tanque van al circuito elegido, el 1 al arrancar):
 - `1`…`9`: elige el circuito;
-- `p` / `b`: pH +0,5 / −0,5;
+- `p` / `b`: pH +0,4 / −0,4 (0,5 hasta el 2026-11-10: igual al salto máximo de pH de la web, la mitad de las veces
+  abría un error de sensor por salto, que frena el control de pH). Para mover más, apretar otra vez después de la
+  lectura siguiente: dos veces seguidas en el mismo intervalo suman 0,8 entre dos lecturas y sí es un salto;
 - `c` / `n`: CE −0,3 / +0,3 (sobredosis de nutrientes: el motor diluye con agua);
 - `r`: repone agua hasta llenar el tanque;
+- `i`: manda una foto a una planta al azar del circuito elegido;
 - `a`: cambia la aceleración de todos (×1, ×10, ×60, ×240);
 - `x`: corta o reanuda la conexión;
 - `q`: sale.
@@ -108,6 +120,33 @@ Si algo falla, responde `REJECTED` con el motivo. Nunca ejecuta dos veces el mis
 recibe de nuevo, solo vuelve a informar el resultado.
 
 ## Contrato
+
+**Lecturas** (`POST /api/telemetria/lecturas`, contrato v2):
+
+```json
+{
+  "batchId": "pv-rpi-inv-01-20261110143015123",
+  "nodeId": "rpi-inv-01",
+  "schemaVersion": "2",
+  "sequence": 12,
+  "sentAt": "2026-11-10T17:30:15.123Z",
+  "firmwareVersion": "pi-virtual-1.0",
+  "expectedIntervalSeconds": 25,
+  "readings": [
+    { "readingId": "pv-ph-solucion-20261110143015123", "sensorRef": "ph-solucion", "value": 6.02, "unit": "pH", "observedAt": "…" },
+    { "readingId": "pv-ec-solucion-20261110143015123", "sensorRef": "ec-solucion", "value": 1.51, "unit": "mS/cm", "observedAt": "…" },
+    { "readingId": "pv-t-20261110143015123", "sensorRef": "temp-ambiente", "value": 22.4, "unit": "°C", "observedAt": "…" },
+    { "readingId": "pv-h-20261110143015123", "sensorRef": "hum-ambiente", "value": 64, "unit": "%", "observedAt": "…" }
+  ]
+}
+```
+
+- pH y CE van por cada circuito; temperatura y humedad, una vez (son del invernadero).
+- `expectedIntervalSeconds` (opcional, desde 2026-11-10): cada cuántos segundos manda la Pi. La web lo guarda como
+  intervalo esperado del nodo y con él la da por degradada (1 intervalo sin lecturas), desconectada (2) y sus
+  sensores sin datos. La Pi virtual declara `--lecturas` + 10 s (25 s): si se corta o se cierra, la web la muestra
+  caída en uno o dos minutos. Sin el campo (como la Pi real si no lo manda) queda el que tenía; fuera de 5 s – 1 día
+  se ignora. El historial del entorno de simulación deja 1 hora.
 
 **Comando** (respuesta de `GET /api/nodos/{nodeId}/comandos`):
 

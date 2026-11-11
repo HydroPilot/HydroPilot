@@ -19,7 +19,8 @@ public sealed record SensorCheckRow(
     bool IsActive,
     DateOnly? LastCalibration,
     int? IntervalDays,
-    DateOnly? DueDate);
+    DateOnly? DueDate,
+    bool InCircuit = true); // false: temperatura y humedad del invernadero (Place es el invernadero)
 
 /// <summary>Todos los sensores con su chequeo (los que vencen antes, arriba), hoy en el invernadero y si hay intervalos.</summary>
 public sealed record SensorCheckList(DateOnly Today, IReadOnlyList<SensorCheckRow> Sensors, bool HasIntervals);
@@ -87,6 +88,7 @@ public sealed class SensorService
                 s.Name,
                 // pH y CE: el circuito; temperatura y humedad: el invernadero.
                 Place = s.Circuit != null ? s.Circuit.Name : s.Node!.Greenhouse!.Name,
+                InCircuit = s.Circuit != null,
                 Type = s.SensorType!.Name,
                 s.IsActive,
                 s.LastCalibrationDate,
@@ -99,7 +101,7 @@ public sealed class SensorService
                 DateOnly? last = s.LastCalibrationDate is { } calibrated ? DateOnly.FromDateTime(Local(calibrated)) : null;
                 int? days = s.IsActive && intervals.TryGetValue(s.Type, out var every) ? every : null;
                 DateOnly? due = days is { } d ? GreenhouseDashboardRules.NextCheck(last, d, today) : null;
-                return new SensorCheckRow(s.Id, s.Name, s.Type, s.Place, s.IsActive, last, days, due);
+                return new SensorCheckRow(s.Id, s.Name, s.Type, s.Place, s.IsActive, last, days, due, s.InCircuit);
             })
             .OrderBy(r => r.DueDate is null)
             .ThenBy(r => r.DueDate)

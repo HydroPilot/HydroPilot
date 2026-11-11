@@ -5,7 +5,7 @@ namespace HydroPilotWeb.Models;
 /// <summary>
 /// Estado comercial de una planta: qué se puede hacer con ella hoy.
 /// Capa de decisión sobre la etapa biológica; no reemplaza la fenología.
-/// Estados de arranque: En desarrollo, Candidata Baby Leaf, Baby Leaf apta,
+/// Estados de arranque: Activa (antes "En desarrollo"), Candidata Baby Leaf, Baby Leaf apta,
 /// Cosecha convencional, Riesgo / fuera de ventana (plan 09).
 /// </summary>
 public class CommercialStage

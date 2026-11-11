@@ -16,13 +16,6 @@
 @inject PlantTransplantService PlantTransplant
 @inject AuthenticationStateProvider AuthState
 @inject IJSRuntime JS
-@inject Microsoft.EntityFrameworkCore.IDbContextFactory<HydroPilotWeb.Data.HydroPilotDbContext> DbFactory
-@inject HydroPilotWeb.Services.Storage.IPlantImageStorageService ImageStorage
-@inject HydroPilotWeb.Services.Vision.BabyLeafPipelineService VisionPipeline
-@inject HydroPilotWeb.Services.GddService GddService
-@inject HydroPilotWeb.Services.Notifications.NotificationService NotificationService
-@inject HydroPilotWeb.Services.Lotes.LotDailyFlowService LotDailyFlow
-@inject Microsoft.Extensions.Logging.ILogger<HydroPilotWeb.Controllers.PlantImageController> ImageControllerLogger
 
 <PageTitle>Lotes</PageTitle>
 
@@ -64,12 +57,7 @@ else
     <div class="lot-view">
         <div class="lot-toolbar">
             <label class="visually-hidden" for="lot-select">Lote</label>
-            <select id="lot-select" class="form-select lot-toolbar__select" @bind="selectedLotId" @bind:after="OnLotChangedAsync">
-                @foreach (var lot in lots)
-                {
-                    <option value="@lot.Id">@lot.Name · @StatusLabel(lot.StatusName)</option>
-                }
-            </select>
+            <LotPicker Id="lot-select" Lots="lots" Value="selectedLotId" ValueChanged="SelectLotAsync" />
             @if (canCreateLot)
             {
                 <button type="button" class="btn lot-toolbar__new" @onclick="OpenCreateLotAsync"
@@ -178,7 +166,7 @@ else
                                         actualiza el flujo diario):
                                     </span>
                                     <span class="hp-info__chips">
-                                <span class="hp-info__pump"><span style="background: #2e9e4f;"></span>En desarrollo</span>
+                                <span class="hp-info__pump"><span style="background: #2e9e4f;"></span>Activa</span>
                                 <span class="hp-info__pump"><span style="background: #2d7dd2;"></span>Baby Leaf</span>
                                 <span class="hp-info__pump"><span style="background: #e8a33d;"></span>Candidata</span>
                                 <span class="hp-info__pump"><span style="background: #8a4fd3;"></span>Adulta</span>
@@ -191,8 +179,15 @@ else
                                             trasplantadas del lote.</span>
                                         <span><b>Filtros:</b> resaltan las de un estado (con Seleccionar, "Seleccionar todas"
                                             toma solo esas).</span>
-                                        <span><b>Tocar una planta:</b> su detalle, con el score Baby Leaf, la etapa, el
-                                            crecimiento, la imagen y su historial.</span>
+                                        <span><b>Tocar una planta:</b> su detalle, con el score Baby Leaf, la última evaluación y
+                                            su historial; si tiene una foto analizada, también su nutrición y sanidad.</span>
+                                        <span><b>Nutrición</b> (de la última foto): <b>Completa</b>; <b>Falta de nitrógeno</b>
+                                            (hojas amarillentas); <b>Falta de fósforo</b> (crece lento, tonos oscuros o
+                                            violáceos); <b>Falta de potasio</b> (bordes amarillos o quemados).</span>
+                                        <span><b>Sanidad</b> (de la última foto): <b>Sana</b>; <b>Mildiu velloso</b> (manchas
+                                            amarillas, pelusa debajo); <b>Oídio</b> (polvillo blanco); <b>Septoriosis</b>
+                                            (manchas marrones redondas); <b>Pulgones</b>. Una falta o un patógeno con 70 % de
+                                            certeza o más pone la planta en <b>Riesgo</b>, con su alerta.</span>
                                         <span><b>Seleccionar:</b> marcás plantas y las <b>cosechás</b> (Baby Leaf o adulta; viene
                                             elegido lo que corresponde por su estado), las <b>descartás</b> con un motivo o las
                                             <b>trasplantás</b> a Adultas (durante la ventana Baby Leaf, eligiendo los circuitos y
@@ -241,6 +236,11 @@ else
                                             @onclick="() => AskBatch(BatchAction.Discard)">Descartar</button>
                                 </span>
                             </div>
+                            @* Por qué Trasplantar está deshabilitado, a la vista (desde 2026-11-10; antes solo en el tooltip). *@
+                            @if (TransplantBlockedReason is { } blocked)
+                            {
+                                <div class="lot-select-bar__hint" role="status">@blocked</div>
+                            }
                         }
                         @* Con trasplantadas, el mapa de cada circuito: el denso donde se sembró y los de Adultas. *@
                         @if (overview.State.AdultMaps is { Count: > 0 })
@@ -480,8 +480,6 @@ else
     private string? highlightKey;
     private ElementReference popoverRef;
     private bool focusPopover;
-    private bool uploadingPlantImage;
-    private string? uploadPlantImageError;
     private string? error;
     private bool loading;
     private int loadVersion;
@@ -527,6 +525,14 @@ else
             error = $"No se pudo cargar la lista de lotes: {ex.Message}";
             lots ??= [];
         }
+    }
+
+    private async Task SelectLotAsync(int? lotId)
+    {
+        if (lotId is null)
+            return;
+        selectedLotId = lotId;
+        await OnLotChangedAsync();
     }
 
     private async Task OnLotChangedAsync()
@@ -587,8 +593,6 @@ else
 
     private async Task SelectCellAsync(PlantCellDto cell)
     {
-        uploadPlantImageError = null;
-
         // El hueco del denso de una trasplantada abre la planta en su circuito de Adultas.
         if (cell.MovedTo is { } to)
         {
@@ -621,7 +625,6 @@ else
     {
         detail = null;
         selected = null;
-        uploadPlantImageError = null;
     }
 
     /// <summary>Circuito del mapa denso (null en lotes de antes de los circuitos).</summary>
@@ -638,69 +641,9 @@ else
              aria-label="@($"Detalle de la posición F{detail!.Row}-C{detail.Column}")"
              tabindex="-1" @ref="popoverRef" @onkeydown="OnPopoverKeyDown">
             @* Solo información: cosechar, descartar y trasplantar se hacen desde "Seleccionar". *@
-            <PlantDetailCard Detail="detail"
-                             OnClose="ClosePopover"
-                             UploadingImage="uploadingPlantImage"
-                             UploadError="@uploadPlantImageError"
-                             OnUploadImage="UploadSelectedPlantImageAsync" />
+            <PlantDetailCard Detail="detail" OnClose="ClosePopover" />
         </div>
     };
-
-    private async Task UploadSelectedPlantImageAsync(IBrowserFile file)
-    {
-        if (detail is not { PlantId: > 0 } currentDetail || selectedLotId is not { } lotId)
-            return;
-
-        uploadingPlantImage = true;
-        uploadPlantImageError = null;
-        StateHasChanged();
-
-        try
-        {
-            await using var stream = file.OpenReadStream(maxAllowedSize: 25_000_000);
-            var ms = new MemoryStream();
-            await stream.CopyToAsync(ms);
-            ms.Position = 0;
-
-            var formFile = new FormFile(ms, 0, ms.Length, "file", file.Name)
-            {
-                Headers = new HeaderDictionary(),
-                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType
-            };
-
-            var controller = new HydroPilotWeb.Controllers.PlantImageController(
-                DbFactory, ImageStorage, VisionPipeline, GddService, NotificationService, ImageControllerLogger);
-
-            var result = await controller.UploadImage(
-                formFile, lotId, currentDetail.PlantId, currentDetail.Row, currentDetail.Column,
-                DateTime.UtcNow, (double?)overview?.State.GddAccumulated, CancellationToken.None);
-
-            if (result is Microsoft.AspNetCore.Mvc.ObjectResult { StatusCode: >= 400 } errResult)
-            {
-                var errProp = errResult.Value?.GetType().GetProperty("error")?.GetValue(errResult.Value)?.ToString();
-                uploadPlantImageError = errProp ?? "Error al procesar la imagen.";
-                return;
-            }
-
-            await LotDailyFlow.RunDailyAsync(lotId, simDate);
-
-            overview = await LotOverview.GetOverviewAsync(lotId, simDate);
-            var cell = overview?.State.AllCells.FirstOrDefault(c => c.PlantId == currentDetail.PlantId);
-            if (cell is not null)
-            {
-                detail = await LoadDetailAsync(cell);
-            }
-        }
-        catch (Exception ex)
-        {
-            uploadPlantImageError = $"Error al subir la imagen: {ex.Message}";
-        }
-        finally
-        {
-            uploadingPlantImage = false;
-            StateHasChanged();
-        }
-    }
 
     private void OnPopoverKeyDown(KeyboardEventArgs e)
     {
@@ -912,6 +855,24 @@ else
     private bool HasDensePlants => overview?.State.Cells.Any(c => IsSelectable(c) && !c.IsAdultRoute) == true;
 
     /// <summary>Por qué "Trasplantar" está deshabilitado (o qué hace): fuera de la ventana, sin lugar o no entran.</summary>
+    /// <summary>
+    /// Por qué no se puede trasplantar lo elegido (null = se puede o no hay nada elegido): fuera del período de trasplante,
+    /// sin lugar o no entran en Adultas, o hay elegidas que ya no están en el denso.
+    /// </summary>
+    private string? TransplantBlockedReason
+    {
+        get
+        {
+            if (picked.Count == 0 || CanTransplantPicked || transplantPlan is not { } plan || !canTransplant || !HasDensePlants)
+                return null;
+            if (!plan.IsDue || plan.Capacity == 0)
+                return TransplantHint;
+            if (picked.Count > plan.Capacity)
+                return $"No se puede trasplantar: elegiste {picked.Count} y hay {plan.Capacity} huecos libres en Adultas.";
+            return "No se puede trasplantar: hay plantas elegidas que ya no están en el denso.";
+        }
+    }
+
     private string TransplantHint => transplantPlan switch
     {
         null => string.Empty,
@@ -929,7 +890,7 @@ else
     /// </summary>
     private static IReadOnlyList<DashboardStageCount> StageCounts(LotPlantBreakdown plants) =>
     [
-        new("En desarrollo", plants.Developing, CommercialStageNames.EnDesarrollo),
+        new("Activa", plants.Developing, CommercialStageNames.Activa),
         new("Baby Leaf", plants.Apta, CommercialStageNames.BabyLeafApta, plants.HarvestedAsBabyLeaf),
         new("Candidata", plants.Candidate, CommercialStageNames.CandidataBabyLeaf),
         new("Adulta", plants.Conventional, CommercialStageNames.CosechaConvencional, plants.Harvested - plants.HarvestedAsBabyLeaf),
@@ -1103,13 +1064,4 @@ else
             lots = await LotOverview.GetLotOptionsAsync();
         }
     }
-
-    private static string StatusLabel(string? status) => status switch
-    {
-        "ACTIVO" => "Activo",
-        "EN_PAUSA" => "En pausa",
-        "COSECHADO" => "Cosechado",
-        "DESCARTADO" => "Descartado",
-        _ => status ?? "Sin estado"
-    };
 }

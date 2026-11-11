@@ -5,7 +5,8 @@ namespace HydroPilotWeb.Services.SimulationEnvironment;
 /// sus Id desde 1: cualquier fila que agreguen en ese rato los barridos (errores de sensores, anomalías, control,
 /// notificaciones, conexión de nodos, clima) o la API (lecturas de la Pi, comandos) choca con las del historial. Cada
 /// vuelta de trabajo entra con <see cref="TryEnter"/> (si devuelve null, se saltea) y la regeneración espera a que
-/// terminen las que ya estaban en curso. Al arrancar no hace falta: el historial se genera antes de que corran.
+/// terminen las que ya estaban en curso. Al arrancar la primera vez pasa lo mismo: el historial se genera de fondo
+/// (SimulationEnvironmentService.SeedInBackground) y los barridos y la API esperan.
 /// </summary>
 public static class RegenerationPause
 {

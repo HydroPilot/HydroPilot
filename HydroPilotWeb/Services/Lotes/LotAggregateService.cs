@@ -294,6 +294,7 @@ public class LotAggregateService
                 .Where(h => h.PlantId == plantId)
                 .OrderByDescending(h => h.ChangedAtUtc)
                 .ToListAsync(ct))
+            .Where(IsCommercialChange)
             .Select(h => DescribeChange(h, stageNames))
             .ToList();
 
@@ -338,8 +339,17 @@ public class LotAggregateService
     }
 
     /// <summary>
-    /// Cambio legible: si cambió el estado operativo (cosecha/descarte) se muestra ese
-    /// cambio (el comercial queda congelado); si no, los nombres de las etapas comerciales.
+    /// El historial del detalle muestra solo los cambios de etapa comercial y el fin de la planta (cosecha o descarte), desde
+    /// 2026-11-10: un cambio solo de etapa fenológica (que se sigue guardando) se veía "Activa → Activa".
+    /// </summary>
+    private static bool IsCommercialChange(PlantStageHistory h) =>
+        h.PreviousOperationalState is not null && h.NewOperationalState is not null && h.PreviousOperationalState != h.NewOperationalState
+        || h.NewCommercialStageId is { } next && next != h.PreviousCommercialStageId;
+
+    /// <summary>
+    /// Cambio legible: si cambió el estado operativo (cosecha/descarte) se muestra la etapa comercial que tenía
+    /// ("Baby Leaf → Cosechada", "Adulta → Cosechada"; el comercial queda congelado); si no, los nombres de las
+    /// etapas comerciales.
     /// </summary>
     private static PlantHistoryEntryDto DescribeChange(PlantStageHistory h, IReadOnlyDictionary<int, string> stageNames)
     {
@@ -350,7 +360,12 @@ public class LotAggregateService
             && h.PreviousOperationalState != h.NewOperationalState;
 
         return operationalChanged
-            ? new PlantHistoryEntryDto(h.ChangedAtUtc, h.Source, h.PreviousOperationalState, h.NewOperationalState, h.Reason)
+            ? new PlantHistoryEntryDto(
+                h.ChangedAtUtc,
+                h.Source,
+                Stage(h.PreviousCommercialStageId) ?? h.PreviousOperationalState,
+                h.NewOperationalState,
+                h.Reason)
             : new PlantHistoryEntryDto(
                 h.ChangedAtUtc,
                 h.Source,

@@ -66,7 +66,7 @@ public class LotOverviewSqlServerTests
         Add(1, CommercialStageNames.BabyLeafApta, PlantOperationalState.Activa);
         Add(2, CommercialStageNames.BabyLeafApta, PlantOperationalState.Activa);
         Add(3, CommercialStageNames.CandidataBabyLeaf, PlantOperationalState.Activa);
-        Add(4, CommercialStageNames.EnDesarrollo, PlantOperationalState.Activa);
+        Add(4, CommercialStageNames.Activa, PlantOperationalState.Activa);
         Add(5, CommercialStageNames.BabyLeafApta, PlantOperationalState.Cosechada);
         context.Plants.Add(new Plant
         {
@@ -367,7 +367,7 @@ public class LotOverviewSqlServerTests
     [Theory]
     [InlineData(CommercialStageNames.BabyLeafApta, HarvestDestination.BabyLeaf)]
     [InlineData(CommercialStageNames.CandidataBabyLeaf, HarvestDestination.BabyLeaf)]
-    [InlineData(CommercialStageNames.EnDesarrollo, HarvestDestination.Convencional)]
+    [InlineData(CommercialStageNames.Activa, HarvestDestination.Convencional)]
     [InlineData(CommercialStageNames.CosechaConvencional, HarvestDestination.Convencional)]
     [InlineData(CommercialStageNames.RiesgoFueraDeVentana, HarvestDestination.Convencional)]
     [InlineData(null, HarvestDestination.Convencional)]

@@ -35,6 +35,8 @@ public sealed record SensorCheckInterval(string SensorType, int? Days);
 /// del lugar de cada estrategia y plan del invernadero).</item>
 /// <item>Días de limpieza del denso: los que queda sin uso después de que sale su última planta, antes del lote
 /// siguiente (Simulación: margen acumulativo; plan del invernadero: días del ciclo del denso).</item>
+/// <item>Tamaño de cosecha adulta (× el ideal de Baby Leaf): en la etapa adulta, la trasplantada que llegó a ese tamaño
+/// es "Adulta" (apta para cortar); la que no, sigue "Activa" (posible adulta).</item>
 /// </list>
 /// Plantas por hora y costo de la hora quedan guardados pero desde 2026-10-28 no entran en ningún costo (la mano de obra
 /// del trasplante se sacó de los gastos).
@@ -47,14 +49,18 @@ public sealed record TransplantParameters(
     decimal MaxSizeFactor,
     decimal DenseSpacingCm = 6.5m,
     decimal AdultSpacingCm = 22.5m,
-    int DenseCleaningDays = 2)
+    int DenseCleaningDays = 2,
+    decimal AdultReadySize = 1.6m)
 {
     /// <summary>
     /// De fábrica (los de Ajustes &gt; Parámetros del 2026-10-28): decisión al abrir la ventana Baby Leaf (250 GDD), 800
     /// plantas por hora, $8.000 la hora, 3 días de estrés, 1,3 veces el tamaño ideal (provisorio hasta definirlo), huecos
-    /// a 6,5 cm en el denso y 22,5 cm en Adultas y 2 días de limpieza del denso.
+    /// a 6,5 cm en el denso y 22,5 cm en Adultas, 2 días de limpieza del denso y la adulta apta al doble del tamaño ideal
+    /// de Baby Leaf (2026-11-09, provisorio hasta medirlo).
     /// </summary>
-    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m, 6.5m, 22.5m, 2);
+    // Tamaño de cosecha adulta 1,6 desde 2026-11-10 (antes 2): la cámara no mide más de ~1,8 veces el ideal y una
+    // trasplantada recién llega a 2 cerca del corte de adultas (650 GDD), cuando ya es Adulta igual.
+    public static readonly TransplantParameters Defaults = new(250m, 800, 8_000m, 3, 1.3m, 6.5m, 22.5m, 2, 1.6m);
 
     /// <summary>Lugar de un hueco del denso y de uno de Adultas (m²): separación².</summary>
     public decimal DenseHoleM2 => DenseSpacingCm / 100m * (DenseSpacingCm / 100m);
@@ -69,6 +75,12 @@ public sealed record TransplantParameters(
 public sealed record NutrientPrices(decimal? SolutionAPerLiter, decimal? SolutionBPerLiter);
 
 /// <summary>
+/// Plan del invernadero: superficie de circuitos del invernadero (m², null = la de los circuitos activos) y precio por
+/// planta sembrada (semilla pelleteada más el cubo de sustrato; null = el de fábrica). Precargan los campos de la vista.
+/// </summary>
+public sealed record GreenhousePlanParameters(decimal? AreaM2, decimal? PricePerSeed);
+
+/// <summary>
 /// Parámetros de fábrica: los de Ajustes &gt; Parámetros del 2026-10-28. La app los carga al arrancar donde falten
 /// (DbInitializer: no pisa lo que ya se cambió) y el entorno de simulación los deja al regenerar el historial (los
 /// precios por kg del trimestre actual y los de nutrientes; los trimestres anteriores siguen la misma suba).
@@ -81,6 +93,15 @@ public static class ParameterDefaults
     public const decimal ConventionalPricePerKg = 15_000m;
     public const decimal SolutionAPricePerLiter = 25_000m;
     public const decimal SolutionBPricePerLiter = 25_000m;
+
+    /// <summary>Superficie de circuitos del invernadero (m²): un invernadero de 10 × 20 m tiene unos 120 m² de mesadas.</summary>
+    public const decimal GreenhouseAreaM2 = 120m;
+
+    /// <summary>
+    /// Precio por planta sembrada: semilla pelleteada de lechuga para hidroponía (US$ 0,03–0,08) más el cubo de espuma
+    /// fenólica o lana de roca (US$ 0,01–0,04). Unos $50, entre el 5 y el 8 % de lo que se vende por planta de Baby Leaf.
+    /// </summary>
+    public const decimal PricePerSeed = 50m;
 
     /// <summary>Días entre chequeos de cada tipo de sensor.</summary>
     public static readonly IReadOnlyDictionary<string, int> SensorCheckDays = new Dictionary<string, int>
@@ -98,6 +119,8 @@ public static class ParameterDefaults
         yield return (SystemParametersService.ConventionalGramsKey, ConventionalGramsPerPlant);
         yield return (SystemParametersService.SolutionAPricePerLiterKey, SolutionAPricePerLiter);
         yield return (SystemParametersService.SolutionBPricePerLiterKey, SolutionBPricePerLiter);
+        yield return (SystemParametersService.GreenhouseAreaKey, GreenhouseAreaM2);
+        yield return (SystemParametersService.PricePerSeedKey, PricePerSeed);
         foreach (var (type, days) in SensorCheckDays)
             yield return (SystemParametersService.SensorCheckDaysKeyPrefix + type, days);
     }
@@ -124,6 +147,8 @@ public class SystemParametersService
     public const string ConventionalGramsKey = "YieldConventionalGramsPerPlant";
     public const string SolutionAPricePerLiterKey = "NutrientSolutionAPricePerLiter";
     public const string SolutionBPricePerLiterKey = "NutrientSolutionBPricePerLiter";
+    public const string GreenhouseAreaKey = "GreenhousePlan:AreaM2";
+    public const string PricePerSeedKey = "GreenhousePlan:PricePerSeed";
     public const decimal MaxNutrientPricePerLiter = 10_000_000m;
 
     /// <summary>Días entre chequeos de un tipo de sensor: AppSettings "SensorCheckDays:{tipo}" (ej. "SensorCheckDays:pH").</summary>
@@ -138,6 +163,7 @@ public class SystemParametersService
     public const string DenseSpacingKey = "Transplant:DenseSpacingCm";
     public const string AdultSpacingKey = "Transplant:AdultSpacingCm";
     public const string DenseCleaningDaysKey = "Transplant:DenseCleaningDays";
+    public const string AdultReadySizeKey = "Transplant:AdultReadySize";
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SettingsService _settings;
@@ -310,6 +336,34 @@ public class SystemParametersService
         return new ParametersUpdateResult(true, []);
     }
 
+    /// <summary>Superficie de circuitos del invernadero y precio por planta sembrada (Plan del invernadero); null = sin definir.</summary>
+    public async Task<GreenhousePlanParameters> GetGreenhousePlanParametersAsync(CancellationToken ct = default) => new(
+        await _settings.GetDecimalAsync(GreenhouseAreaKey, ct),
+        await _settings.GetDecimalAsync(PricePerSeedKey, ct));
+
+    /// <summary>Guarda la superficie y el precio por planta sembrada (vacío = sin definir). Solo Administrador y Productor.</summary>
+    public async Task<ParametersUpdateResult> UpdateGreenhousePlanParametersAsync(
+        GreenhousePlanParameters parameters,
+        ClaimsPrincipal user,
+        CancellationToken ct = default)
+    {
+        if (!CanEdit(user))
+            return new ParametersUpdateResult(false, ["Solo Administrador y Productor pueden editar los parámetros del sistema."]);
+        var errors = new List<string>();
+        if (parameters.AreaM2 is { } area && (area <= 0m || area > 100_000m))
+            errors.Add("La superficie del invernadero tiene que estar entre 0 y 100.000 m².");
+        if (parameters.PricePerSeed is { } price && (price < 0m || price > 1_000_000m))
+            errors.Add("El precio por planta sembrada no puede ser negativo.");
+        if (errors.Count > 0)
+            return new ParametersUpdateResult(false, errors);
+
+        await _settings.SetDecimalAsync(GreenhouseAreaKey, parameters.AreaM2, ct);
+        await _settings.SetDecimalAsync(PricePerSeedKey, parameters.PricePerSeed, ct);
+        _logger.LogInformation("Plan del invernadero actualizado por {User}: {Area} m², {Price} por planta sembrada",
+            user.Identity?.Name, parameters.AreaM2, parameters.PricePerSeed);
+        return new ParametersUpdateResult(true, []);
+    }
+
     /// <summary>Días entre chequeos de cada tipo de sensor (catálogo SensorTypes); null = sin chequeo programado.</summary>
     public async Task<IReadOnlyList<SensorCheckInterval>> GetSensorCheckIntervalsAsync(CancellationToken ct = default)
     {
@@ -428,7 +482,7 @@ public class SystemParametersService
             return cached;
 
         string[] keys = [DecisionGddKey, PlantsPerHourKey, LaborCostPerHourKey, StressDaysKey, MaxSizeFactorKey, DenseSpacingKey,
-            AdultSpacingKey, DenseCleaningDaysKey];
+            AdultSpacingKey, DenseCleaningDaysKey, AdultReadySizeKey];
         var values = await context.AppSettings.AsNoTracking()
             .Where(s => keys.Contains(s.Key))
             .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
@@ -447,7 +501,8 @@ public class SystemParametersService
             Value(MaxSizeFactorKey, d.MaxSizeFactor),
             Value(DenseSpacingKey, d.DenseSpacingCm),
             Value(AdultSpacingKey, d.AdultSpacingCm),
-            (int)Value(DenseCleaningDaysKey, d.DenseCleaningDays));
+            (int)Value(DenseCleaningDaysKey, d.DenseCleaningDays),
+            Value(AdultReadySizeKey, d.AdultReadySize));
 
         effectiveCache?.Set(cacheKey, result, TimeSpan.FromMinutes(10));
         return result;
@@ -472,6 +527,8 @@ public class SystemParametersService
             errors.Add("La separación de Adultas tiene que ser mayor que la del denso.");
         if (p.DenseCleaningDays is < 0 or > 30)
             errors.Add("Los días de limpieza del denso tienen que estar entre 0 y 30.");
+        if (p.AdultReadySize is < 1m or > 5m)
+            errors.Add("El tamaño de cosecha adulta tiene que estar entre 1 y 5 veces el ideal de Baby Leaf.");
         return errors;
     }
 
@@ -493,6 +550,7 @@ public class SystemParametersService
         await _settings.SetDecimalAsync(DenseSpacingKey, input.DenseSpacingCm, ct);
         await _settings.SetDecimalAsync(AdultSpacingKey, input.AdultSpacingCm, ct);
         await _settings.SetDecimalAsync(DenseCleaningDaysKey, input.DenseCleaningDays, ct);
+        await _settings.SetDecimalAsync(AdultReadySizeKey, input.AdultReadySize, ct);
         LotViewCache.InvalidateAll();
         _logger.LogInformation("Trasplante actualizado por {User}: {Parameters}", user.Identity?.Name, input);
         return new ParametersUpdateResult(true, []);

@@ -3,7 +3,8 @@ namespace HydroPilot.PiSimulator;
 /// <summary>
 /// Un circuito de la Pi: sus claves (sondas de pH y CE, y bombas por tipo), el tanque y las plantas del lote que tiene
 /// (con los días desde la siembra). Sale de la web (<see cref="DeviceConfig"/>) o, sin ella, del esquema de claves base
-/// y "-n".
+/// y "-n". <see cref="Ph"/> y <see cref="Ec"/>: con qué arranca su tanque (--ph / --ce, o el último valor del circuito
+/// según la web; null = el de fábrica).
 /// </summary>
 public sealed record CircuitLayout(
     string Name,
@@ -14,7 +15,9 @@ public sealed record CircuitLayout(
     IReadOnlyDictionary<string, string> Pumps,
     int Plants,
     double Days,
-    IReadOnlyList<int>? PlantIds = null)
+    IReadOnlyList<int>? PlantIds = null,
+    double? Ph = null,
+    double? Ec = null)
 {
     public static readonly string[] PumpKinds = ["ph-up", "ph-down", "nutrient", "nutrient-b", "water"];
 
@@ -25,7 +28,7 @@ public sealed record CircuitLayout(
             {
                 var suffix = i == 0 ? string.Empty : $"-{i + 1}";
                 return new CircuitLayout($"Circuito {i + 1}", "DENSO", settings.Liters, "ph-solucion" + suffix, "ec-solucion" + suffix,
-                    PumpKinds.ToDictionary(k => k, k => k + suffix), settings.Plants, settings.DaysFor(i));
+                    PumpKinds.ToDictionary(k => k, k => k + suffix), settings.Plants, settings.DaysFor(i), Ph: settings.Ph, Ec: settings.Ec);
             })
             .ToList();
 
@@ -34,7 +37,8 @@ public sealed record CircuitLayout(
         config.Circuits
             .Where(c => c.PhKey is not null && c.EcKey is not null)
             .Select(c => new CircuitLayout(c.Name, c.Kind, (double)c.Liters, c.PhKey!, c.EcKey!, c.Pumps, c.Plants,
-                c.LotDays ?? settings.DaysFor(0), c.PlantIds ?? []))
+                c.LotDays ?? settings.DaysFor(0), c.PlantIds ?? [],
+                settings.Ph ?? (double?)c.LastPh, settings.Ec ?? (double?)c.LastEc))
             .ToList();
 }
 
@@ -50,4 +54,6 @@ public sealed record DeviceCircuit(
     Dictionary<string, string> Pumps,
     int Plants,
     int? LotDays,
-    List<int>? PlantIds = null);
+    List<int>? PlantIds = null,
+    decimal? LastPh = null,
+    decimal? LastEc = null);

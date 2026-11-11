@@ -34,7 +34,7 @@
                             vence hoy. Vencido o de hoy, en <b class="hp-info__bad">rojo</b>.</span>
                         <span><b>Calibrado hoy:</b> tildá la casilla cuando calibrás el sensor y queda anotado hoy; tildada en
                             <b class="hp-info__good">verde</b> = ya se calibró hoy. La usan todos los roles asignados.</span>
-                        <span><b>Filtros:</b> tipo, lugar, chequeo (vencidos, vencen en 7 días o menos, al día o sin programar)
+                        <span><b>Filtros:</b> tipo, circuito (se busca al escribir; temperatura y humedad van sin circuito), chequeo (vencidos, vencen en 7 días o menos, al día o sin programar)
                             y activos o inactivos.</span>
                         <span>El dashboard muestra los vencidos y los que vencen en 7 días o menos.</span>
                         <span>Los <b>errores de sensores</b> (rango normal y salto máximo) también se definen en Parámetros:
@@ -61,13 +61,9 @@
                             <option value="@type">@type</option>
                         }
                     </select>
-                    <select class="form-select form-select-sm" aria-label="Lugar" @bind="placeFilter">
-                        <option value="">Todos los lugares</option>
-                        @foreach (var place in list.Sensors.Select(s => s.Place).Distinct().Order(NaturalStringComparer.Instance))
-                        {
-                            <option value="@place">@place</option>
-                        }
-                    </select>
+                    @* Como el selector de lotes (desde 2026-11-10), con los circuitos. *@
+                    <SearchSelect Id="sensors-circuit" Items="CircuitItems" Value="@circuitFilter" ValueChanged="SelectCircuit"
+                                  AllLabel="Todos los circuitos" Placeholder="Buscar circuito…" AriaLabel="Circuito" Compact="true" />
                     <select class="form-select form-select-sm" aria-label="Chequeo" @bind="checkFilter">
                         <option value="">Todos los chequeos</option>
                         <option value="@SensorCheckState.Overdue">Vencidos</option>
@@ -98,7 +94,7 @@
                             <thead>
                                 <tr>
                                     <th>Tipo</th>
-                                    <th>Lugar</th>
+                                    <th>Circuito</th>
                                     <th>Estado</th>
                                     <th>Última calibración</th>
                                     <th>Próximo chequeo</th>
@@ -114,7 +110,7 @@
                                     var state = SensorCheckRules.State(sensor.DueDate, list.Today);
                                     <tr class="@(sensor.IsActive ? null : "sensors-table__inactive")" title="@sensor.Name">
                                         <td><strong>@sensor.SensorType</strong></td>
-                                        <td>@sensor.Place</td>
+                                        <td title="@(sensor.InCircuit ? null : sensor.Place)">@(sensor.InCircuit ? sensor.Place : "Sin circuito")</td>
                                         <td>
                                             <span class="lot-chip lot-chip--@(sensor.IsActive ? "success" : "muted")">@(sensor.IsActive ? "Activo" : "Inactivo")</span>
                                         </td>
@@ -159,9 +155,28 @@
     private SensorCheckList? list;
 
     private string typeFilter = "";
-    private string placeFilter = "";
+    /// <summary>Circuito elegido: su nombre, <see cref="NoCircuit"/> (temperatura y humedad) o null (todos).</summary>
+    private string? circuitFilter;
+    private const string NoCircuit = "~sin-circuito";
     private string checkFilter = "";
     private string stateFilter = "";
+
+    private IReadOnlyList<SearchSelectItem> CircuitItems
+    {
+        get
+        {
+            if (list is not { } current)
+                return [];
+            var items = current.Sensors.Where(s => s.InCircuit).Select(s => s.Place).Distinct().Order(NaturalStringComparer.Instance)
+                .Select(name => new SearchSelectItem(name, name, "Circuitos"))
+                .ToList();
+            if (current.Sensors.Any(s => !s.InCircuit))
+                items.Add(new SearchSelectItem(NoCircuit, "Sin circuito (temperatura y humedad)", "Invernadero"));
+            return items;
+        }
+    }
+
+    private void SelectCircuit(string? key) => circuitFilter = key;
 
     protected override async Task OnInitializedAsync()
     {
@@ -185,7 +200,8 @@
                 return [];
             return current.Sensors
                 .Where(s => typeFilter == "" || s.SensorType == typeFilter)
-                .Where(s => placeFilter == "" || s.Place == placeFilter)
+                .Where(s => circuitFilter is null
+                            || (circuitFilter == NoCircuit ? !s.InCircuit : s.InCircuit && s.Place == circuitFilter))
                 .Where(s => checkFilter == "" || SensorCheckRules.State(s.DueDate, current.Today).ToString() == checkFilter)
                 .Where(s => stateFilter == "" || s.IsActive == (stateFilter == "active"))
                 .ToList();

@@ -33,4 +33,9 @@
     <Content Update="MLModels\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- El dataset de la demo (los lotes del historial): se publica con la app, así Azure lo genera igual que local. -->
+  <ItemGroup>
+    <None Update="SimulationData\dataset-demo.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

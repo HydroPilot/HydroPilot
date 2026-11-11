@@ -31,8 +31,9 @@
                         huecos; las que no entran se pierden al cerrar la ventana.</span>
                     <span><b>Pesos y precios:</b> g por planta y $ por kg de cada destino. Vienen de <b>Ajustes &gt;
                         Parámetros</b>; si los cambiás acá, valen solo para este escenario.</span>
-                    <span><b>Gastos del sistema:</b> el precio por semilla y por litro de Solución A y B (estos de
-                        Parámetros). Las cantidades (semillas y litros) las calcula el sistema.</span>
+                    <span><b>Gastos del sistema:</b> el precio por planta sembrada (semilla pelleteada más el cubo) y por
+                        litro de Solución A y B, precargados de Parámetros. Las cantidades (semillas y litros) las calcula
+                        el sistema.</span>
                     <span>Las otras estrategias se calculan igual, para compararlas abajo.</span>
                 </span>
             </InfoTip>
@@ -563,7 +564,7 @@
     private decimal? babyLeafPrice;
     private decimal? conventionalPrice;
 
-    private decimal? seedPrice = 2.5m;
+    private decimal? seedPrice;
     private decimal? solutionAPrice;
     private decimal? solutionBPrice;
 
@@ -580,6 +581,7 @@
         conventionalGrams = Trim(options.Parameters.ConventionalGrams);
         babyLeafPrice = Trim(options.Parameters.BabyLeafPricePerKg);
         conventionalPrice = Trim(options.Parameters.ConventionalPricePerKg);
+        seedPrice = Trim(options.PricePerSeed);
         solutionAPrice = Trim(options.NutrientPrices.SolutionAPerLiter);
         solutionBPrice = Trim(options.NutrientPrices.SolutionBPerLiter);
 

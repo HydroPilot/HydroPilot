@@ -141,9 +141,35 @@
                     <div>
                         <h4>Entorno de simulación</h4>
                         <p>
-                            Historial de @SimulationEnvironment.Options.HistoryMonths meses generado
-                            @(_simulationSeededAt is { } seeded ? $"el {seeded.ToLocalTime():dd/MM/yyyy HH:mm}" : "—").
+                            @if (_lastDataset is { } dataset)
+                            {
+                                <span>Historial generado con el dataset <strong>@dataset.FileName</strong> el @(dataset.LoadedAtUtc.ToLocalTime().ToString("dd/MM/yyyy HH:mm")).</span>
+                            }
+                            else
+                            {
+                                <span>
+                                    Historial de @SimulationEnvironment.Options.HistoryMonths meses generado al azar
+                                    @(_simulationSeededAt is { } seeded ? $"el {seeded.ToLocalTime():dd/MM/yyyy HH:mm}" : "—").
+                                </span>
+                            }
                             Regenerarlo lo lleva hasta hoy.
+                        </p>
+                        <p class="action-card__hint">
+                            @if (SimulationEnvironment.HasDataset)
+                            {
+                                <span>
+                                    "Regenerar historial" usa el dataset del repositorio
+                                    (<code>@SimulationEnvironment.Options.DatasetFile</code>). "Cargar otro Excel" lo
+                                    reemplaza (subilo a git para compartirlo). Se controla antes: si no cierra, no se toca nada.
+                                </span>
+                            }
+                            else
+                            {
+                                <span>
+                                    No está el dataset del repositorio (<code>@SimulationEnvironment.Options.DatasetFile</code>):
+                                    "Regenerar historial" es al azar. Con "Cargar otro Excel" queda guardado ahí.
+                                </span>
+                            }
                         </p>
                         <p class="action-card__warning">
                             <strong>Reemplaza</strong> lotes, telemetría, control, anomalías, notificaciones
@@ -152,10 +178,20 @@
                     </div>
                 </div>
                 <div class="action-card__footer">
-                    @if (_showSimulationConfirm)
+                    @if (_datasetFile is not null && !_isProcessing)
                     {
                         <div class="confirm-box">
-                            <span>¿Regenerar el historial de simulación?</span>
+                            <span>¿Cargar @_datasetName? Reemplaza el dataset del repositorio y el historial.</span>
+                            <div class="confirm-box__buttons">
+                                <button class="btn btn-danger" @onclick="ImportDatasetAsync">Sí, cargar</button>
+                                <button class="btn btn-secondary" @onclick="ClearDatasetFile">Cancelar</button>
+                            </div>
+                        </div>
+                    }
+                    else if (_showSimulationConfirm)
+                    {
+                        <div class="confirm-box">
+                            <span>@(_regenerateRandom ? "¿Regenerar el historial al azar (sin el dataset)?" : SimulationEnvironment.HasDataset ? "¿Regenerar el historial con el dataset?" : "¿Regenerar el historial de simulación?")</span>
                             <div class="confirm-box__buttons">
                                 <button class="btn btn-danger" @onclick="ExecuteRegenerateSimulationAsync" disabled="@_isProcessing">Sí, regenerar</button>
                                 <button class="btn btn-secondary" @onclick="() => _showSimulationConfirm = false" disabled="@_isProcessing">Cancelar</button>
@@ -164,9 +200,31 @@
                     }
                     else
                     {
-                        <button class="btn btn-primary" @onclick="() => _showSimulationConfirm = true" disabled="@_isProcessing">
-                            @(_isProcessing && _regenerating ? "Generando…" : "Regenerar historial")
-                        </button>
+                        <div class="dataset-actions">
+                            <button class="btn btn-primary" @onclick="() => ConfirmRegenerate(random: false)" disabled="@_isProcessing">
+                                @(_isProcessing && _regenerating ? "Generando…" : "Regenerar historial")
+                            </button>
+                            <label class="btn btn-secondary dataset-file @(_isProcessing ? "dataset-file--disabled" : null)">
+                                Cargar otro Excel
+                                <InputFile OnChange="OnDatasetSelectedAsync" accept=".xlsx" disabled="@_isProcessing" />
+                            </label>
+                            @if (SimulationEnvironment.HasDataset)
+                            {
+                                <button class="btn btn-secondary" @onclick="() => ConfirmRegenerate(random: true)" disabled="@_isProcessing">Regenerar al azar</button>
+                            }
+                        </div>
+                    }
+                    @if (_simulationIssues.Count > 0)
+                    {
+                        <div class="dataset-issues @(_simulationIssuesAreErrors ? "dataset-issues--errors" : null)">
+                            <strong>@(_simulationIssuesAreErrors ? "Lo que hay que corregir en el Excel" : "Avisos del dataset")</strong>
+                            <ul>
+                                @foreach (var issue in _simulationIssues)
+                                {
+                                    <li>@issue</li>
+                                }
+                            </ul>
+                        </div>
                     }
                 </div>
             </div>
@@ -179,7 +237,7 @@
                     <h4>Recrear Lote Demo 01</h4>
                     <p>
                         Crea un lote demo activo (<strong>Lote Demo 01</strong>) con grilla de 6x10 posiciones,
-                        etapas comerciales representativas (Baby Leafs, candidatas, en desarrollo y riesgo)
+                        etapas comerciales representativas (Baby Leafs, candidatas, activas y riesgo)
                         y asignación del nodo <code>rpi-inv-01</code>.
                     </p>
                     <p class="action-card__hint">
@@ -201,7 +259,7 @@
                     <h4>Ejecutar flujo diario de un lote</h4>
                     <p>
                         Reevalúa las plantas activas del lote con los GDD hasta la fecha elegida: etapa fenológica,
-                        estado comercial (Baby Leaf, candidata, en desarrollo o riesgo) y estado predominante del lote.
+                        estado comercial (Baby Leaf, candidata, activa o riesgo) y estado predominante del lote.
                         Los cambios quedan en el historial de cada planta; las cosechadas y descartadas no se tocan.
                     </p>
                     <p class="action-card__warning">
@@ -792,6 +850,52 @@
         gap: 10px;
     }
 
+    .dataset-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    /* El input de archivo va invisible sobre el botón. */
+    .dataset-file {
+        position: relative;
+        overflow: hidden;
+        cursor: pointer;
+    }
+
+    .dataset-file input[type="file"] {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+    }
+
+    .dataset-file--disabled {
+        opacity: 0.6;
+        pointer-events: none;
+    }
+
+    .dataset-issues {
+        margin-top: 14px;
+        padding: 10px 12px;
+        border: 1px solid rgba(247, 144, 9, 0.45);
+        border-radius: 8px;
+        font-size: 12px;
+        color: #f2c27a;
+    }
+
+    .dataset-issues--errors {
+        border-color: rgba(240, 68, 56, 0.55);
+        color: #f6a39c;
+    }
+
+    .dataset-issues ul {
+        margin: 6px 0 0;
+        padding-left: 18px;
+        max-height: 260px;
+        overflow-y: auto;
+    }
+
     .btn {
         display: inline-flex;
         align-items: center;
@@ -1052,7 +1156,10 @@
     {
         await LoadSummaryAsync();
         if (SimulationEnvironment.Enabled)
+        {
             _simulationSeededAt = await SimulationEnvironment.SeededAtAsync();
+            _lastDataset = await SimulationEnvironment.LastDatasetAsync();
+        }
     }
 
     private async Task LoadSummaryAsync()
@@ -1173,17 +1280,71 @@
     private bool _regenerating;
     private DateTime? _simulationSeededAt;
 
-    private async Task ExecuteRegenerateSimulationAsync()
+    // Dataset de la demo: el Excel elegido (se carga al confirmar) y lo que devolvió la última carga.
+    private LoadedDataset? _lastDataset;
+    private byte[]? _datasetFile;
+    private string? _datasetName;
+    private IReadOnlyList<string> _simulationIssues = [];
+    private bool _simulationIssuesAreErrors;
+
+    private bool _regenerateRandom;
+
+    private void ConfirmRegenerate(bool random)
+    {
+        _regenerateRandom = random;
+        _showSimulationConfirm = true;
+    }
+
+    private Task ExecuteRegenerateSimulationAsync() => _regenerateRandom
+        ? RunSimulationAsync(() => SimulationEnvironment.RegenerateRandomAsync())
+        : RunSimulationAsync(() => SimulationEnvironment.RegenerateAsync());
+
+    private async Task OnDatasetSelectedAsync(InputFileChangeEventArgs e)
+    {
+        _simulationIssues = [];
+        if (e.File.Size > SimulationEnvironmentService.MaxDatasetBytes)
+        {
+            _feedbackMessage = "El archivo es demasiado grande para ser el Excel del dataset.";
+            _isSuccess = false;
+            return;
+        }
+        await using var stream = e.File.OpenReadStream(SimulationEnvironmentService.MaxDatasetBytes);
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        _datasetFile = buffer.ToArray();
+        _datasetName = e.File.Name;
+    }
+
+    private void ClearDatasetFile()
+    {
+        _datasetFile = null;
+        _datasetName = null;
+    }
+
+    private Task ImportDatasetAsync()
+    {
+        var file = _datasetFile!;
+        var name = _datasetName!;
+        return RunSimulationAsync(() => SimulationEnvironment.ImportAsync(new MemoryStream(file), name));
+    }
+
+
+    private async Task RunSimulationAsync(Func<Task<SimulationEnvironmentResult>> action)
     {
         _isProcessing = true;
         _regenerating = true;
         _showSimulationConfirm = false;
+        _simulationIssues = [];
         try
         {
-            var result = await SimulationEnvironment.RegenerateAsync();
+            var result = await action();
             _feedbackMessage = result.Message;
             _isSuccess = result.Succeeded;
+            _simulationIssues = result.Issues ?? [];
+            _simulationIssuesAreErrors = !result.Succeeded;
+            ClearDatasetFile();
             _simulationSeededAt = await SimulationEnvironment.SeededAtAsync();
+            _lastDataset = await SimulationEnvironment.LastDatasetAsync();
             await LoadSummaryAsync();
         }
         finally

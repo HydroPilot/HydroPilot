@@ -242,7 +242,7 @@ public class PlantImageController : ControllerBase
                     BabyLeafStageStatus.Apta => "Baby Leaf",
                     BabyLeafStageStatus.Candidata => "Candidata Baby Leaf",
                     BabyLeafStageStatus.NoApta => "No Apta",
-                    _ => "En desarrollo"
+                    _ => "Activa"
                 },
                 Confidence = visual != null ? (decimal)visual.CombinedVisualAptitude : 0.85m,
                 ModelVersion = "BabyLeafMultiHead-2.0",

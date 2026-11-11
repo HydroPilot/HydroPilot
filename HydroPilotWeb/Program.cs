@@ -218,11 +218,12 @@ using (var scope = app.Services.CreateScope())
     DbInitializer.Initialize(context, builder.Configuration);
 }
 
-// Entorno de simulación (perfil "simulacion"): la primera vez genera el historial de ejemplo, antes de los barridos.
+// Entorno de simulación (encendido en appsettings, local y Azure, desde 2026-11-10; antes solo el perfil "simulacion"
+// contra LocalDB): la primera vez genera el historial del dataset de la demo. Se genera de fondo, con la app ya
+// atendiendo: en Azure tarda varios minutos y, si frenara el arranque, Azure daría la app por caída y la reiniciaría a
+// mitad de la carga. Mientras tanto los barridos y la API esperan (RegenerationPause).
 var simulationEnvironment = app.Services.GetRequiredService<HydroPilotWeb.Services.SimulationEnvironment.SimulationEnvironmentService>();
-if (simulationEnvironment.Options.Enabled && !useLocalDb)
-    throw new InvalidOperationException("El entorno de simulación borra y regenera la base: solo corre contra LocalDB.");
-await simulationEnvironment.EnsureSeededAsync();
+simulationEnvironment.SeedInBackground(app.Lifetime.ApplicationStopping);
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 

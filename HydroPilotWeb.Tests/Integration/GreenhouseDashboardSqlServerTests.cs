@@ -173,7 +173,7 @@ public class GreenhouseDashboardSqlServerTests
         var active = await check.Lots.CountAsync(l => l.Status!.Name != "COSECHADO" && l.Status.Name != "DESCARTADO");
         Assert.Equal(active, data.ActiveLots);
         Assert.Equal(6, data.Stages.Count);
-        Assert.Equal(["En desarrollo", "Baby Leaf", "Candidata", "Adulta", "Descartada", "Riesgo"], data.Stages.Select(s => s.Label));
+        Assert.Equal(["Activa", "Baby Leaf", "Candidata", "Adulta", "Descartada", "Riesgo"], data.Stages.Select(s => s.Label));
         Assert.True(data.ExpectedBabyLeafPlants <= data.TotalPlants);
         Assert.Equal(data.Harvests.OrderBy(h => h.Date).Select(h => h.Date), data.Harvests.Select(h => h.Date));
     }

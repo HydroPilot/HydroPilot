@@ -8,14 +8,14 @@ namespace HydroPilotWeb.Services.Notifications;
 
 /// <summary>
 /// Filtros del historial de alertas: tipo y severidad (NotificationTypes / NotificationSeverities), abiertas o resueltas
-/// (null = las dos), texto en el nombre del lote, fechas (del invernadero, "hasta" incluido), texto en el título o el
-/// mensaje, y la página.
+/// (null = las dos), el lote (desde 2026-11-10 se elige de la lista; antes, texto en el nombre), fechas (del invernadero,
+/// "hasta" incluido), texto en el título o el mensaje, y la página.
 /// </summary>
 public sealed record AlertFilter(
     string? Type = null,
     string? Severity = null,
     bool? Open = null,
-    string? LotText = null,
+    int? LotId = null,
     DateOnly? From = null,
     DateOnly? To = null,
     string? Text = null,
@@ -114,8 +114,8 @@ public sealed class AlertHistoryService
             query = query.Where(a => a.Severity == filter.Severity);
         if (filter.Open is { } open)
             query = query.Where(a => a.IsResolved != open);
-        if (filter.LotText?.Trim() is { Length: > 0 } lotText)
-            query = query.Where(a => a.Lot != null && a.Lot.Name != null && a.Lot.Name.Contains(lotText));
+        if (filter.LotId is { } lotId)
+            query = query.Where(a => a.LotId == lotId);
         if (filter.From is { } from)
         {
             var fromUtc = Utc(from);

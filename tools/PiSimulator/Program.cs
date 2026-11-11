@@ -76,14 +76,22 @@ var scenario = layouts.Count > 1 && settings.Scenario is not (Scenario.Normal or
     : settings.Scenario.ToString();
 Console.WriteLine($"Pi virtual {settings.Node} → {target} ({transport.Name}) · {layouts.Count} circuito{(layouts.Count > 1 ? "s" : "")}" +
                   $"{(config is null ? " (locales)" : " (de la web)")} · escenario {scenario} · tiempo ×{settings.Acceleration:0}");
+Console.WriteLine($"  lecturas cada {settings.ReadingSeconds} s (declara {settings.DeclaredIntervalSeconds} s) · " +
+                  (settings.ImageSeconds > 0 ? $"fotos cada {settings.ImageSeconds} s" : "fotos solo con la tecla i"));
+var es = System.Globalization.CultureInfo.GetCultureInfo("es-AR");
 for (var i = 0; i < layouts.Count; i++)
-    Console.WriteLine($"  C{i + 1} {layouts[i].Name}: {layouts[i].Plants} plantas, día {layouts[i].Days:0} · {layouts[i].Liters:0} L · {layouts[i].PhKey}");
+{
+    var l = layouts[i];
+    Console.WriteLine($"  C{i + 1} {l.Name}: {l.Plants} plantas, día {l.Days:0} · {l.Liters:0} L · {l.PhKey} · " +
+                      $"arranca en pH {(l.Ph ?? Settings.DefaultPh).ToString("0.00", es)} CE {(l.Ec ?? Settings.DefaultEc).ToString("0.00", es)}");
+}
 Console.WriteLine((layouts.Count > 1 ? $"Teclas: 1–{Math.Min(9, layouts.Count)} = circuito · " : "Teclas: ") +
-                  "p = pH +0,5 · b = pH −0,5 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · a = aceleración · x = conexión · q = salir");
+                  "p = pH +0,4 · b = pH −0,4 · c = CE −0,3 · n = CE +0,3 · r = reponer agua · i = foto · a = aceleración · x = conexión · q = salir");
 
-// Un tanque (mesada) por circuito; el clima es el mismo para todos.
+// Un tanque (mesada) por circuito, con el pH y la CE con que quedó (o --ph / --ce); el clima es el mismo para todos.
 var tanks = layouts
-    .Select((l, i) => new Tank(l.Liters, settings.Ph, settings.Ec, settings.ScenarioFor(i), l.Plants, l.Days, settings.Acceleration))
+    .Select((l, i) => new Tank(l.Liters, l.Ph ?? Settings.DefaultPh, l.Ec ?? Settings.DefaultEc, settings.ScenarioFor(i), l.Plants,
+        l.Days, settings.Acceleration))
     .ToList();
 try
 {

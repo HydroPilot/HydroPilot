@@ -124,29 +124,51 @@ public sealed partial class HistoryGenerator
         }
     }
 
-    /// <summary>Motivo de riesgo de las plantas con un episodio abierto o reconocido (AnomalyLotRiskEvaluator).</summary>
-    private string? OpenEpisodeReason(LotRun run)
-    {
-        var open = run.OpenEpisodes.Values
-            .Where(e => e.Event.Status is AnomalyContract.StatusAbierta or AnomalyContract.StatusReconocida)
-            .OrderBy(e => e.Event.FirstObservedAtUtc)
-            .ToList();
-        if (open.Count == 0)
-            return null;
-        var first = open[0].Event;
-        return open.Count > 1
-            ? $"{open.Count} episodios abiertos ({open[0].Rule.Name}: valor {first.ObservedValue:0.##}, objetivo {first.TargetValue:0.##}, desde {first.FirstObservedAtUtc:g})"
-            : $"{open[0].Rule.Name}: valor {first.ObservedValue:0.##} fuera de banda"
-              + (first.TargetValue.HasValue ? $", objetivo {first.TargetValue:0.##}" : string.Empty)
-              + $"; desde {first.FirstObservedAtUtc:g}";
-    }
-
     /// <summary>Cuando el lote deja un circuito, lo abierto en sus sondas se resuelve (Anomalías).</summary>
     private void BuildAnomalies(LotRun run, BenchRun bench, DateTime t)
     {
         var prefix = EpisodeKey(bench, string.Empty);
         foreach (var (key, episode) in run.OpenEpisodes.Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal)).ToList())
             ResolveEpisode(run, key, episode, t.AddSeconds(30), "lote finalizado (cosechado o descartado): no genera más anomalías operativas");
+    }
+
+    // ------------------------------------------------------------------
+    // Patógeno que vio la cámara en una planta (mapa R)
+    // ------------------------------------------------------------------
+
+    private const string VisualRiskClass = "DownyMildew";
+    private const string VisualRiskName = "Mildiu Velloso (Bremia lactucae - manchas cloróticas/algodonosas)";
+    private const decimal VisualRiskConfidence = 0.81m;
+
+    /// <summary>
+    /// Anomalía visual abierta y alerta sanitaria de una planta, como PlantImageController cuando la foto muestra un
+    /// patógeno (≥ 70 % de certeza; advertencia y alerta alta por debajo de 88 %). No pone en riesgo al resto del lote:
+    /// AnomalyLotRiskEvaluator no cuenta las visuales.
+    /// </summary>
+    private void VisualRiskAnomaly(LotRun run, PlantRun plant, DateTime t)
+    {
+        var p = plant.Plant;
+        var title = $"Patógeno detectado: {VisualRiskName}";
+        _data.Anomalies.Add(new AnomalyEvent
+        {
+            Id = ++_anomalyId,
+            Type = "PATOGENO_FOLIAR_VISUAL",
+            LotId = run.Lot.Id,
+            GreenhouseId = _w.GreenhouseId,
+            Severity = AnomalyContract.SeverityAdvertencia,
+            ObservedValue = VisualRiskConfidence,
+            RuleCode = $"PATHOGEN_{VisualRiskClass.ToUpperInvariant()}",
+            RuleDescription = $"{title} en planta #{p.Id} (F{p.Row}-C{p.Column}, Lote #{p.LotId}).",
+            FirstObservedAtUtc = t,
+            LastObservedAtUtc = t,
+            ReadingCount = 1,
+            Status = AnomalyContract.StatusAbierta,
+            Fingerprint = $"visual-{p.Id}-{VisualRiskClass}-{ToLocal(t):yyyyMMdd}",
+            CreatedAtUtc = t,
+        });
+        AddAlert(NotificationTypes.AlertaSanitaria, NotificationSeverities.Alta, title,
+            $"Diagnóstico visual en planta #{p.Id}: aislar o retirar la planta y revisar las vecinas (Certeza: {VisualRiskConfidence:P1}).",
+            $"visual-alert-{p.Id}-PATHOGEN_{VisualRiskClass.ToUpperInvariant()}-{ToLocal(t):yyyyMMdd}", run.Lot.Id, t.AddMinutes(1));
     }
 
     // ------------------------------------------------------------------
@@ -215,8 +237,12 @@ public sealed partial class HistoryGenerator
                 CreatedAtUtc = at,
             });
 
-            // La productora recibe por correo lo Alto y Crítico (Ajustes > Notificaciones).
-            if (user.Id == _w.Producer.Id && severity is NotificationSeverities.Alta or NotificationSeverities.Critica)
+            // La productora recibe por correo lo Alto y Crítico (Ajustes > Notificaciones); con un dataset, cada usuario
+            // según la hoja Usuarios.
+            var byEmail = _w.EmailMinSeverity is { } prefs
+                ? prefs.TryGetValue(user.Id, out var min) && SeverityRank(severity) >= SeverityRank(min)
+                : user.Id == _w.Producer.Id && severity is NotificationSeverities.Alta or NotificationSeverities.Critica;
+            if (byEmail)
             {
                 var failedFirst = _rng.NextDouble() < 0.04;
                 var delivery = new NotificationDelivery
@@ -250,6 +276,14 @@ public sealed partial class HistoryGenerator
         }
         return alert;
     }
+
+    private static int SeverityRank(string severity) => severity switch
+    {
+        NotificationSeverities.Critica => 3,
+        NotificationSeverities.Alta => 2,
+        NotificationSeverities.Media => 1,
+        _ => 0,
+    };
 
     // ------------------------------------------------------------------
     // Precios y parámetros
@@ -289,15 +323,32 @@ public sealed partial class HistoryGenerator
 
     private readonly List<(DateOnly From, decimal BabyLeaf, decimal Conventional)> _priceQuarters = [];
 
-    /// <summary>Precios cargados en Ajustes &gt; Parámetros cada trimestre (globales, origen manual).</summary>
+    /// <summary>
+    /// Precios cargados en Ajustes &gt; Parámetros cada trimestre (globales, origen manual). Con un dataset, los de su
+    /// hoja Precios (cada uno vale hasta el siguiente); si la dejó vacía, los del modelo.
+    /// </summary>
     private void AddPriceHistory(DateOnly historyStart)
     {
-        var start = new DateOnly(historyStart.Year, (historyStart.Month - 1) / 3 * 3 + 1, 1);
-        for (var from = start; from <= _today; from = from.AddMonths(3))
+        var rows = new List<(DateOnly From, decimal BabyLeaf, decimal Conventional)>();
+        if (_script is { Dataset.Prices.Count: > 0 } script)
         {
-            var (bl, conv) = CalibratedPrices(from.AddMonths(1));
+            rows.AddRange(script.Dataset.Prices.OrderBy(p => p.From).Select(p => (p.From, p.BabyLeafPerKg, p.AdultPerKg)));
+        }
+        else
+        {
+            var start = new DateOnly(historyStart.Year, (historyStart.Month - 1) / 3 * 3 + 1, 1);
+            for (var from = start; from <= _today; from = from.AddMonths(3))
+            {
+                var (bl, conv) = CalibratedPrices(from.AddMonths(1));
+                rows.Add((from, bl, conv));
+            }
+        }
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var (from, bl, conv) = rows[i];
             _priceQuarters.Add((from, bl, conv));
-            var until = from.AddMonths(3) > _today ? (DateOnly?)null : from.AddMonths(3).AddDays(-1);
+            var until = i + 1 < rows.Count ? rows[i + 1].From.AddDays(-1) : (DateOnly?)null;
             foreach (var (destination, value) in new[] { (OptimizationContractDestination.BabyLeaf, bl), (OptimizationContractDestination.Conventional, conv) })
             {
                 _data.Prices.Add(new CostPriceCatalog
@@ -306,7 +357,7 @@ public sealed partial class HistoryGenerator
                     Destination = destination,
                     Item = OptimizationContractCostItem.PricePerKg,
                     Value = value,
-                    Currency = "ARS",
+                    Currency = _w.Currency,
                     ValidFrom = from,
                     ValidUntil = until,
                     Source = CostPriceResolver.ManualSource,
@@ -315,10 +366,23 @@ public sealed partial class HistoryGenerator
             }
         }
 
-        _data.Settings[SystemParametersService.BabyLeafGramsKey] = _w.BabyLeafGramsPerPlant.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        _data.Settings[SystemParametersService.ConventionalGramsKey] = _w.ConventionalGramsPerPlant.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        _data.Settings[SystemParametersService.SolutionAPricePerLiterKey] = ParameterDefaults.SolutionAPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        _data.Settings[SystemParametersService.SolutionBPricePerLiterKey] = ParameterDefaults.SolutionBPricePerLiter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string Text(decimal value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _data.Settings[SystemParametersService.BabyLeafGramsKey] = Text(_w.BabyLeafGramsPerPlant);
+        _data.Settings[SystemParametersService.ConventionalGramsKey] = Text(_w.ConventionalGramsPerPlant);
+        var general = _script?.General;
+        _data.Settings[SystemParametersService.SolutionAPricePerLiterKey] = Text(general?.SolutionAPerLiter ?? ParameterDefaults.SolutionAPricePerLiter);
+        _data.Settings[SystemParametersService.SolutionBPricePerLiterKey] = Text(general?.SolutionBPerLiter ?? ParameterDefaults.SolutionBPricePerLiter);
+        if (general is null)
+            return;
+        // Con un dataset, también el trasplante y el chequeo de sensores de la hoja General.
+        _data.Settings[SystemParametersService.DecisionGddKey] = Text(general.DecisionGdd);
+        _data.Settings[SystemParametersService.StressDaysKey] = Text(general.StressDays);
+        _data.Settings[SystemParametersService.MaxSizeFactorKey] = Text(general.MaxSizeFactor);
+        _data.Settings[SystemParametersService.DenseSpacingKey] = Text(general.DenseSpacingCm);
+        _data.Settings[SystemParametersService.AdultSpacingKey] = Text(general.AdultSpacingCm);
+        _data.Settings[SystemParametersService.DenseCleaningDaysKey] = Text(general.CleaningDays);
+        foreach (var (type, days) in general.SensorCheckDays)
+            _data.Settings[SystemParametersService.SensorCheckDaysKeyPrefix + type] = Text(days);
     }
 
     // ------------------------------------------------------------------

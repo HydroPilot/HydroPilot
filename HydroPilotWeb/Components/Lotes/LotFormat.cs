@@ -29,6 +29,16 @@ public static class LotFormat
     public static string Money(decimal value, string currency) =>
         (value < 0 ? "-" : string.Empty) + (currency == "ARS" ? "$" : currency + " ") + Math.Abs(value).ToString("N0", Culture);
 
+    /// <summary>Estado del lote para el selector ("Activo", "Cosechado").</summary>
+    public static string StatusLabel(string? status) => status switch
+    {
+        "ACTIVO" => "Activo",
+        "EN_PAUSA" => "En pausa",
+        "COSECHADO" => "Cosechado",
+        "DESCARTADO" => "Descartado",
+        _ => status ?? "Sin estado"
+    };
+
     /// <summary>Fecha corta legible ("9 oct").</summary>
     public static string Day(DateOnly date) => date.ToString("d MMM", Culture).TrimEnd('.');
 

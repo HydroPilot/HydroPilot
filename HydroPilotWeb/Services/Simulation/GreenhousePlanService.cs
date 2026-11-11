@@ -8,13 +8,17 @@ using Microsoft.Extensions.Caching.Memory;
 namespace HydroPilotWeb.Services.Simulation;
 
 /// <summary>
-/// Superficie a repartir (null = la de los circuitos activos de hoy), precio por semilla y kg de Baby Leaf que se pueden
-/// vender por mes (null = lo vendido en los últimos 12 meses; las adultas no tienen tope).
+/// Superficie a repartir y precio por planta sembrada (null = los de Ajustes &gt; Parámetros; sin parámetro, la superficie
+/// de los circuitos activos de hoy y el precio de fábrica) y kg de Baby Leaf que se pueden vender por mes (null = lo
+/// vendido en los últimos 12 meses; las adultas no tienen tope).
 /// </summary>
 public sealed record GreenhousePlanRequest(decimal? AreaM2, decimal? PricePerSeed, decimal? BabyLeafKgPerMonth = null);
 
-/// <summary>Lo que precarga la vista antes de calcular: la superficie de los circuitos activos y lo vendido de Baby Leaf.</summary>
-public sealed record GreenhousePlanDefaults(decimal AreaM2, decimal? SoldBabyLeafKgPerMonth);
+/// <summary>
+/// Lo que precarga la vista antes de calcular: la superficie y el precio por planta sembrada de Ajustes &gt; Parámetros
+/// y lo vendido de Baby Leaf.
+/// </summary>
+public sealed record GreenhousePlanDefaults(decimal AreaM2, decimal PricePerSeed, decimal? SoldBabyLeafKgPerMonth);
 
 /// <summary>
 /// De dónde sale el ciclo: lotes cerrados usados, sus fechas, lo que tardó cada destino y los kg de Baby Leaf vendidos por
@@ -53,7 +57,6 @@ public sealed record GreenhousePlanResult(
 public sealed class GreenhousePlanService
 {
     public const int HistoryDays = 365;
-    public const decimal DefaultSeedPrice = 2.5m;
 
     private readonly IDbContextFactory<HydroPilotDbContext> _dbFactory;
     private readonly SystemParametersService _parameters;
@@ -72,10 +75,12 @@ public sealed class GreenhousePlanService
         _cache = cache;
     }
 
-    /// <summary>Superficie de los circuitos activos y kg de Baby Leaf vendidos por mes (sin calcular el plan).</summary>
+    /// <summary>Superficie y precio por planta sembrada (Parámetros) y kg de Baby Leaf vendidos por mes (sin calcular el plan).</summary>
     public async Task<GreenhousePlanDefaults> DefaultsAsync(CancellationToken ct = default)
     {
-        var cacheKey = $"greenhouse-plan-defaults:{LotViewCache.GlobalVersion}";
+        // Los parámetros van en la clave: si se cambian en Ajustes, la vista los toma enseguida.
+        var plan = await _parameters.GetGreenhousePlanParametersAsync(ct);
+        var cacheKey = $"greenhouse-plan-defaults:{LotViewCache.GlobalVersion}:{plan.AreaM2}:{plan.PricePerSeed}";
         if (_cache != null && _cache.TryGetValue(cacheKey, out GreenhousePlanDefaults? cached) && cached != null)
         {
             return cached;
@@ -84,12 +89,12 @@ public sealed class GreenhousePlanService
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
         var transplant = await _parameters.GetTransplantParametersAsync(ct);
         var yield = await _parameters.GetYieldParametersAsync(ct);
-        var area = AreaOf(await ActiveCircuitsAsync(context, ct), transplant);
+        var area = plan.AreaM2 ?? AreaOf(await ActiveCircuitsAsync(context, ct), transplant);
         var cropId = await context.CropTypes.AsNoTracking().OrderBy(c => c.Id).Select(c => (int?)c.Id).FirstOrDefaultAsync(ct);
         var sold = cropId is { } crop && yield.BabyLeafGrams is { } grams
             ? await SoldBabyLeafKgPerMonthAsync(context, crop, grams, ct)
             : null;
-        var result = new GreenhousePlanDefaults(area, sold);
+        var result = new GreenhousePlanDefaults(area, plan.PricePerSeed ?? ParameterDefaults.PricePerSeed, sold);
         _cache?.Set(cacheKey, result, TimeSpan.FromMinutes(5));
         return result;
     }
@@ -111,11 +116,13 @@ public sealed class GreenhousePlanService
             Math.Round(denseHoles * transplant.DenseHoleM2, 3), Math.Round(adultHoles * transplant.AdultHoleM2, 3));
         var currentDense = circuits.Count(c => c.Kind == CircuitKinds.Dense);
         var currentAdult = circuits.Count(c => c.Kind == CircuitKinds.Adult);
-        var area = request.AreaM2 is > 0 ? request.AreaM2.Value : AreaOf(circuits, transplant);
+        var parameters = await _parameters.GetGreenhousePlanParametersAsync(ct);
+        var area = request.AreaM2 is > 0 ? request.AreaM2.Value : parameters.AreaM2 ?? AreaOf(circuits, transplant);
+        var seedPrice = request.PricePerSeed ?? parameters.PricePerSeed ?? ParameterDefaults.PricePerSeed;
 
         var cropId = await context.CropTypes.AsNoTracking().OrderBy(c => c.Id).Select(c => (int?)c.Id).FirstOrDefaultAsync(ct);
         var (cycle, source) = cropId is { } crop
-            ? await CycleAsync(context, crop, transplant, yield, request.PricePerSeed ?? DefaultSeedPrice, warnings, ct)
+            ? await CycleAsync(context, crop, transplant, yield, seedPrice, warnings, ct)
             : (null, null);
         var blGrams = yield.BabyLeafGrams ?? 0m;
         var adultGrams = yield.ConventionalGrams ?? 0m;

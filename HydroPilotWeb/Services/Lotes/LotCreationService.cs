@@ -162,9 +162,9 @@ public class LotCreationService
         if (activeStatus is null)
             return new NewLotResult(null, ["Falta el estado de lote ACTIVO en el catálogo."]);
 
-        // Plantas recién sembradas: etapa de GDD 0 y "En desarrollo"; el flujo diario las va actualizando.
+        // Plantas recién sembradas: etapa de GDD 0 y "Activa"; el flujo diario las va actualizando.
         var stage = await PlantEvaluationService.ResolvePhenologicalStageAsync(context, input.CropTypeId, 0m, ct);
-        var developing = await context.CommercialStages.FirstOrDefaultAsync(s => s.Name == CommercialStageNames.EnDesarrollo, ct);
+        var developing = await context.CommercialStages.FirstOrDefaultAsync(s => s.Name == CommercialStageNames.Activa, ct);
 
         var now = DateTime.UtcNow;
         var goals = NewLotRules.Goals(input);

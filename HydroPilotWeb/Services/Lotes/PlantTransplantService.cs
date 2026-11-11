@@ -139,9 +139,9 @@ public class PlantTransplantService
         if (room.Sum(r => r.FreeHoles) < plants.Count)
             return Fail($"No entran: hay {room.Sum(r => r.FreeHoles)} huecos libres en los circuitos de Adultas elegidos.");
 
-        // Queda "En desarrollo" en la ruta Adulta: pasa a "Adulta" cuando llega a su corte (lo decide el flujo diario).
+        // Queda "Activa" en la ruta Adulta: pasa a "Adulta" cuando llega al tamaño de cosecha adulta (lo decide el flujo diario).
         var developing = await context.CommercialStages.FirstOrDefaultAsync(
-            s => s.CropTypeId == lot.CropTypeId && s.Name == CommercialStageNames.EnDesarrollo, ct);
+            s => s.CropTypeId == lot.CropTypeId && s.Name == CommercialStageNames.Activa, ct);
         var parameters = await SystemParametersService.LoadTransplantAsync(context, ct);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var now = DateTime.UtcNow;

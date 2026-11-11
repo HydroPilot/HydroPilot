@@ -76,7 +76,7 @@ public class LotCreationSqlServerTests
         Assert.All(plants, p =>
         {
             Assert.Equal(PlantOperationalState.Activa, p.OperationalState);
-            Assert.Equal(CommercialStageNames.EnDesarrollo, p.CommercialStage!.Name);
+            Assert.Equal(CommercialStageNames.Activa, p.CommercialStage!.Name);
             Assert.NotNull(p.PhenologicalStageId);
         });
     }
@@ -189,7 +189,7 @@ public class LotCreationSqlServerTests
             var adults = await context.Plants.Where(p => p.LotId == created.LotId && p.TransplantedOn != null).Include(p => p.CommercialStage).ToListAsync();
             Assert.Equal(3, adults.Count);
             Assert.All(adults, p => Assert.Equal(adultCircuit, p.CircuitId));
-            Assert.All(adults, p => Assert.Equal(CommercialStageNames.EnDesarrollo, p.CommercialStage!.Name)); // ruta Adulta, hasta su corte
+            Assert.All(adults, p => Assert.Equal(CommercialStageNames.Activa, p.CommercialStage!.Name)); // ruta Adulta, hasta su corte
             Assert.Equal(3, adults.Select(p => (p.Row, p.Column)).Distinct().Count());
             Assert.All(adults, p => Assert.Equal(sown[p.Id], (p.DenseRow!.Value, p.DenseColumn!.Value)));
             Assert.True(await context.CircuitAssignments.AnyAsync(a => a.CircuitId == adultCircuit && a.LotId == created.LotId && a.ValidUntilUtc == null));

@@ -87,7 +87,7 @@ public class SimulationSqlServerTests
 
     private static async Task AddActivePlantsAsync(HydroPilotDbContext context, Lot lot, int count)
     {
-        var stage = await context.CommercialStages.FirstAsync(s => s.Name == CommercialStageNames.EnDesarrollo);
+        var stage = await context.CommercialStages.FirstAsync(s => s.Name == CommercialStageNames.Activa);
         for (var i = 0; i < count; i++)
         {
             context.Plants.Add(new Plant

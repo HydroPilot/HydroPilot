@@ -349,8 +349,9 @@ public class AnomaliesSqlServerTests
     // ANO-07/08: riesgo por planta y conteo
     // ---------------------------------------------------------------------------
 
+    /// <summary>Desde 2026-11-10 un episodio de pH o CE no pone en riesgo a las plantas (antes marcaba a todas las activas del lote).</summary>
     [Fact]
-    public async Task RiskProvider_SignalsAllActivePlants_WhileEpisodeOpen_AndClearsOnResolution()
+    public async Task RiskProvider_NoMarcaPlantas_PorEpisodiosDeLaSolucion()
     {
         await using var context = _fixture.NewContext();
         var lot = await AnomaliesSqlFixture.CreateActiveLotAsync(context, "Lote riesgo");
@@ -363,24 +364,12 @@ public class AnomaliesSqlServerTests
         await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 3.1m, Ago(19), "risk-b");
         await _fixture.NewEventService().SweepAsync(CancellationToken.None);
 
+        // El episodio está abierto (sigue como anomalía y alerta), pero ninguna planta queda en riesgo por él.
+        Assert.True(await context.AnomalyEvents.AnyAsync(e => e.LotId == lot.Id && e.Status == AnomalyContract.StatusAbierta));
         var provider = _fixture.NewRiskProvider();
-        var risks = await provider.GetActiveRisksAsync(lot.Id);
-        Assert.Equal(2, risks.Count);
-        Assert.All(risks.Values, r => Assert.Equal("anomalies", r.Source));
-        Assert.Contains("pH", risks.Values.First().Reason);
-
-        // La señal es de riesgo, no de descarte operativo: las plantas siguen Activas.
+        Assert.Empty(await provider.GetActiveRisksAsync(lot.Id));
         Assert.Equal(2, await context.Plants.CountAsync(p => p.LotId == lot.Id
             && p.OperationalState == PlantOperationalState.Activa));
-
-        // Al resolver, el riesgo desaparece.
-        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 6.0m, Ago(10), "risk-n1");
-        await AnomaliesSqlFixture.AddReadingAsync(context, ph, lot, 6.05m, Ago(9), "risk-n2");
-        var service = _fixture.NewEventService();
-        await service.SweepAsync(CancellationToken.None);
-        await service.SweepAsync(CancellationToken.None);
-
-        Assert.Empty(await provider.GetActiveRisksAsync(lot.Id));
     }
 
     // ---------------------------------------------------------------------------

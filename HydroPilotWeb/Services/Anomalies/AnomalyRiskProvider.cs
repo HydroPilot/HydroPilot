@@ -9,9 +9,11 @@ namespace HydroPilotWeb.Services.Anomalies;
 /// <summary>
 /// Implementación real del contrato IPlantRiskProvider (ANO-07). Reemplaza al
 /// NoPlantRiskProvider en DI (el registro del módulo de anomalías va después del
-/// de lotes: último registro gana). Devuelve riesgo para cada planta ACTIVA del
-/// lote cuando hay episodios abiertos/reconocidos de la solución compartida,
-/// y riesgos específicos visuales por patógenos/deficiencias en plantas individuales.
+/// de lotes: último registro gana). Devuelve riesgo para cada planta ACTIVA cuya última foto
+/// muestra un patógeno o una deficiencia (≥ 70 % de certeza).
+/// Desde 2026-11-10 los episodios de la solución (pH o CE fuera de banda) ya no ponen en riesgo a las plantas: siguen
+/// como anomalía y alerta, y las plantas quedan en la etapa que les da su evaluación (antes marcaban a todas las activas
+/// del lote, aunque estuvieran en otro tanque).
 /// </summary>
 public sealed class AnomalyRiskProvider : IPlantRiskProvider
 {
@@ -28,15 +30,6 @@ public sealed class AnomalyRiskProvider : IPlantRiskProvider
     {
         var activePlantIds = await _riskEvaluator.GetActivePlantIdsAsync(lotId, ct);
         var risks = new Dictionary<int, PlantRisk>(activePlantIds.Count);
-
-        var state = await _riskEvaluator.EvaluateAsync(lotId, ct);
-        if (state.OpenEpisodes.Count > 0 && state.RiskReason is not null)
-        {
-            foreach (var plantId in activePlantIds)
-            {
-                risks[plantId] = new PlantRisk(plantId, state.RiskReason, Source: "anomalies");
-            }
-        }
 
         if (_dbFactory is not null && activePlantIds.Count > 0)
         {

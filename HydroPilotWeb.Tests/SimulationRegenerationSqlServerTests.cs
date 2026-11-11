@@ -65,7 +65,7 @@ public class SimulationRegenerationSqlServerTests
         try
         {
             var simulation = services.GetRequiredService<SimulationEnvironmentService>();
-            var first = await simulation.RegenerateAsync();
+            var first = await simulation.RegenerateRandomAsync();
             Assert.True(first.Succeeded, first.Message);
 
             // El barrido de errores de sensores, como lo corre su servicio de fondo pero sin esperar entre vueltas: con la
@@ -94,7 +94,7 @@ public class SimulationRegenerationSqlServerTests
                 }
             });
 
-            var second = await simulation.RegenerateAsync();
+            var second = await simulation.RegenerateRandomAsync();
             Assert.True(second.Succeeded, second.Message);
             Assert.True(Volatile.Read(ref skipped) > 0, "El barrido no se salteó durante la regeneración.");
 

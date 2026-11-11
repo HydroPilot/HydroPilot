@@ -64,6 +64,12 @@
         </header>
 
         <section class="shell-content">
+            @* Generando el historial de la demo (la primera vez que arranca o desde Admin > Mantenimiento): los datos se
+               van cargando y los procesos de fondo esperan. Se va con el refresco de la campanita (30 s). *@
+            @if (HydroPilotWeb.Services.SimulationEnvironment.RegenerationPause.Paused)
+            {
+                <div class="shell-seeding" role="status">Generando el historial de la demo (unos minutos): los datos pueden verse incompletos.</div>
+            }
             @Body
         </section>
     </main>

@@ -4,8 +4,8 @@ namespace HydroPilotWeb.Tests;
 
 /// <summary>
 /// Pruebas del árbol de decisión de la etapa comercial (plan 09, con el trasplante a Adultas).
-/// El orden documentado: riesgo primero → trasplantada (Adulta) → ruta Baby Leaf: ventana cerrada o
-/// tamaño pasado (descarte), ventana + score, debajo de ventana.
+/// El orden documentado: riesgo primero → trasplantada (Activa hasta llegar al tamaño de cosecha adulta en la etapa
+/// adulta, después Adulta) → ruta Baby Leaf: ventana cerrada o tamaño pasado (descarte), ventana + score, debajo de ventana.
 /// </summary>
 public class PlantDecisionEngineTests
 {
@@ -15,7 +15,8 @@ public class PlantDecisionEngineTests
         OvermaturityGdd: 750m,
         ScoreMinCandidate: 60m,
         ScoreMinReady: 80m,
-        MaxSizeFactor: 1.3m);
+        MaxSizeFactor: 1.3m,
+        AdultReadySize: 2.0m);
 
     private static PlantDecisionEngine.PlantDecision Decide(decimal gdd, decimal? score = null, bool? mandatory = null, bool risk = false,
         string? riskReason = null, bool adult = false, decimal? size = null)
@@ -71,23 +72,53 @@ public class PlantDecisionEngineTests
     public void VentanaBabyLeaf_Score_Bajo_Es_En_Desarrollo(decimal score)
     {
         var decision = Decide(gdd: 300m, score: score, mandatory: true);
-        Assert.Equal(CommercialStageNames.EnDesarrollo, decision.CommercialStageName);
+        Assert.Equal(CommercialStageNames.Activa, decision.CommercialStageName);
     }
 
     [Fact]
     public void VentanaBabyLeaf_Sin_Evaluacion_No_Inventa_Resultado()
     {
         var decision = Decide(gdd: 300m, score: null);
-        Assert.Equal(CommercialStageNames.EnDesarrollo, decision.CommercialStageName);
+        Assert.Equal(CommercialStageNames.Activa, decision.CommercialStageName);
         Assert.Contains("Sin evaluación", decision.Reason!);
     }
 
     [Fact]
-    public void Trasplantada_Es_Adulta_Aun_En_La_Ventana_Baby_Leaf()
+    public void Trasplantada_Queda_Activa_Hasta_La_Etapa_Adulta()
     {
-        var decision = Decide(gdd: 320m, score: 95m, mandatory: true, adult: true);
-        Assert.Equal(CommercialStageNames.CosechaConvencional, decision.CommercialStageName);
+        // Recién trasplantada, en la ventana Baby Leaf: aunque sea grande, todavía no es adulta.
+        var decision = Decide(gdd: 320m, score: 95m, mandatory: true, adult: true, size: 2.5m);
+        Assert.Equal(CommercialStageNames.Activa, decision.CommercialStageName);
         Assert.False(decision.Discard);
+    }
+
+    [Theory]
+    [InlineData(1.6, CommercialStageNames.Activa)]                 // posible adulta: todavía no llega
+    [InlineData(2.0, CommercialStageNames.CosechaConvencional)]   // llegó al tamaño de cosecha: apta
+    [InlineData(2.4, CommercialStageNames.CosechaConvencional)]
+    public void En_La_Etapa_Adulta_Es_Adulta_La_Que_Llego_Al_Tamano_De_Cosecha(double size, string expected)
+    {
+        var decision = Decide(gdd: 560m, adult: true, size: (decimal)size);
+        Assert.Equal(expected, decision.CommercialStageName);
+        Assert.False(decision.Discard);
+    }
+
+    [Theory]
+    [InlineData(600, CommercialStageNames.Activa)]
+    [InlineData(650, CommercialStageNames.CosechaConvencional)]
+    public void Sin_Medicion_De_Tamano_Es_Adulta_Desde_El_Corte_De_Adultas(int gdd, string expected)
+    {
+        Assert.Equal(expected, Decide(gdd: gdd, adult: true).CommercialStageName);
+    }
+
+    [Theory]
+    [InlineData(620, CommercialStageNames.Activa)]               // todavía no llega al tamaño ni al corte
+    [InlineData(650, CommercialStageNames.CosechaConvencional)] // en el corte de adultas es Adulta igual
+    [InlineData(700, CommercialStageNames.CosechaConvencional)]
+    public void En_El_Corte_De_Adultas_Es_Adulta_Aunque_No_Llegue_Al_Tamano(int gdd, string expected)
+    {
+        // 1,3 veces el ideal: lo máximo que mide una foto de la planta antes de que cierre la ventana Baby Leaf.
+        Assert.Equal(expected, Decide(gdd: gdd, adult: true, size: 1.3m).CommercialStageName);
     }
 
     [Fact]
@@ -117,7 +148,7 @@ public class PlantDecisionEngineTests
     public void Gdd_Debajo_De_Ventana_Es_En_Desarrollo(decimal gdd)
     {
         var decision = Decide(gdd);
-        Assert.Equal(CommercialStageNames.EnDesarrollo, decision.CommercialStageName);
+        Assert.Equal(CommercialStageNames.Activa, decision.CommercialStageName);
     }
 
     [Fact]

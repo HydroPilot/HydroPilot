@@ -265,7 +265,8 @@ public sealed record SimulationContextOptions(
     IReadOnlyList<SimulationLotOption> Lots,
     IReadOnlyList<SimulationCropOption> Crops,
     YieldParameters Parameters,
-    NutrientPrices NutrientPrices); // de Ajustes > Parámetros; null = sin definir
+    NutrientPrices NutrientPrices, // de Ajustes > Parámetros; null = sin definir
+    decimal PricePerSeed = ParameterDefaults.PricePerSeed); // de Ajustes > Parámetros (Plan del invernadero)
 
 /// <summary>Problema de validación devuelto por la API (SIM-05: negativos y rangos validados en servidor).</summary>
 public sealed record SimulationValidationProblem(IReadOnlyList<string> Errors);

@@ -3106,6 +3106,88 @@ button {
     }
 }
 
+/* Desplegable con búsqueda (SearchSelect; el de lotes de la vista Lotes y, desde 2026-11-10, el de las demás vistas):
+   input con la flecha del select, en píldora y negrita, y la lista como el menú del select. */
+.search-select {
+    position: relative;
+    width: min(100%, 20rem);
+}
+
+.search-select--compact {
+    width: min(100%, 15rem);
+}
+
+.search-select__input {
+    width: 100%;
+    min-width: 0;
+    font-weight: 650;
+    border-radius: 999px;
+    text-overflow: ellipsis;
+}
+
+.search-select__input::placeholder {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.search-select__list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 1000;
+    min-width: 100%;
+    max-height: min(320px, 50vh);
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    overflow-y: auto;
+    border: 1px solid var(--border-input);
+    border-radius: 12px;
+    background: var(--bg-picker);
+    color: var(--text-primary);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-scrollbar) transparent;
+}
+
+.search-select__group {
+    padding: 8px 12px 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.search-select__option {
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.search-select__option--all {
+    color: var(--text-secondary);
+}
+
+.search-select__option:hover,
+.search-select__option.is-active {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.search-select__option.is-selected {
+    background: var(--accent-bg-subtle);
+    color: var(--accent);
+    font-weight: 650;
+}
+
+.search-select__empty {
+    padding: 7px 12px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
 /* Cargando otro lote: el contenido anterior queda atenuado y sin clics hasta que llega el nuevo. */
 .lot-loading {
     display: inline-flex;
@@ -4771,6 +4853,26 @@ button.lot-chip[aria-pressed="true"] {
     border-top: 1px solid var(--border-panel);
 }
 
+/* Por qué no se puede trasplantar lo elegido: debajo de la barra, a la derecha, junto a los botones. */
+/* Aviso mientras se genera el historial de la demo (MainLayout). */
+.shell-seeding {
+    margin: 0 0 14px;
+    padding: 8px 14px;
+    border: 1px solid var(--accent-border);
+    border-radius: 10px;
+    background: var(--accent-bg-subtle);
+    color: var(--text-primary);
+    font-size: 0.86rem;
+    font-weight: 600;
+}
+
+.lot-select-bar__hint {
+    margin: -8px 0 14px;
+    text-align: right;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
 .lot-select-bar__count {
     font-size: 0.85rem;
     font-weight: 700;
@@ -4883,20 +4985,6 @@ button.lot-chip[aria-pressed="true"] {
     font-size: 0.85rem;
     font-weight: 650;
     overflow-wrap: anywhere;
-}
-
-.plant-facts__wide {
-    grid-column: 1 / -1;
-}
-
-.plant-facts__image {
-    display: block;
-    width: 100%;
-    max-height: 260px;
-    margin-top: 4px;
-    border-radius: 10px;
-    object-fit: cover;
-    background: var(--chip-bg);
 }
 
 /* Historial: línea de tiempo vertical, sin tabla ni fondo. */
@@ -5672,4 +5760,25 @@ a.gh-row:focus-visible {
 .hp-grid-filters input[type="search"] {
     flex: 1 1 200px;
     max-width: 280px;
+}
+
+/* Desde 2026-11-10 todos los filtros con el estilo del selector de lotes: píldora y texto en negrita. */
+.hp-grid-filters .form-select,
+.hp-grid-filters .form-control {
+    border-radius: 999px;
+    font-weight: 650;
+}
+
+.hp-grid-filters .form-control::placeholder {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.hp-grid-filters .search-select {
+    flex: 0 1 15rem;
+}
+
+.hp-grid-filters .search-select__input {
+    width: 100%;
+    min-width: 0;
 }

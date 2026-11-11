@@ -1,0 +1,26 @@
+@using HydroPilotWeb.Services.Lotes
+@namespace HydroPilotWeb.Components.Lotes
+
+@* Selector de lote con búsqueda (SearchSelect): primero los en curso, después los cerrados; se busca por nombre o
+   estado. Con AllLabel sirve de filtro ("Todos los lotes" = null). *@
+<SearchSelect Id="@Id" Items="Items" Value="@Value?.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+              ValueChanged="OnChangedAsync" AllLabel="@AllLabel" Placeholder="Buscar lote…" AriaLabel="Lote" Compact="Compact" />
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<LotOption> Lots { get; set; } = [];
+    [Parameter] public int? Value { get; set; }
+    [Parameter] public EventCallback<int?> ValueChanged { get; set; }
+    [Parameter] public string? AllLabel { get; set; }
+    [Parameter] public bool Compact { get; set; }
+    [Parameter] public string Id { get; set; } = "lot-select";
+
+    private IReadOnlyList<SearchSelectItem> Items => Lots
+        .Select(l => new SearchSelectItem(
+            l.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"{l.Name} · {LotFormat.StatusLabel(l.StatusName)}",
+            l.IsOperational ? "En curso" : "Cerrados"))
+        .ToList();
+
+    private Task OnChangedAsync(string? key) =>
+        ValueChanged.InvokeAsync(int.TryParse(key, out var id) ? id : null);
+}

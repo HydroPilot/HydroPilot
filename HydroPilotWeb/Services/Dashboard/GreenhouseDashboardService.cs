@@ -125,7 +125,7 @@ public class GreenhouseDashboardService
         // lotes activos van rayadas en la barra de su destino (desde 2026-10-28), como en la card de Lotes.
         var stages = new List<DashboardStageCount>
         {
-            new("En desarrollo", developing, CommercialStageNames.EnDesarrollo),
+            new("Activa", developing, CommercialStageNames.Activa),
             new("Baby Leaf", apta, CommercialStageNames.BabyLeafApta, harvestedBabyLeaf),
             new("Candidata", candidate, CommercialStageNames.CandidataBabyLeaf),
             new("Adulta", conventional, CommercialStageNames.CosechaConvencional, harvestedAdult),

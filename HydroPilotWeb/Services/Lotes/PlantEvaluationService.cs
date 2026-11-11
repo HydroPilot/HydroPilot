@@ -57,7 +57,9 @@ public class PlantEvaluationService
             lastStage.GddMax,
             config.ScoreMinCandidate,
             config.ScoreMinReady,
-            transplant.MaxSizeFactor);
+            transplant.MaxSizeFactor,
+            transplant.AdultReadySize,
+            CycleTimelineLogic.ConventionalOptimumGdd);
     }
 
     /// <summary>Etapa fenológica según GDD (ventanas del catálogo). Null si no hay catálogo.</summary>

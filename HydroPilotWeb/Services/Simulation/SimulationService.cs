@@ -56,28 +56,57 @@ public class SimulationService
         _optimum = optimum ?? new BabyLeafOptimumService(dbFactory);
     }
 
+    /// <summary>Cierre de la ventana Baby Leaf si el cultivo no tiene configuración.</summary>
+    private const decimal DefaultWindowCloseGdd = 450m;
+
+    /// <summary>
+    /// Se simula un lote en desarrollo o en la ventana Baby Leaf (GDD de hoy antes de que cierre la ventana) y sin
+    /// trasplantes: es cuando todavía se decide qué va a Baby Leaf y qué a Adultas (desde 2026-11-10).
+    /// </summary>
+    public static bool IsSimulatable(decimal gddToday, decimal windowCloseGdd, bool hasTransplants) =>
+        !hasTransplants && gddToday < windowCloseGdd;
+
     /// <summary>
     /// Opciones de contexto para los selectores de la UI y los parámetros del sistema (solo lectura).
-    /// Solo lotes abiertos: uno cerrado no tiene plantas activas que simular.
+    /// Solo lotes abiertos (uno cerrado no tiene plantas activas que simular), sin trasplantes y en desarrollo o en la
+    /// ventana Baby Leaf (<see cref="IsSimulatable"/>). El GDD de hoy es el de Lotes: el guardado del día o, si no hay,
+    /// el de las lecturas.
     /// </summary>
     public async Task<SimulationContextOptions> GetContextOptionsAsync(CancellationToken ct = default)
     {
         await using var context = await _dbFactory.CreateDbContextAsync(ct);
 
-        var lots = await context.Lots
+        var rows = await context.Lots
             .AsNoTracking()
             .Where(l => l.Status == null || (l.Status.Name != LotStatusNames.Cosechado && l.Status.Name != LotStatusNames.Descartado))
+            .Where(l => !l.Plants.Any(p => p.TransplantedOn != null))
             .OrderByDescending(l => l.SowingDate)
-            .Select(l => new SimulationLotOption(
-                l.Id,
-                l.Name ?? $"Lote {l.Id}",
-                l.CropType!.Name,
-                l.Status!.Name,
-                l.SowingDate,
-                l.Plants.Count,
-                l.Plants.Count(p => p.OperationalState == PlantOperationalState.Activa),
-                l.BabyLeafGoalPercent))
+            .Select(l => new
+            {
+                Option = new SimulationLotOption(
+                    l.Id,
+                    l.Name ?? $"Lote {l.Id}",
+                    l.CropType!.Name,
+                    l.Status!.Name,
+                    l.SowingDate,
+                    l.Plants.Count,
+                    l.Plants.Count(p => p.OperationalState == PlantOperationalState.Activa),
+                    l.BabyLeafGoalPercent),
+                l.CropTypeId,
+                l.AccumulatedGdd,
+            })
             .ToListAsync(ct);
+
+        var windowClose = (await context.BabyLeafConfigs.AsNoTracking().Where(c => c.IsActive).ToListAsync(ct))
+            .GroupBy(c => c.CropTypeId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Id).First().GddMax);
+        var lots = new List<SimulationLotOption>();
+        foreach (var row in rows)
+        {
+            var gdd = row.AccumulatedGdd ?? await MeasuredGddAsync(context, row.Option.Id, ct);
+            if (IsSimulatable(gdd, windowClose.GetValueOrDefault(row.CropTypeId, DefaultWindowCloseGdd), hasTransplants: false))
+                lots.Add(row.Option);
+        }
 
         var crops = await context.CropTypes
             .AsNoTracking()
@@ -86,7 +115,15 @@ public class SimulationService
             .ToListAsync(ct);
 
         return new SimulationContextOptions(
-            lots, crops, await _parameters.GetYieldParametersAsync(ct), await _parameters.GetNutrientPricesAsync(ct));
+            lots, crops, await _parameters.GetYieldParametersAsync(ct), await _parameters.GetNutrientPricesAsync(ct),
+            (await _parameters.GetGreenhousePlanParametersAsync(ct)).PricePerSeed ?? ParameterDefaults.PricePerSeed);
+    }
+
+    /// <summary>GDD de hoy con las lecturas, para un lote sin el GDD del día guardado.</summary>
+    private async Task<decimal> MeasuredGddAsync(HydroPilotDbContext context, int lotId, CancellationToken ct)
+    {
+        var lot = await context.Lots.AsNoTracking().Include(l => l.CropType).FirstAsync(l => l.Id == lotId, ct);
+        return await _gddService.GetAccumulatedGddAsync(lot, null, ct);
     }
 
     /// <summary>
@@ -119,6 +156,8 @@ public class SimulationService
                 return new SimulationPreview(false, [$"Lote '{lotId}' no encontrado."], null);
             if (lot.Status?.Name is LotStatusNames.Cosechado or LotStatusNames.Descartado)
                 return new SimulationPreview(false, [$"El lote '{lot.Name}' está cerrado: no tiene plantas activas que simular."], null);
+            if (await context.Plants.AnyAsync(p => p.LotId == lot.Id && p.TransplantedOn != null, ct))
+                return new SimulationPreview(false, [$"El lote '{lot.Name}' ya trasplantó a Adultas: se simulan lotes sin trasplantes."], null);
         }
 
         var crop = lot?.CropType;
@@ -171,6 +210,9 @@ public class SimulationService
             .Where(s => s.CropTypeId == crop.Id && s.IsActive)
             .OrderByDescending(s => s.Order)
             .FirstOrDefaultAsync(ct);
+        if (lot is not null && !IsSimulatable(lot.AccumulatedGdd ?? accumulated, config?.GddMax ?? DefaultWindowCloseGdd, hasTransplants: false))
+            return new SimulationPreview(false,
+                [$"El lote '{lot.Name}' ya pasó la ventana Baby Leaf: se simulan lotes en desarrollo o en la ventana Baby Leaf."], null);
 
         // Clima esperado del ciclo para comparar con los lotes previos: lo que va (medido o del escenario) más la proyección.
         var expectedDays = history.Where(p => p.Source != GddPointSource.Fallback).Select(p => p.Gdd)

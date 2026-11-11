@@ -54,7 +54,7 @@
                                 tiene que usar); arranca en Manual.</span>
                             <span><b>✎:</b> edita nombre, tipo, huecos, tanque y si está activo. Uno inactivo no aparece en
                                 Nuevo lote ni en Optimización.</span>
-                            <span><b>Filtros:</b> buscar por circuito, lote o invernadero; tipo; libres o con lote; activos o
+                            <span><b>Filtros:</b> lote y circuito (se buscan al escribir); tipo; libres o con lote; activos o
                                 inactivos.</span>
                             <span>Solo Administrador y Productor crean y editan. Las separaciones entre huecos se cambian en
                                 Ajustes &gt; Parámetros &gt; Trasplante a Adultas.</span>
@@ -79,8 +79,11 @@
             else
             {
                 <div class="hp-grid-filters">
-                    <input type="search" class="form-control form-control-sm" placeholder="Buscar circuito o lote"
-                           aria-label="Buscar circuito o lote" @bind="search" @bind:event="oninput" />
+                    @* Como el selector de lotes (desde 2026-11-10): el lote que ocupa el circuito hoy y el circuito. *@
+                    <SearchSelect Id="circuits-lot" Items="LotItems" Value="@lotNameFilter" ValueChanged="SelectLot"
+                                  AllLabel="Todos los lotes" Placeholder="Buscar lote…" AriaLabel="Lote" Compact="true" />
+                    <SearchSelect Id="circuits-circuit" Items="CircuitItems" Value="@circuitFilter" ValueChanged="SelectCircuit"
+                                  AllLabel="Todos los circuitos" Placeholder="Buscar circuito…" AriaLabel="Circuito" Compact="true" />
                     <select class="form-select form-select-sm" aria-label="Tipo" @bind="kindFilter">
                         <option value="">Todos los tipos</option>
                         @foreach (var kind in CircuitKinds.All)
@@ -88,7 +91,7 @@
                             <option value="@kind">@CircuitKinds.Label(kind)</option>
                         }
                     </select>
-                    <select class="form-select form-select-sm" aria-label="Lote" @bind="lotFilter">
+                    <select class="form-select form-select-sm" aria-label="Libres o con lote" @bind="lotFilter">
                         <option value="">Libres y con lote</option>
                         <option value="free">Libres</option>
                         <option value="busy">Con lote</option>
@@ -394,7 +397,8 @@
     private IReadOnlyList<CircuitRow>? circuits;
     private IReadOnlyList<CircuitGreenhouseChoice>? greenhouses;
 
-    private string search = "";
+    private string? lotNameFilter;
+    private string? circuitFilter;
     private string kindFilter = "";
     private string lotFilter = "";
     private string stateFilter = "";
@@ -416,18 +420,36 @@
 
     private bool ManyGreenhouses => circuits?.Select(c => c.GreenhouseId).Distinct().Count() > 1;
 
+    /// <summary>Los lotes que hoy ocupan algún circuito.</summary>
+    private IReadOnlyList<SearchSelectItem> LotItems => (circuits ?? [])
+        .Where(c => c.CurrentLot is not null)
+        .Select(c => c.CurrentLot!)
+        .Distinct()
+        .Order(NaturalStringComparer.Instance)
+        .Select(name => new SearchSelectItem(name, name))
+        .ToList();
+
+    /// <summary>Los circuitos: primero los densos y después los de Adultas.</summary>
+    private IReadOnlyList<SearchSelectItem> CircuitItems => (circuits ?? [])
+        .OrderBy(c => c.Kind == CircuitKinds.Adult)
+        .ThenBy(c => c.Name, NaturalStringComparer.Instance)
+        .Select(c => new SearchSelectItem(c.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ManyGreenhouses ? $"{c.Name} · {c.GreenhouseName}" : c.Name, CircuitKinds.Label(c.Kind)))
+        .ToList();
+
+    private void SelectLot(string? name) => lotNameFilter = name;
+
+    private void SelectCircuit(string? id) => circuitFilter = id;
+
     private IReadOnlyList<CircuitRow> Filtered
     {
         get
         {
             if (circuits is null)
                 return [];
-            var text = search.Trim();
             return circuits
-                .Where(c => text.Length == 0
-                            || c.Name.Contains(text, StringComparison.CurrentCultureIgnoreCase)
-                            || (c.CurrentLot?.Contains(text, StringComparison.CurrentCultureIgnoreCase) ?? false)
-                            || c.GreenhouseName.Contains(text, StringComparison.CurrentCultureIgnoreCase))
+                .Where(c => lotNameFilter is null || c.CurrentLot == lotNameFilter)
+                .Where(c => circuitFilter is null || c.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) == circuitFilter)
                 .Where(c => kindFilter == "" || c.Kind == kindFilter)
                 .Where(c => lotFilter == "" || (c.CurrentLot is null) == (lotFilter == "free"))
                 .Where(c => stateFilter == "" || c.IsActive == (stateFilter == "active"))
