@@ -8,7 +8,7 @@
 
 @* What-if con la misma lógica que la vista Lotes: ventanas y óptimos de corte por GDD y
    rendimiento por plantas × peso × precio. No escribe nada ni toca hardware. *@
-<section class="simulation-grid">
+<section class="simulation-grid sim-layout">
     <article class="panel">
         <div class="panel__header">
             <div>
@@ -49,9 +49,10 @@
                 <label class="sim-label">Contexto</label>
                 <select class="form-select" @bind="selectedLotId" @bind:after="OnLotChanged">
                     <option value="">— Escenario libre por cultivo —</option>
+                    @* Solo el nombre (desde 2026-11-19; antes con el cultivo entre paréntesis): con la columna angosta se cortaba. *@
                     @foreach (var lot in options.Lots)
                     {
-                        <option value="@lot.Id">@lot.Name (@lot.CropTypeName)</option>
+                        <option value="@lot.Id">@lot.Name</option>
                     }
                 </select>
 
@@ -115,9 +116,12 @@
                     <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.MaxBabyLeaf)" @onchange="() => strategy = SimulationStrategyKind.MaxBabyLeaf" /> Máximo Baby Leaf</label>
                     <div class="sim-strategy__goal">
                         <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.BabyLeafGoal)" @onchange="() => strategy = SimulationStrategyKind.BabyLeafGoal" /> Meta Baby Leaf máxima</label>
-                        <input type="number" step="1" min="0" max="100" class="form-control form-control-sm" aria-label="Meta Baby Leaf máxima (%)"
-                               @bind="babyLeafGoal" @onfocus="() => strategy = SimulationStrategyKind.BabyLeafGoal" />
-                        <span class="small">%</span>
+                        @* El % va debajo, alineado con el texto de la opción (desde 2026-11-19, con la columna más angosta). *@
+                        <span class="sim-strategy__goal-value">
+                            <input type="number" step="1" min="0" max="100" class="form-control form-control-sm" aria-label="Meta Baby Leaf máxima (%)"
+                                   @bind="babyLeafGoal" @onfocus="() => strategy = SimulationStrategyKind.BabyLeafGoal" />
+                            <span class="small">%</span>
+                        </span>
                     </div>
                     <label class="sim-radio"><input type="radio" name="strategy" checked="@(strategy == SimulationStrategyKind.AllConventional)" @onchange="() => strategy = SimulationStrategyKind.AllConventional" /> Todo adulta</label>
                 </div>
@@ -529,9 +533,13 @@
     @@media (max-width: 720px) { .mini-grid.sim-chosen { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .btn.sim-card__btn { --bs-btn-padding-y: 0; --bs-btn-padding-x: 8px; --bs-btn-font-size: 0.75rem; }
     .sim-strategy { display: flex; flex-direction: column; gap: 6px; }
-    .sim-strategy__goal { display: flex; align-items: center; gap: 8px; }
+    .sim-strategy__goal { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
     .sim-strategy__goal .sim-radio { flex: none; white-space: nowrap; }
+    .sim-strategy__goal-value { display: flex; align-items: center; gap: 8px; padding-left: 19px; }
     .sim-strategy__goal input[type=number] { flex: none; width: 80px; }
+    /* Columna del escenario más angosta (desde 2026-11-19; antes 280–360px, como Plan del invernadero, que la sigue
+       usando). Debajo de 1100px se apila igual que antes (app.css). */
+    @@media (min-width: 1101px) { .simulation-grid.sim-layout { grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); } }
     .sim-radio input { flex: none; margin: 0; }
     .sim-details summary { cursor: pointer; font-size: 0.86rem; color: var(--text-muted); }
 </style>
