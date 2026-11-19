@@ -265,19 +265,35 @@ button {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    /* En pantallas bajas el menú scrollea: barra fina, sin riel blanco y del color del menú; se ve al pasar el mouse. */
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
+    /* En pantallas bajas el menú scrollea. Contraído, sin barra: aunque fuera transparente ocupaba su ancho, achicaba los
+       ítems y la selección quedaba corrida respecto del ícono (desde 2026-11-19). Se scrollea igual con la rueda. */
+    scrollbar-width: none;
 }
 
-.sidebar-nav:hover,
-.sidebar-nav:focus-within {
+/* Desplegado: barra fina, sin riel blanco y del color del menú. */
+@media (hover: hover) {
+    .shell-sidebar:hover .sidebar-nav {
+        scrollbar-width: thin;
+        scrollbar-color: var(--sidebar-scrollbar) transparent;
+    }
+
+    .shell-sidebar:hover .sidebar-nav::-webkit-scrollbar {
+        width: 6px;
+    }
+}
+
+.shell-sidebar:has(:focus-visible) .sidebar-nav {
+    scrollbar-width: thin;
     scrollbar-color: var(--sidebar-scrollbar) transparent;
 }
 
-/* Navegadores sin scrollbar-color (Safari, Chromium viejo). */
-.sidebar-nav::-webkit-scrollbar {
+.shell-sidebar:has(:focus-visible) .sidebar-nav::-webkit-scrollbar {
     width: 6px;
+}
+
+/* Navegadores sin scrollbar-width (Safari, Chromium viejo): contraído, sin barra. */
+.sidebar-nav::-webkit-scrollbar {
+    width: 0;
 }
 
 .sidebar-nav::-webkit-scrollbar-track,
